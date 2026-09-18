@@ -1,0 +1,271 @@
+/* ============================================================
+   AEROPRICE INDIA — Design System Tokens
+   Edit this file to retheme the entire application.
+   All UI components reference these variables.
+   ============================================================ */
+
+/* ── Google Font ──────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  /* ── Brand Colors ──────────────────────────────────────── */
+  --color-brand-primary:    #2563eb;   /* primary accent, CTAs */
+  --color-brand-secondary:  #1d4ed8;   /* darker accent, hover */
+  --color-brand-muted:      #dbeafe;   /* light tint, tags */
+
+  /* ── Surface Colors ────────────────────────────────────── */
+  --color-surface-canvas:   #f1f5f9;   /* page background */
+  --color-surface-bg:       #ffffff;   /* card / panel background */
+  --color-surface-secondary:#f8fafc;   /* recessed / faint areas */
+  --color-surface-hover:    #f1f5f9;   /* interactive hover state */
+  --color-surface-dark:     #1e293b;   /* dark panels / tooltips */
+
+  /* ── Text Colors ───────────────────────────────────────── */
+  --color-text-primary:     #0f172a;   /* headings, primary body */
+  --color-text-secondary:   #475569;   /* secondary labels */
+  --color-text-tertiary:    #94a3b8;   /* hints, timestamps */
+  --color-text-on-brand:    #ffffff;   /* text on brand-primary */
+  --color-text-on-dark:     rgba(255,255,255,0.85); /* text on dark surfaces */
+
+  /* ── Border Colors ─────────────────────────────────────── */
+  --color-border-primary:   #e2e8f0;   /* default borders */
+  --color-border-secondary: #cbd5e1;   /* stronger borders */
+  --color-border-focus:     #2563eb;   /* focus ring */
+
+  /* ── Status Colors ─────────────────────────────────────── */
+  --color-success:          #16a34a;   /* falling fares, healthy */
+  --color-success-bg:       #dcfce7;
+  --color-warning:          #d97706;   /* stable, aging */
+  --color-warning-bg:       #fef3c7;
+  --color-danger:           #dc2626;   /* rising fares, failed */
+  --color-danger-bg:        #fee2e2;
+  --color-info:             #0369a1;
+  --color-info-bg:          #e0f2fe;
+
+  /* ── Spacing Scale ─────────────────────────────────────── */
+  --space-xs:   4px;
+  --space-sm:   6px;
+  --space-md:   8px;
+  --space-lg:  12px;
+  --space-xl:  16px;
+  --space-2xl: 24px;
+  --space-3xl: 32px;
+  --space-4xl: 48px;
+
+  /* ── Border Radius ─────────────────────────────────────── */
+  --radius-sm:   4px;
+  --radius-md:   8px;
+  --radius-lg:  12px;
+  --radius-xl:  16px;
+  --radius-full: 9999px;
+
+  /* ── Typography ────────────────────────────────────────── */
+  --font-sans:  'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono:  'JetBrains Mono', 'Fira Code', monospace;
+
+  /* Type scale — use these classes, never set font-size directly */
+  --text-display-size:  2.25rem;  /* 36px */
+  --text-display-weight: 700;
+  --text-display-line:  1.2;
+
+  --text-title-size:    1.5rem;   /* 24px */
+  --text-title-weight:  600;
+  --text-title-line:    1.35;
+
+  --text-heading-size:  1.125rem; /* 18px */
+  --text-heading-weight: 600;
+  --text-heading-line:  1.4;
+
+  --text-label-size:    0.9375rem; /* 15px */
+  --text-label-weight:  500;
+  --text-label-line:    1.5;
+
+  --text-body-size:     0.875rem;  /* 14px */
+  --text-body-weight:   400;
+  --text-body-line:     1.6;
+
+  --text-caption-size:  0.75rem;   /* 12px */
+  --text-caption-weight: 500;
+  --text-caption-line:  1.4;
+
+  --text-mono-size:     0.8125rem; /* 13px */
+
+  /* ── Shadows ───────────────────────────────────────────── */
+  --shadow-none:  none;
+  --shadow-sm:    0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md:    0 4px 6px -1px rgb(0 0 0 / 0.07), 0 2px 4px -2px rgb(0 0 0 / 0.05);
+  --shadow-lg:    0 10px 15px -3px rgb(0 0 0 / 0.08), 0 4px 6px -4px rgb(0 0 0 / 0.05);
+  --shadow-floating: 0 0 0 1px var(--color-border-primary), 0 8px 24px rgb(0 0 0 / 0.12);
+
+  /* ── Motion ────────────────────────────────────────────── */
+  --transition-fast:   150ms ease;
+  --transition-base:   200ms ease;
+  --transition-slow:   300ms ease;
+
+  /* ── Sidebar ───────────────────────────────────────────── */
+  --sidebar-width:     56px;
+}
+
+/* ── Dark mode ───────────────────────────────────────────── */
+.dark {
+  --color-brand-muted:      #1e3a5f;
+
+  --color-surface-canvas:   #0f172a;
+  --color-surface-bg:       #1e293b;
+  --color-surface-secondary:#162032;
+  --color-surface-hover:    #263347;
+  --color-surface-dark:     #0f172a;
+
+  --color-text-primary:     rgba(255,255,255,0.90);
+  --color-text-secondary:   rgba(255,255,255,0.60);
+  --color-text-tertiary:    rgba(255,255,255,0.35);
+
+  --color-border-primary:   rgba(255,255,255,0.10);
+  --color-border-secondary: rgba(255,255,255,0.18);
+
+  --color-success-bg:       #14532d;
+  --color-warning-bg:       #451a03;
+  --color-danger-bg:        #450a0a;
+  --color-info-bg:          #0c2340;
+}
+
+/* ── Global base ─────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  font-family: var(--font-sans);
+  font-size:   var(--text-body-size);
+  font-weight: var(--text-body-weight);
+  line-height: var(--text-body-line);
+  color:       var(--color-text-primary);
+  background:  var(--color-surface-canvas);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Composite type classes ──────────────────────────────── */
+.text-display {
+  font-size:   var(--text-display-size);
+  font-weight: var(--text-display-weight);
+  line-height: var(--text-display-line);
+  letter-spacing: -0.02em;
+}
+.text-title {
+  font-size:   var(--text-title-size);
+  font-weight: var(--text-title-weight);
+  line-height: var(--text-title-line);
+  letter-spacing: -0.01em;
+}
+.text-heading {
+  font-size:   var(--text-heading-size);
+  font-weight: var(--text-heading-weight);
+  line-height: var(--text-heading-line);
+}
+.text-label {
+  font-size:   var(--text-label-size);
+  font-weight: var(--text-label-weight);
+  line-height: var(--text-label-line);
+}
+.text-body {
+  font-size:   var(--text-body-size);
+  font-weight: var(--text-body-weight);
+  line-height: var(--text-body-line);
+}
+.text-caption {
+  font-size:   var(--text-caption-size);
+  font-weight: var(--text-caption-weight);
+  line-height: var(--text-caption-line);
+  letter-spacing: 0.02em;
+}
+.text-mono {
+  font-family: var(--font-mono);
+  font-size:   var(--text-mono-size);
+}
+
+/* ── Color utility classes ───────────────────────────────── */
+.text-primary   { color: var(--color-text-primary); }
+.text-secondary { color: var(--color-text-secondary); }
+.text-tertiary  { color: var(--color-text-tertiary); }
+.text-brand     { color: var(--color-brand-primary); }
+.text-success   { color: var(--color-success); }
+.text-warning   { color: var(--color-warning); }
+.text-danger    { color: var(--color-danger); }
+.text-on-brand  { color: var(--color-text-on-brand); }
+.text-on-dark   { color: var(--color-text-on-dark); }
+
+/* ── Animations ──────────────────────────────────────────── */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
+}
+@keyframes draw-arc {
+  from { stroke-dashoffset: 1; }
+  to   { stroke-dashoffset: 0; }
+}
+@keyframes skeleton-shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position:  400px 0; }
+}
+
+.animate-fade-up   { animation: fade-up 0.35s ease-out forwards; }
+.animate-pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+.animate-draw-arc  {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: draw-arc 1s ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-up, .animate-pulse-dot, .animate-draw-arc {
+    animation: none; opacity: 1; transform: none; stroke-dashoffset: 0;
+  }
+}
+
+/* ── Design-system alias classes ─────────────────────────────
+   All reference CSS variables so they retheme with global.css.
+   These aliases make page code portable regardless of kit version.
+   ──────────────────────────────────────────────────────────── */
+
+/* Typography aliases */
+.text-label-sm   { font-family: var(--font-sans); font-size: var(--text-body-size); font-weight: var(--text-body-weight); line-height: var(--text-body-line); }
+.text-video-title { font-family: var(--font-sans); font-size: 0.6875rem; font-weight: 500; line-height: 1.4; letter-spacing: 0.07em; text-transform: uppercase; }
+
+/* Text color aliases */
+.text-text-primary   { color: var(--color-text-primary); }
+.text-text-secondary { color: var(--color-text-secondary); }
+.text-text-tertiary  { color: var(--color-text-tertiary); }
+.text-brand-primary  { color: var(--color-brand-primary); }
+.text-on-reverse     { color: var(--color-text-on-dark); }
+
+/* Background aliases */
+.bg-surface-bg      { background-color: var(--color-surface-bg); }
+.bg-surface-hover   { background-color: var(--color-surface-hover); }
+.bg-surface-dark    { background-color: var(--color-surface-dark); }
+.bg-bg-faint        { background-color: var(--color-surface-secondary); }
+.bg-bg-subtle       { background-color: var(--color-surface-hover); }
+.bg-brand-primary   { background-color: var(--color-brand-primary); }
+.bg-brand-secondary { background-color: var(--color-brand-muted); }
+.bg-brand-tertiary  { background-color: var(--color-surface-canvas); }
+
+/* Hover background aliases */
+.hover\:bg-surface-hover:hover { background-color: var(--color-surface-hover); }
+.hover\:bg-bg-subtle:hover     { background-color: var(--color-surface-hover); }
+
+/* Border aliases */
+.border-border-primary   { border-color: var(--color-border-primary); }
+.border-border-secondary { border-color: var(--color-border-secondary); }
+.border-brand-primary    { border-color: var(--color-brand-primary); }
+
+/* Border radius aliases */
+.rounded-corner-sm   { border-radius: var(--radius-sm); }
+.rounded-corner-md   { border-radius: var(--radius-md); }
+.rounded-corner-lg   { border-radius: var(--radius-lg); }
+.rounded-corner-xl   { border-radius: var(--radius-xl); }
+.rounded-corner-full { border-radius: var(--radius-full); }
+
+/* Outline aliases */
+.outline-brand-primary { outline-color: var(--color-brand-primary); }
+.focus-visible\:outline-brand-primary:focus-visible { outline-color: var(--color-brand-primary); }
