@@ -1,4 +1,140 @@
-# AeroPrice India — SIH26056 Phase 2: Full Overhaul Plan — IMPLEMENTATION STATUS
+# AeroPrice India — SIH26056 Master Plan
+
+---
+
+## Phase 3: Real Data Acquisition — NEXT TO IMPLEMENT
+
+### Objective
+Get the first real, legitimately authorized airfare observation into the database and prove the complete pipeline end-to-end. Only after this proof should collection scale to all 12 routes.
+
+### Why Plan 1 (Current Backend) Has Drawbacks
+
+**The current backend is architecturally sound but produces zero real airfare data.** Specific drawbacks:
+
+| # | Drawback | Impact |
+|---|---|---|
+| 1 | **All 5 airline adapters return CHALLENGE_DETECTED** | 0 fare observations in DB; every API endpoint returns empty/INSUFFICIENT_DATA |
+| 2 | **No aggregator adapter implemented** — `AGGREGATOR_PROVIDER/API_KEY/BASE_URL` env vars exist in config but nothing calls them | The obvious unblocking path (authorized aggregator like Mystifly, Amadeus, Sabre) is not wired |
+| 3 | **`data_origin = "REAL"` not `"LIVE"`** — the new phase prompt specifies `LIVE` as the canonical value for genuinely collected fares | Schema mismatch; needs a decision and consistent update |
+| 4 | **Jevons index requires Jan 2025 baseline** — no baseline data seeded or fetched | Index can never publish even if current-period fares arrive; will always show INSUFFICIENT_DATA |
+| 5 | **AllOrigins CORS proxy is unreliable** — not production-grade; DGCA portal HTML structure may change silently | Gov data shows STALE / FAILED unpredictably |
+| 6 | **MoSPI is permanently STALE** — portal is a JS SPA; AllOrigins only returns shell HTML | MoSPI CPI-Transport data is permanently unavailable through this method |
+| 7 | **Scheduler runs hourly but collects nothing** — APScheduler fires but all adapters immediately return CHALLENGE_DETECTED | Wastes scheduler cycles; misleads monitoring about collection "activity" |
+| 8 | **No retry/backoff on transient failures** — collector has no exponential backoff for HTTP timeouts | A momentary network blip drops an entire collection window with no retry |
+| 9 | **Raw payload storage not wired into collector** — `raw_fare_payloads` table exists but `run_collection()` never writes to it | Full audit trail / provenance chain is broken even when real data arrives |
+| 10 | **No real smoke test executable** — Python unavailable in Figma Make sandbox | Cannot verify the backend actually works until run locally |
+
+### Phase 3 Implementation Plan
+
+#### Step 1 — Research and select a legitimate aggregator
+
+Research which of the following can legitimately provide Indian domestic one-way economy fares with no credential fabrication:
+- **Mystifly** — B2B flight aggregator, documented API, Indian market focus
+- **Amadeus Self-Service APIs** — free tier, Test + Production, REST, supports Indian routes
+- **Sabre Dev Studio** — documented REST APIs
+- **TBO Holidays** — Indian B2B aggregator
+- **RateGain** — airfare intelligence, India coverage
+
+For the selected provider document: API endpoint, auth mechanism, free-tier limits, supported routes, response schema.
+
+**Decision to make before implementation:** Amadeus Self-Service API is the most documentation-complete option with a public free sandbox tier. Proposed default.
+
+#### Step 2 — Build `backend/app/collectors/aggregators/` adapter
+
+Files to create:
+```
+backend/app/collectors/aggregators/__init__.py
+backend/app/collectors/aggregators/base_aggregator.py   # common interface
+backend/app/collectors/aggregators/amadeus.py           # Amadeus REST adapter
+```
+
+`AmadeusAdapter` implements `FareSourceAdapter`:
+- `is_configured()` → checks `AMADEUS_API_KEY` + `AMADEUS_API_SECRET` env vars
+- `collect(route, travel_date, advance_days, run_id)` → calls Amadeus Flight Offers Search API
+- Maps response to `FareRecord` with `data_origin = "REAL"` (or "LIVE" — see Step 3)
+- Stores raw response body in `raw_fare_payloads` table
+
+Add to `backend/app/core/config.py`:
+```python
+AMADEUS_API_KEY: str = ""
+AMADEUS_API_SECRET: str = ""
+AMADEUS_BASE_URL: str = "https://test.api.amadeus.com"  # sandbox default
+```
+
+Add to `backend/.env.example`.
+
+#### Step 3 — Resolve `data_origin` vocabulary
+
+**Decision:** Adopt `"REAL"` as the canonical production value (already in the DB schema, TypeScript types, and all existing code). The new prompt's use of `"LIVE"` is a synonym — do NOT rename to avoid breaking changes. Add a note in the README clarifying that `REAL` = legitimately collected = what the prompt calls "LIVE".
+
+#### Step 4 — Wire aggregator into collection service
+
+`backend/app/services/collector.py`:
+- Add `AmadeusAdapter` to `_make_adapters()`
+- Update `AIRFARE_SOURCE_REGISTRY` with Amadeus entry (status: CONFIGURED when env vars present)
+- Wire `raw_fare_payloads` write inside the SUCCESS branch of `run_collection()`
+
+#### Step 5 — DEL-BOM smoke test (T+1, T+7, T+15, T+30, T+45)
+
+After implementing the adapter, the user runs locally:
+```bash
+cd backend
+cp .env.example .env    # fill AMADEUS_API_KEY + AMADEUS_API_SECRET
+uvicorn main:app --reload --port 8000
+curl -X POST http://localhost:8000/api/collections/trigger \
+  -H "Authorization: Bearer <admin_token>"
+```
+
+Success criterion: DB query shows ≥1 row in `fare_observations` for route `DEL-BOM` with `data_origin = "REAL"`.
+
+#### Step 6 — Verify full pipeline
+
+```sql
+SELECT route, travel_date, advance_days, airline, total_fare, data_origin
+FROM fare_observations WHERE route = 'DEL-BOM';
+```
+
+Then verify via API:
+- `GET /api/fares?route=DEL-BOM` → observations returned
+- `GET /api/fares/summary/DEL-BOM` → per-window stats populated
+- `GET /api/routes` → DEL-BOM shows `observations_7d > 0`
+- `GET /api/index/current` → still INSUFFICIENT_DATA (correct — need 15 corridors)
+- `GET /api/source-health` → Amadeus shows `status: LIVE`
+
+#### Step 7 — Scale to all 12 routes
+
+Only after Step 5 succeeds: extend `ROUTE_BASKET` runs through Amadeus for all 12 corridors × 5 windows.
+
+#### Step 8 — Improve government data reliability
+
+- Replace AllOrigins with direct fetch where CORS allows (data.gov.in supports direct JSON)
+- Add structured retry with exponential backoff in `gov_fetcher.py`
+- MoSPI: document as "manual download required" — do not pretend AllOrigins works
+
+#### Files to create/modify in Phase 3
+
+| File | Action |
+|---|---|
+| `backend/app/collectors/aggregators/__init__.py` | Create |
+| `backend/app/collectors/aggregators/amadeus.py` | Create |
+| `backend/app/collectors/aggregators/base_aggregator.py` | Create |
+| `backend/app/core/config.py` | Add AMADEUS_* vars |
+| `backend/app/services/collector.py` | Add Amadeus to adapters + wire raw_fare_payloads |
+| `backend/.env.example` | Add AMADEUS_* entries |
+| `backend/tests/test_amadeus_adapter.py` | Create — mock HTTP responses |
+| `backend/README.md` | Add Amadeus setup section |
+
+#### Verification
+
+1. `pytest tests/test_amadeus_adapter.py -v` (mocked — no real API key needed)
+2. User sets real Amadeus sandbox credentials, runs collection, queries DB directly
+3. Frontend shows non-empty fares table for DEL-BOM
+4. Source health shows Amadeus as LIVE
+5. `npx tsc --noEmit` still passes (no TypeScript changes needed for this phase)
+
+---
+
+# Phase 1 (Complete) — SIH26056 Phase 2: Full Overhaul Plan — IMPLEMENTATION STATUS
 
 ## Current State (Post-Implementation)
 

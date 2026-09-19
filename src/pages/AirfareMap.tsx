@@ -4,7 +4,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { Activity, Radio, Filter } from 'lucide-react'
 
-import type { Corridor } from '../data/sampleData'
+import { corridors as sampleCorridors, type Corridor } from '../data/sampleData'
 import { AIRPORTS } from '../data/airports'
 import { useLiveData } from '../hooks/useLiveData'
 import TrendIndicator from '../components/TrendIndicator'
@@ -392,8 +392,8 @@ function RouteSidebar({ corridors, selectedId, onSelect }: RouteSidebarProps) {
                 }}
               >
                 <TrendIndicator direction={corridor.trend} value={corridor.change7d} period="7d" size="sm" />
-                <span style={{ fontSize: 'var(--text-caption-size)', color: 'var(--color-text-tertiary)' }}>
-                  {corridor.freshness} min ago
+                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-warning)', background: 'var(--color-warning-bg)', padding: '1px 4px', borderRadius: 3, fontFamily: 'var(--font-sans)', letterSpacing: '0.04em' }}>
+                  GENERATED
                 </span>
               </div>
             </button>
@@ -407,7 +407,9 @@ function RouteSidebar({ corridors, selectedId, onSelect }: RouteSidebarProps) {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function AirfareMap() {
-  const { corridors, liveFlights, connectionStatus } = useLiveData()
+  const { liveFlights, connectionStatus } = useLiveData()
+  // sampleData corridors used for map arcs — labelled GENERATED in the UI
+  const corridors: Corridor[] = sampleCorridors
   const [filter, setFilter] = useState<FilterMode>('ALL')
   const [selectedId, setSelectedId] = useState<string | null>(null)
 

@@ -1,12 +1,12 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { ArrowRight, TrendingUp, TrendingDown, Bell, Map as MapIcon, BarChart2, AlertTriangle, Shield, Database, Plane } from 'lucide-react'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
 import TrendIndicator from '../components/TrendIndicator'
-import DataFreshness from '../components/DataFreshness'
 import { useAuth } from '../contexts/AuthContext'
 import { useGovData } from '../hooks/useGovData'
 import UpgradeModal from '../components/UpgradeModal'
+import { apiDashboard, isBackendAvailable } from '../services/api'
 import {
   corridors, bookingWindowData, regionalData, recentAnomalies,
 } from '../data/sampleData'
@@ -45,12 +45,24 @@ function BookingSparkline() {
 }
 
 export default function Overview({ onNavigate }: Props) {
-  const { user, login } = useAuth()
+  const { user } = useAuth()
   const govData = useGovData()
   const [fromCity, setFromCity] = useState('DEL')
   const [toCity, setToCity] = useState('BOM')
   const [searchResult, setSearchResult] = useState<string | null>(null)
   const [showUpgrade, setShowUpgrade] = useState(false)
+  const [realObs, setRealObs] = useState<number | null>(null)
+  const [indexStatus, setIndexStatus] = useState<string | null>(null)
+
+  useEffect(() => {
+    isBackendAvailable().then(up => {
+      if (!up) return
+      apiDashboard().then(d => {
+        setRealObs(d.real_observations ?? 0)
+        setIndexStatus(d.index_status ?? null)
+      }).catch(() => {})
+    })
+  }, [])
 
   if (!user) return null
 
@@ -136,8 +148,13 @@ export default function Overview({ onNavigate }: Props) {
                   — —
                 </div>
                 <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--color-warning)', background: 'rgba(217,119,6,0.2)', padding: '4px 10px', borderRadius: 4, display: 'inline-block', fontFamily: 'var(--font-sans)' }}>
-                  INDEX NOT PUBLISHED
+                  {indexStatus ?? 'INDEX NOT PUBLISHED'}
                 </div>
+                {realObs !== null && (
+                  <div style={{ marginTop: 8, fontSize: 11, color: 'rgba(255,255,255,0.5)', fontFamily: 'var(--font-sans)' }}>
+                    {realObs} real observations in database
+                  </div>
+                )}
               </div>
               <div style={{ flex: 1, maxWidth: 400 }}>
                 <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)', fontFamily: 'var(--font-sans)', lineHeight: 1.6, marginBottom: 12 }}>
@@ -237,7 +254,7 @@ export default function Overview({ onNavigate }: Props) {
                 >
                   <div>
                     <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}>{c.from} → {c.to}</span>
-                    <DataFreshness minutesAgo={c.freshness} className="ml-sm" />
+                    <span className="ml-sm" style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-warning)', background: 'var(--color-warning-bg)', padding: '1px 5px', borderRadius: 3, fontFamily: 'var(--font-sans)', letterSpacing: '0.04em' }}>GENERATED</span>
                   </div>
                   <div style={{ textAlign: 'right' }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>₹{c.currentFare.toLocaleString('en-IN')}</div>
@@ -331,7 +348,7 @@ export default function Overview({ onNavigate }: Props) {
         ))}
       </div>
 
-      {showUpgrade && <UpgradeModal onClose={() => setShowUpgrade(false)} onSwitchToSubscriber={() => { login('user@aeroprice.in', 'aero123'); setShowUpgrade(false) }} />}
+      {showUpgrade && <UpgradeModal onClose={() => setShowUpgrade(false)} onSwitchToSubscriber={() => setShowUpgrade(false)} />}
     </div>
   )
 }

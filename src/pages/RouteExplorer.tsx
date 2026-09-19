@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Info, AlertTriangle } from 'lucide-react'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
@@ -9,6 +9,7 @@ import TrendIndicator from '../components/TrendIndicator'
 import DataFreshness from '../components/DataFreshness'
 import { BarChart, LineChart } from '../components/MiniChart'
 import { corridors, bookingWindowData, priceHistoryData, dataSources } from '../data/sampleData'
+import { apiFares, isBackendAvailable, type FareObservationApi } from '../services/api'
 
 const card = { background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', padding: 'var(--space-xl)', boxShadow: 'var(--shadow-sm)' } as const
 
@@ -26,9 +27,18 @@ export default function RouteExplorer() {
   const [route, setRoute]         = useState('DEL-BOM')
   const [tab, setTab]             = useState<Tab>('Overview')
   const [showProv, setShowProv]   = useState(false)
+  const [realFares, setRealFares] = useState<FareObservationApi[]>([])
   const corridor = corridors.find(c => c.id === route) ?? corridors[0]
   const routeOptions = corridors.map(c => ({ value: c.id, label: `${c.from} → ${c.to}` }))
   const bookingData  = bookingWindowData.map(d => ({ label: d.label, value: d.avgFare }))
+
+  useEffect(() => {
+    setRealFares([])
+    isBackendAvailable().then(up => {
+      if (!up) return
+      apiFares({ route }).then(r => setRealFares(r.observations ?? [])).catch(() => {})
+    })
+  }, [route])
 
   return (
     <div className="flex flex-col animate-fade-up" style={{ gap: 'var(--space-xl)', maxWidth: 860 }}>
@@ -41,6 +51,17 @@ export default function RouteExplorer() {
           <SelectField label="Route" options={routeOptions} value={route} onChange={setRoute} />
         </div>
       </div>
+
+      {/* Real data banner */}
+      {realFares.length > 0 ? (
+        <div style={{ background: 'var(--color-success-bg)', border: '1px solid rgba(22,163,74,0.25)', borderRadius: 'var(--radius-lg)', padding: '10px 16px', fontSize: 12, color: 'var(--color-success)', fontFamily: 'var(--font-sans)', display: 'flex', alignItems: 'center', gap: 8 }}>
+          ✓ {realFares.length} real fare observation{realFares.length !== 1 ? 's' : ''} found for {route} — showing in Booking Windows tab.
+        </div>
+      ) : (
+        <div style={{ background: 'var(--color-warning-bg)', border: '1px solid rgba(217,119,6,0.2)', borderRadius: 'var(--radius-lg)', padding: '10px 16px', fontSize: 12, color: 'var(--color-warning)', fontFamily: 'var(--font-sans)', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <AlertTriangle size={13} /> No real observations for {route} — data below is GENERATED baseline.
+        </div>
+      )}
 
       {/* Route hero */}
       <div style={card}>
@@ -59,7 +80,10 @@ export default function RouteExplorer() {
             <div className="flex flex-wrap" style={{ gap: 'var(--space-xl)', marginTop: 'var(--space-md)' }}>
               <div><span className="text-caption text-tertiary">7D </span><TrendIndicator direction={corridor.trend} value={Math.abs(corridor.change7d)} /></div>
               <div><span className="text-caption text-tertiary">30D </span><TrendIndicator direction={corridor.change30d > 0 ? 'up' : 'down'} value={Math.abs(corridor.change30d)} /></div>
-              <DataFreshness minutesAgo={corridor.freshness} />
+              {realFares.length > 0
+                ? <DataFreshness minutesAgo={Math.floor((Date.now() - new Date(realFares[0].collected_at).getTime()) / 60000)} />
+                : <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-warning)', background: 'var(--color-warning-bg)', padding: '1px 5px', borderRadius: 3, fontFamily: 'var(--font-sans)', letterSpacing: '0.04em' }}>GENERATED</span>
+              }
             </div>
           </div>
           <div className="flex flex-col items-end" style={{ gap: 'var(--space-md)' }}>
@@ -145,16 +169,52 @@ export default function RouteExplorer() {
                 <h3 className="text-label text-primary" style={{ fontWeight: 500 }}>Fare by Booking Window</h3>
                 <p className="text-body text-secondary" style={{ marginTop: 'var(--space-xs)' }}>Median fare per advance-purchase window. Range = observed min–max.</p>
               </div>
-              <div className="overflow-x-auto"><BarChart data={bookingData} width={520} height={160} /></div>
-              <div className="flex flex-wrap" style={{ gap: 'var(--space-xl)' }}>
-                {bookingWindowData.map(d => (
-                  <div key={d.window} style={{ background: 'var(--color-surface-secondary)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)' }}>
-                    <div className="text-caption text-tertiary">{d.window}</div>
-                    <div className="text-label text-primary" style={{ fontWeight: 500 }}>₹{d.avgFare.toLocaleString('en-IN')}</div>
-                    <div className="text-caption text-tertiary">demand {(d.demand * 100).toFixed(0)}%</div>
+
+              {realFares.length > 0 ? (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: 'var(--font-sans)' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--color-border-primary)', background: 'var(--color-surface-secondary)' }}>
+                        {['Window (days)', 'Airline', 'Travel Date', 'Total Fare', 'Base', 'Taxes', 'Source', 'Origin'].map(h => (
+                          <th key={h} style={{ textAlign: 'left', padding: '8px 12px', fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)' }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {realFares.slice(0, 20).map(f => (
+                        <tr key={f.observation_id} style={{ borderBottom: '1px solid var(--color-border-primary)' }}>
+                          <td style={{ padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>T+{f.advance_days}</td>
+                          <td style={{ padding: '8px 12px', color: 'var(--color-text-primary)' }}>{f.airline}</td>
+                          <td style={{ padding: '8px 12px', color: 'var(--color-text-secondary)' }}>{f.travel_date}</td>
+                          <td style={{ padding: '8px 12px', fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>₹{f.total_fare.toLocaleString('en-IN')}</td>
+                          <td style={{ padding: '8px 12px', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)' }}>₹{f.base_fare.toLocaleString('en-IN')}</td>
+                          <td style={{ padding: '8px 12px', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)' }}>₹{f.taxes.toLocaleString('en-IN')}</td>
+                          <td style={{ padding: '8px 12px', color: 'var(--color-text-tertiary)' }}>{f.source}</td>
+                          <td style={{ padding: '8px 12px' }}>
+                            <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 5px', borderRadius: 3, background: f.data_origin === 'REAL' ? 'var(--color-success-bg)' : 'var(--color-info-bg)', color: f.data_origin === 'REAL' ? 'var(--color-success)' : 'var(--color-info)', fontFamily: 'var(--font-sans)' }}>
+                              {f.data_origin}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <>
+                  <div className="overflow-x-auto"><BarChart data={bookingData} width={520} height={160} /></div>
+                  <div className="flex flex-wrap" style={{ gap: 'var(--space-xl)' }}>
+                    {bookingWindowData.map(d => (
+                      <div key={d.window} style={{ background: 'var(--color-surface-secondary)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)' }}>
+                        <div className="text-caption text-tertiary">{d.window}</div>
+                        <div className="text-label text-primary" style={{ fontWeight: 500 }}>₹{d.avgFare.toLocaleString('en-IN')}</div>
+                        <div className="text-caption text-tertiary">demand {(d.demand * 100).toFixed(0)}%</div>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                  <div style={{ fontSize: 11, color: 'var(--color-warning)', fontFamily: 'var(--font-sans)' }}>GENERATED baseline — no real observations collected yet.</div>
+                </>
+              )}
             </div>
           )}
 

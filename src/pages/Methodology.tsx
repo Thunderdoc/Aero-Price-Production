@@ -85,7 +85,7 @@ export default function Methodology() {
       {/* Category legend */}
       <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
         {categories.map(cat => {
-          const cs = CATEGORY_STYLE[cat]
+          const cs = CATEGORY_STYLE[cat] ?? { label: cat, color: 'var(--color-text-tertiary)', bg: 'var(--color-surface-secondary)' }
           return (
             <span key={cat} style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', color: cs.color, background: cs.bg, padding: '3px 8px', borderRadius: 'var(--radius-full)', fontFamily: 'var(--font-sans)' }}>
               {cs.label}
@@ -106,7 +106,7 @@ export default function Methodology() {
           const meta = STEP_META[step.step] ?? { status: 'PENDING' as NodeStatus, statusDetail: '' }
           const ns = NODE_STATUS_STYLE[meta.status]
           const NodeIcon = ns.icon
-          const cat = CATEGORY_STYLE[step.category]
+          const cat = CATEGORY_STYLE[step.category] ?? { label: step.category, color: 'var(--color-text-tertiary)', bg: 'var(--color-surface-secondary)' }
           const isOpen = expanded.has(step.step)
           return (
             <div key={step.step} style={{ position: 'relative', zIndex: 1 }}>

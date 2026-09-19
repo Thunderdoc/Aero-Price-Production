@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { AlertTriangle, RefreshCw } from 'lucide-react'
 import { Button } from '../components/ui/Button'
 import { AirfareSourceCard, GovSourceCard } from '../components/SourceCard'
 import { useGovData } from '../hooks/useGovData'
+import { apiSourceHealth, isBackendAvailable } from '../services/api'
 import type { AirfareSource } from '../types/observation'
 
 const AIRFARE_SOURCES: AirfareSource[] = [
@@ -46,11 +47,48 @@ const AIRFARE_SOURCES: AirfareSource[] = [
     robots_txt: 'DISALLOWED', captcha_detected: true, api_available: false,
     last_attempt: null, records_received: 0,
   },
+  {
+    id: 'amadeus', name: 'Amadeus Self-Service API', organization: 'Amadeus IT Group SA',
+    source_url: 'https://developers.amadeus.com/self-service',
+    status: 'NOT_CONFIGURED',
+    status_reason: 'Authorized B2B flight content aggregator. Set AMADEUS_API_KEY + AMADEUS_API_SECRET in backend/.env. Sandbox data tagged SANDBOX_TEST; production data tagged REAL.',
+    robots_txt: 'ALLOWED', captcha_detected: false, api_available: true,
+    last_attempt: null, records_received: 0,
+  },
 ]
 
 export default function DataSources() {
   const { datasets, isLoading } = useGovData()
   const [tab, setTab] = useState<'airfare' | 'government'>('airfare')
+  const [amadeusStatus, setAmadeusStatus] = useState<string | null>(null)
+  const [amadeusRecords, setAmadeusRecords] = useState<number>(0)
+
+  useEffect(() => {
+    isBackendAvailable().then(up => {
+      if (!up) return
+      apiSourceHealth().then(resp => {
+        const raw = resp as unknown as { sources?: Array<{ source_id: string; status: string; records_total?: number }> } | Array<{ source_id: string; status: string; records_total?: number }>
+        const list = Array.isArray(raw) ? raw : (raw.sources ?? [])
+        const amd = list.find(s => s.source_id === 'amadeus')
+        if (amd) {
+          setAmadeusStatus(amd.status)
+          setAmadeusRecords(amd.records_total ?? 0)
+        }
+      }).catch(() => {})
+    })
+  }, [])
+
+  // Augment the static Amadeus entry with live status if available
+  const displaySources: AirfareSource[] = AIRFARE_SOURCES.map(s => {
+    if (s.id === 'amadeus' && amadeusStatus) {
+      return {
+        ...s,
+        status: amadeusStatus as AirfareSource['status'],
+        records_received: amadeusRecords,
+      }
+    }
+    return s
+  })
 
   const govConnected = datasets.filter(d => d.status === 'CONNECTED' || d.status === 'HEALTHY' || d.status === 'STALE').length
   const govFailed = datasets.filter(d => d.status === 'UNAVAILABLE' || d.status === 'FAILED').length
@@ -68,8 +106,8 @@ export default function DataSources() {
       {/* Stats strip */}
       <div style={{ background: 'var(--color-surface-bg)', border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-xl)', display: 'flex', gap: 'var(--space-3xl)', flexWrap: 'wrap' }}>
         {[
-          { label: 'AIRFARE SOURCES', value: AIRFARE_SOURCES.length, color: 'var(--color-text-primary)' },
-          { label: 'CHALLENGE DETECTED', value: AIRFARE_SOURCES.length, color: 'var(--color-warning)' },
+          { label: 'AIRFARE SOURCES', value: displaySources.length, color: 'var(--color-text-primary)' },
+          { label: 'CHALLENGE DETECTED', value: displaySources.filter(s => s.status === 'CHALLENGE_DETECTED').length, color: 'var(--color-warning)' },
           { label: 'LIVE AIRFARE OBS', value: '0', color: 'var(--color-text-tertiary)' },
           { label: 'GOV SOURCES', value: datasets.length, color: 'var(--color-text-primary)' },
           { label: 'GOV CONNECTED', value: govConnected, color: 'var(--color-success)' },
@@ -98,7 +136,7 @@ export default function DataSources() {
       {/* Tab selector */}
       <div style={{ display: 'flex', gap: 'var(--space-sm)', borderBottom: '1px solid var(--color-border-primary)', paddingBottom: 0 }}>
         {[
-          { key: 'airfare', label: `Airfare Sources (${AIRFARE_SOURCES.length})` },
+          { key: 'airfare', label: `Airfare Sources (${displaySources.length})` },
           { key: 'government', label: `Government Sources (${datasets.length})` },
         ].map(t => (
           <button
@@ -120,7 +158,7 @@ export default function DataSources() {
 
       {tab === 'airfare' && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 'var(--space-lg)' }}>
-          {AIRFARE_SOURCES.map(s => <AirfareSourceCard key={s.id} source={s} />)}
+          {displaySources.map(s => <AirfareSourceCard key={s.id} source={s} />)}
         </div>
       )}
 

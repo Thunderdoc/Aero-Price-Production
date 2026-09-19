@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
 import { useGovData } from '../hooks/useGovData'
-import { AlertTriangle, CheckCircle, XCircle, Shield, Users, Activity, FileText, Settings, ToggleLeft } from 'lucide-react'
+import { useAuth } from '../contexts/AuthContext'
+import { apiAuditLog, apiSystemMetrics, apiAdminUsers, isBackendAvailable } from '../services/api'
+import { AlertTriangle, CheckCircle, XCircle, Shield, Users, Activity, FileText, Settings, ToggleLeft, RefreshCw } from 'lucide-react'
 
 const AIRFARE_SOURCES_ADMIN = [
   { id: 'indigo', name: 'IndiGo', status: 'CHALLENGE_DETECTED', enabled: false },
@@ -96,13 +98,44 @@ function MetricCard({ label, value }: { label: string; value: string }) {
   )
 }
 
+interface AuditEntry { ts: string; actor: string; action: string; detail: string }
+interface SystemMetrics { db_observations: number; sources_live: number; collection_runs_24h: number; anomalies_24h: number }
+
 export default function AdminDashboard() {
   const [tab, setTab] = useState<Tab>('users')
-  const [audit] = useState(INITIAL_AUDIT)
+  const [audit, setAudit] = useState<AuditEntry[]>(INITIAL_AUDIT)
+  const [auditLoading, setAuditLoading] = useState(false)
+  const [metrics, setMetrics] = useState<SystemMetrics | null>(null)
   const [thresholds, setThresholds] = useState(THRESHOLDS)
+  const { token } = useAuth()
   const govData = useGovData()
   const now = new Date()
   const timestamp = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false }) + ' IST'
+
+  useEffect(() => {
+    if (tab !== 'audit') return
+    isBackendAvailable().then(up => {
+      if (!up || !token) return
+      setAuditLoading(true)
+      apiAuditLog(token, 100)
+        .then((raw: unknown) => {
+          const entries = raw as { entries?: AuditEntry[]; items?: AuditEntry[] } | AuditEntry[]
+          const list = Array.isArray(entries) ? entries : ((entries as { entries?: AuditEntry[] }).entries ?? (entries as { items?: AuditEntry[] }).items ?? [])
+          if (list.length > 0) setAudit(list)
+        })
+        .catch(() => {})
+        .finally(() => setAuditLoading(false))
+    })
+  }, [tab, token])
+
+  useEffect(() => {
+    isBackendAvailable().then(up => {
+      if (!up || !token) return
+      apiSystemMetrics(token)
+        .then((raw: unknown) => setMetrics(raw as SystemMetrics))
+        .catch(() => {})
+    })
+  }, [token])
 
   const TABS: { id: Tab; label: string; icon: typeof Shield }[] = [
     { id: 'users', label: 'User Management', icon: Users },
@@ -125,10 +158,10 @@ export default function AdminDashboard() {
       {/* Metrics strip */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 'var(--space-md)' }}>
         {[
-          { label: 'Observations/hr', value: '0', color: 'var(--color-text-tertiary)', sub: 'no airfare sources connected' },
-          { label: 'Active Users', value: '3', color: 'var(--color-brand-primary)', sub: 'demo session' },
-          { label: 'Gov Fetches/day', value: '4', color: 'var(--color-info)', sub: 'CONFIGURED' },
-          { label: 'Anomalies (24h)', value: '0', color: 'var(--color-success)', sub: 'no real data' },
+          { label: 'Total Observations', value: metrics ? String(metrics.db_observations) : '—', color: metrics?.db_observations ? 'var(--color-brand-primary)' : 'var(--color-text-tertiary)', sub: metrics ? 'from database' : 'backend offline' },
+          { label: 'Sources Live', value: metrics ? String(metrics.sources_live) : '—', color: metrics?.sources_live ? 'var(--color-success)' : 'var(--color-text-tertiary)', sub: 'LIVE status' },
+          { label: 'Collections (24h)', value: metrics ? String(metrics.collection_runs_24h) : '—', color: 'var(--color-info)', sub: 'runs today' },
+          { label: 'Anomalies (24h)', value: metrics ? String(metrics.anomalies_24h) : '0', color: 'var(--color-success)', sub: metrics ? 'detected' : 'no data' },
         ].map(({ label, value, color, sub }) => (
           <div key={label} style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-lg)', border: '1px solid var(--color-border-primary)' }}>
             <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginBottom: 4 }}>{label}</div>
@@ -270,6 +303,11 @@ export default function AdminDashboard() {
 
       {tab === 'audit' && (
         <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', overflow: 'hidden' }}>
+          {auditLoading && (
+            <div style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', borderBottom: '1px solid var(--color-border-primary)' }}>
+              <RefreshCw size={12} style={{ animation: 'spin 1s linear infinite' }} /> Fetching audit log…
+            </div>
+          )}
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: 'var(--font-sans)' }}>
               <thead>

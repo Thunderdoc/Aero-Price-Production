@@ -29,25 +29,34 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [showTip, setShowTip] = useState(false)
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
     setIsLoading(true)
-    setTimeout(() => {
-      const result = login(email, password)
-      setIsLoading(false)
+    try {
+      const result = await login(email, password)
       if (result.success) {
         onLogin()
       } else {
         setError(result.error ?? 'Login failed.')
       }
-    }, 400) // small artificial delay for UX
+    } finally {
+      setIsLoading(false)
+    }
   }
 
-  function quickLogin(cred: DemoCredential) {
+  async function quickLogin(cred: DemoCredential) {
     setEmail(cred.email)
     setPassword(cred.password)
     setError('')
+    setIsLoading(true)
+    try {
+      const result = await login(cred.email, cred.password)
+      if (result.success) onLogin()
+      else setError(result.error ?? 'Login failed.')
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (

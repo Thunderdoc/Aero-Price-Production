@@ -174,7 +174,7 @@ export default function GovernmentIntelligence() {
       <div style={{ background: 'var(--color-surface-bg)', border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-xl)' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-lg)' }}>
           <h2 style={{ fontSize: 'var(--text-heading-size)', fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', margin: 0 }}>DGCA Circular Feed</h2>
-          <span style={{ fontSize: 10, fontWeight: 600, color: anyConnected ? 'var(--color-success)' : 'var(--color-text-tertiary)', letterSpacing: '0.07em', fontFamily: 'var(--font-sans)' }}>{anyConnected ? 'LIVE' : 'UNAVAILABLE'}</span>
+          <span style={{ fontSize: 10, fontWeight: 600, color: anyConnected ? 'var(--color-info)' : 'var(--color-text-tertiary)', letterSpacing: '0.07em', fontFamily: 'var(--font-sans)' }}>{anyConnected ? 'OFFICIAL · CONNECTED' : 'UNAVAILABLE'}</span>
         </div>
         {dgcaCirculars.length > 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>

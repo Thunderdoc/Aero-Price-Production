@@ -5,6 +5,13 @@ import {
   fetchMospiCpiTransport,
   GOV_DATASETS,
 } from '../services/govFetcher'
+import {
+  isBackendAvailable,
+  apiGovDatasets,
+  apiDgcaMonthly,
+  apiDgcaCirculars,
+  apiMospiCpi,
+} from '../services/api'
 import type { GovDataset, DgcaCircular, DgcaMonthlyRecord, MospiCpiRecord } from '../types/observation'
 
 export interface GovDataState {
@@ -30,6 +37,50 @@ export function useGovData(): GovDataState {
   async function fetchAll() {
     setIsLoading(true)
     const now = new Date().toISOString()
+
+    // Try backend API first — it handles caching and gov source management server-side.
+    // Fall back to direct AllOrigins fetches when backend is not configured.
+    const backendUp = await isBackendAvailable()
+    if (backendUp) {
+      try {
+        const [datasetsResp, paxResp, circsResp, mospiResp] = await Promise.all([
+          apiGovDatasets(),
+          apiDgcaMonthly(),
+          apiDgcaCirculars(),
+          apiMospiCpi(),
+        ])
+        const paxAny = paxResp as any
+        const circsAny = circsResp as any
+        const mospiAny = mospiResp as any
+        setDatasets(
+          datasetsResp.datasets.map((d: any) => ({
+            id: d.dataset_id,
+            source: d.source_name,
+            organization: d.organization,
+            access_type: d.access_type as GovDataset['access_type'],
+            api_key_required: d.api_key_required === 'YES',
+            format: d.format as GovDataset['format'],
+            status: d.status as GovDataset['status'],
+            last_retrieved: d.last_retrieved,
+            last_attempt: d.last_attempt ?? now,
+            record_count: d.record_count,
+            checksum: null,
+            reference_period: d.reference_period,
+            source_url: d.source_url,
+            update_frequency: 'MONTHLY',
+            data_origin: 'OFFICIAL' as const,
+          }))
+        )
+        setDgcaMonthly(paxAny.records ?? [])
+        setDgcaCirculars(circsAny.circulars ?? [])
+        setMospiCpi(mospiAny.records ?? [])
+        setLastFetch(now)
+        setIsLoading(false)
+        return
+      } catch {
+        // Backend failed — fall through to direct fetches below
+      }
+    }
 
     const [paxResult, circularsResult, mospiResult] = await Promise.allSettled([
       fetchDgcaMonthlyStats(),
