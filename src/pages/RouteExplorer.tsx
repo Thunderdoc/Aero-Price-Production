@@ -28,7 +28,7 @@ export default function RouteExplorer() {
   const [showProv, setShowProv]   = useState(false)
   const corridor = corridors.find(c => c.id === route) ?? corridors[0]
   const routeOptions = corridors.map(c => ({ value: c.id, label: `${c.from} → ${c.to}` }))
-  const bookingData  = bookingWindowData.map(d => ({ label: d.window, value: d.avgFare }))
+  const bookingData  = bookingWindowData.map(d => ({ label: d.label, value: d.avgFare }))
 
   return (
     <div className="flex flex-col animate-fade-up" style={{ gap: 'var(--space-xl)', maxWidth: 860 }}>
@@ -225,13 +225,13 @@ export default function RouteExplorer() {
                     </tr>
                   </thead>
                   <tbody>
-                    {dataSources.filter(s => ['AIRLINE','OTA'].includes(s.type)).map(s => (
+                    {dataSources.filter(s => ['AIRLINE_DIRECT','OTA'].includes(s.type)).map(s => (
                       <tr key={s.id} style={{ borderBottom: '1px solid var(--color-border-primary)' }}>
                         <td className="text-body text-primary" style={{ padding: 'var(--space-sm) var(--space-lg) var(--space-sm) 0', fontWeight: 500 }}>{s.name}</td>
                         <td className="text-body text-secondary" style={{ padding: 'var(--space-sm) var(--space-lg) var(--space-sm) 0' }}>{s.type}</td>
                         <td style={{ padding: 'var(--space-sm) var(--space-lg) var(--space-sm) 0' }}><StatusBadge status={s.status} /></td>
-                        <td className="text-body text-secondary" style={{ padding: 'var(--space-sm) var(--space-lg) var(--space-sm) 0' }}>{s.lastSuccess}</td>
-                        <td className="text-body text-secondary" style={{ padding: 'var(--space-sm) 0' }}>{s.records.toLocaleString('en-IN')}</td>
+                        <td className="text-body text-secondary" style={{ padding: 'var(--space-sm) var(--space-lg) var(--space-sm) 0' }}>{s.lastPing}</td>
+                        <td className="text-body text-secondary" style={{ padding: 'var(--space-sm) 0' }}>{s.recordsToday.toLocaleString('en-IN')}</td>
                       </tr>
                     ))}
                   </tbody>

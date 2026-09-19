@@ -1,14 +1,18 @@
-import { useState, useEffect } from 'react'
-import { ArrowRight, TrendingUp, TrendingDown, Minus, Bell, Map as MapIcon, BarChart2, Zap, AlertTriangle } from 'lucide-react'
+import { useState } from 'react'
+import { ArrowRight, TrendingUp, TrendingDown, Bell, Map as MapIcon, BarChart2, AlertTriangle, Shield, Database, Plane } from 'lucide-react'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
 import TrendIndicator from '../components/TrendIndicator'
 import DataFreshness from '../components/DataFreshness'
+import { useAuth } from '../contexts/AuthContext'
+import { useGovData } from '../hooks/useGovData'
+import UpgradeModal from '../components/UpgradeModal'
 import {
-  indexValue, indexChange7d, indexChange30d, totalObservations,
-  activeSources, corridors, bookingWindowData, regionalData, recentAnomalies, carriers, pricePressureEvents
+  corridors, bookingWindowData, regionalData, recentAnomalies,
 } from '../data/sampleData'
 import type { Page } from '../components/AppShell'
+
+type Props = { onNavigate: (p: Page) => void }
 
 const card: React.CSSProperties = {
   background: 'var(--color-surface-bg)',
@@ -22,32 +26,12 @@ const cityOptions = [
   { value: 'DEL', label: 'Delhi' }, { value: 'BOM', label: 'Mumbai' },
   { value: 'BLR', label: 'Bengaluru' }, { value: 'MAA', label: 'Chennai' },
   { value: 'CCU', label: 'Kolkata' }, { value: 'HYD', label: 'Hyderabad' },
-  { value: 'AMD', label: 'Ahmedabad' }, { value: 'GOI', label: 'Goa' },
 ]
 
-// Animated live counter
-function AnimatedNumber({ value, duration = 1200 }: { value: number; duration?: number }) {
-  const [display, setDisplay] = useState(0)
-  useEffect(() => {
-    const start = Date.now()
-    const step = () => {
-      const elapsed = Date.now() - start
-      const progress = Math.min(elapsed / duration, 1)
-      const ease = 1 - Math.pow(1 - progress, 3)
-      setDisplay(Math.round(value * ease))
-      if (progress < 1) requestAnimationFrame(step)
-    }
-    requestAnimationFrame(step)
-  }, [value, duration])
-  return <>{display.toFixed(2)}</>
-}
-
-// Mini booking window sparkline (inline SVG)
 function BookingSparkline() {
   const data = bookingWindowData.map(d => d.avgFare)
-  const max = Math.max(...data)
-  const min = Math.min(...data)
-  const w = 260, h = 52
+  const max = Math.max(...data), min = Math.min(...data)
+  const w = 240, h = 48
   const pts = data.map((v, i) => {
     const x = (i / (data.length - 1)) * w
     const y = h - ((v - min) / (max - min)) * h
@@ -55,618 +39,299 @@ function BookingSparkline() {
   }).join(' ')
   return (
     <svg width={w} height={h} style={{ overflow: 'visible' }}>
-      <polyline
-        points={pts}
-        fill="none"
-        stroke="var(--color-brand-primary)"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <polyline
-        points={`0,${h} ${pts} ${w},${h}`}
-        fill="var(--color-brand-muted)"
-        opacity="0.35"
-        strokeWidth="0"
-      />
+      <polyline points={pts} fill="none" stroke="var(--color-brand-primary)" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }
 
-export default function Overview({ onNavigate }: { onNavigate: (p: Page) => void }) {
-  const [from, setFrom] = useState('DEL')
-  const [to, setTo] = useState('BOM')
-  const [liveIndex, setLiveIndex] = useState(indexValue)
-  const [tickerOffset, setTickerOffset] = useState(0)
+export default function Overview({ onNavigate }: Props) {
+  const { user, login } = useAuth()
+  const govData = useGovData()
+  const [fromCity, setFromCity] = useState('DEL')
+  const [toCity, setToCity] = useState('BOM')
+  const [searchResult, setSearchResult] = useState<string | null>(null)
+  const [showUpgrade, setShowUpgrade] = useState(false)
 
-  // Simulate live index fluctuation
-  useEffect(() => {
-    const id = setInterval(() => {
-      setLiveIndex(prev => +(prev + (Math.random() - 0.5) * 0.04).toFixed(2))
-    }, 5000)
-    return () => clearInterval(id)
-  }, [])
+  if (!user) return null
 
-  // Animate price ticker
-  useEffect(() => {
-    const id = setInterval(() => {
-      setTickerOffset(prev => (prev - 1) % 800)
-    }, 30)
-    return () => clearInterval(id)
-  }, [])
+  const rising = corridors.filter(c => c.trend === 'up').slice(0, 4)
+  const falling = corridors.filter(c => c.trend === 'down').slice(0, 4)
 
-  const risingRoutes = corridors.filter(c => c.trend === 'up').slice(0, 5)
-  const fallingRoutes = corridors.filter(c => c.trend === 'down').slice(0, 5)
-  const optimalRoute = bookingWindowData.find(d => d.window === 21)
+  function handleSearch(e: React.FormEvent) {
+    e.preventDefault()
+    setSearchResult(`${fromCity}-${toCity}`)
+  }
+
+  const selectStyle: React.CSSProperties = {
+    padding: '9px 32px 9px 12px',
+    borderRadius: 'var(--radius-md)',
+    border: '1.5px solid var(--color-border-primary)',
+    background: 'var(--color-surface-bg)',
+    color: 'var(--color-text-primary)',
+    fontSize: 14, fontFamily: 'var(--font-sans)',
+    cursor: 'pointer', outline: 'none',
+    appearance: 'none',
+  }
 
   return (
-    <div className="flex flex-col animate-fade-up" style={{ gap: 'var(--space-xl)', maxWidth: 1000 }}>
+    <div className="flex flex-col" style={{ gap: 'var(--space-xl)', maxWidth: 960 }}>
 
-      {/* ── Hero ─────────────────────────────────────────── */}
-      <div
-        style={{
-          borderRadius: 'var(--radius-xl)',
-          background: 'var(--gradient-hero)',
-          padding: 'var(--space-3xl)',
-          position: 'relative',
-          overflow: 'hidden',
-        }}
-      >
-        {/* Background glow blobs */}
-        <div style={{
-          position: 'absolute', top: -60, right: -60, width: 300, height: 300,
-          borderRadius: '50%', background: 'radial-gradient(circle, rgba(99,102,241,0.25) 0%, transparent 70%)',
-          pointerEvents: 'none',
-        }} />
-        <div style={{
-          position: 'absolute', bottom: -40, left: 100, width: 200, height: 200,
-          borderRadius: '50%', background: 'radial-gradient(circle, rgba(37,99,235,0.2) 0%, transparent 70%)',
-          pointerEvents: 'none',
-        }} />
-
-        <div style={{ position: 'relative', zIndex: 1 }}>
-          <div className="flex items-center" style={{ gap: 'var(--space-sm)', marginBottom: 'var(--space-lg)' }}>
-            <span
-              style={{
-                fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase',
-                fontFamily: 'var(--font-sans)', color: 'rgba(255,255,255,0.5)',
-              }}
-            >
-              National Airfare Intelligence
+      {/* Role-aware strip */}
+      <div style={{ background: 'var(--color-surface-bg)', border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-md) var(--space-xl)', display: 'flex', alignItems: 'center', gap: 'var(--space-xl)', flexWrap: 'wrap' }}>
+        {user.role === 'ADMIN' && (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
+              <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--color-warning)' }} />
+              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-warning)', letterSpacing: '0.06em', fontFamily: 'var(--font-sans)' }}>COLLECTOR STATUS</span>
+            </div>
+            <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>5 sources · 0/5 active · Gov fetch: {govData.anyConnected ? 'CONNECTED' : 'UNAVAILABLE'}</span>
+            <button onClick={() => onNavigate('admin')} style={{ fontSize: 11, color: 'var(--color-brand-primary)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontWeight: 600, marginLeft: 'auto' }}>Open Admin →</button>
+          </>
+        )}
+        {user.role === 'ANALYST' && (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
+              <Shield size={13} style={{ color: 'var(--color-info)' }} />
+              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-info)', letterSpacing: '0.06em', fontFamily: 'var(--font-sans)' }}>GOVERNMENT ANALYST</span>
+            </div>
+            <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>
+              DGCA data: {govData.anyConnected ? 'FRESH' : 'UNAVAILABLE'} · {govData.dgcaMonthly.length} records
             </span>
-            <span
-              style={{
-                fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase',
-                fontFamily: 'var(--font-sans)', color: 'var(--color-brand-light)',
-                background: 'rgba(96,165,250,0.15)', padding: '2px 8px',
-                borderRadius: 'var(--radius-full)', border: '1px solid rgba(96,165,250,0.3)',
-              }}
-            >
-              SAMPLE DATA
-            </span>
-          </div>
-
-          <h1
-            style={{
-              fontSize: 'clamp(1.75rem, 4vw, 2.75rem)', fontWeight: 800, color: 'white',
-              fontFamily: 'var(--font-sans)', lineHeight: 1.15, marginBottom: 'var(--space-md)',
-            }}
-          >
-            AEROPRICE INDIA
-          </h1>
-          <p style={{ color: 'rgba(255,255,255,0.6)', fontFamily: 'var(--font-sans)', fontSize: 'var(--text-label-size)', maxWidth: 480, lineHeight: 1.6, marginBottom: 'var(--space-2xl)' }}>
-            Real-time domestic airfare price intelligence for India — from raw observations to a transparent, reproducible national index.
-          </p>
-
-          <div className="flex flex-wrap" style={{ gap: 'var(--space-md)' }}>
-            <Button variant="primary" size="lg" onClick={() => onNavigate('map')} iconEnd={<MapIcon size={16} />}>
-              View India Map
-            </Button>
-            <button
-              onClick={() => onNavigate('routes')}
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: 'var(--space-sm)',
-                padding: 'var(--space-md) var(--space-2xl)', borderRadius: 'var(--radius-full)',
-                background: 'rgba(255,255,255,0.1)', color: 'white', border: '1px solid rgba(255,255,255,0.2)',
-                cursor: 'pointer', fontFamily: 'var(--font-sans)', fontSize: 'var(--text-label-size)',
-                fontWeight: 500, transition: 'all 200ms',
-              }}
-              onMouseOver={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.18)' }}
-              onMouseOut={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.1)' }}
-            >
-              Explore Routes <ArrowRight size={15} />
-            </button>
-          </div>
-        </div>
+            <button onClick={() => onNavigate('government')} style={{ fontSize: 11, color: 'var(--color-brand-primary)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontWeight: 600, marginLeft: 'auto' }}>Open Gov Intel →</button>
+          </>
+        )}
+        {user.role === 'PUBLIC' && user.plan === 'SUBSCRIBER' && (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
+              <Bell size={13} style={{ color: 'var(--color-brand-primary)' }} />
+              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-brand-primary)', letterSpacing: '0.06em', fontFamily: 'var(--font-sans)' }}>YOUR ALERTS</span>
+            </div>
+            <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>Alerts pending first observation — airfare collector not yet connected</span>
+            <button onClick={() => onNavigate('alerts')} style={{ fontSize: 11, color: 'var(--color-brand-primary)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontWeight: 600, marginLeft: 'auto' }}>View Alerts →</button>
+          </>
+        )}
+        {user.role === 'PUBLIC' && user.plan === 'FREE' && (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
+              <Database size={13} style={{ color: 'var(--color-text-tertiary)' }} />
+              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-tertiary)', letterSpacing: '0.06em', fontFamily: 'var(--font-sans)' }}>FREE PLAN</span>
+            </div>
+            <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>Upgrade to track prices and get fare alerts for any corridor</span>
+            <button onClick={() => setShowUpgrade(true)} style={{ fontSize: 11, color: 'var(--color-brand-primary)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontWeight: 600, marginLeft: 'auto' }}>See Plans →</button>
+          </>
+        )}
       </div>
 
-      {/* ── Live price ticker ─────────────────────────────── */}
-      <div
-        style={{
-          ...card,
-          padding: 'var(--space-md) var(--space-xl)',
-          overflow: 'hidden',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 'var(--space-lg)',
-        }}
-      >
-        <span
-          style={{
-            fontSize: 9, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase',
-            fontFamily: 'var(--font-sans)', color: 'var(--color-brand-primary)',
-            whiteSpace: 'nowrap', flexShrink: 0,
-          }}
-        >
-          LIVE FARES
-        </span>
-        <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
-          <div
-            style={{
-              display: 'flex', gap: 'var(--space-3xl)', whiteSpace: 'nowrap',
-              transform: `translateX(${tickerOffset}px)`,
-              transition: 'none',
-            }}
-          >
-            {[...corridors, ...corridors].map((c, i) => (
-              <button
-                key={`${c.id}-${i}`}
-                onClick={() => onNavigate('routes')}
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 'var(--space-sm)',
-                  background: 'none', border: 'none', cursor: 'pointer',
-                  fontFamily: 'var(--font-sans)',
-                }}
-              >
-                <span style={{ fontSize: 'var(--text-body-size)', color: 'var(--color-text-primary)', fontWeight: 500 }}>
-                  {c.from}–{c.to}
-                </span>
-                <span style={{ fontSize: 'var(--text-body-size)', color: 'var(--color-text-secondary)' }}>
-                  ₹{c.currentFare.toLocaleString('en-IN')}
-                </span>
-                {c.trend === 'up'
-                  ? <TrendingUp size={11} style={{ color: 'var(--color-danger)' }} />
-                  : c.trend === 'down'
-                  ? <TrendingDown size={11} style={{ color: 'var(--color-success)' }} />
-                  : <Minus size={11} style={{ color: 'var(--color-warning)' }} />
-                }
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
+      {/* Hero: Index status */}
+      <div style={{ ...card, background: 'var(--gradient-hero)', border: 'none', overflow: 'hidden', position: 'relative', padding: 'var(--space-2xl)' }}>
+        <div style={{ position: 'absolute', top: -40, right: -40, width: 200, height: 200, borderRadius: '50%', background: 'rgba(37,99,235,0.2)', filter: 'blur(40px)', pointerEvents: 'none' }} />
+        <div style={{ position: 'absolute', bottom: -20, left: 100, width: 150, height: 150, borderRadius: '50%', background: 'rgba(99,102,241,0.15)', filter: 'blur(30px)', pointerEvents: 'none' }} />
+        <div style={{ position: 'relative' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', color: '#60a5fa', marginBottom: 8, fontFamily: 'var(--font-sans)' }}>ALL-INDIA AIRFARE INDEX · SIH26056</div>
 
-      {/* ── Main KPI card ─────────────────────────────────── */}
-      <div style={card}>
-        <div className="flex items-start flex-wrap" style={{ gap: 'var(--space-2xl)' }}>
-          {/* Big index number */}
-          <div style={{ flex: '1 1 260px' }}>
-            <p
-              style={{
-                fontSize: 9, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase',
-                fontFamily: 'var(--font-sans)', color: 'var(--color-text-tertiary)',
-                marginBottom: 'var(--space-sm)',
-              }}
-            >
-              All-India Airfare Price Index
-            </p>
-            <div className="flex items-end" style={{ gap: 'var(--space-lg)', marginBottom: 'var(--space-lg)' }}>
-              <span
-                style={{
-                  fontSize: '4rem', fontWeight: 800, lineHeight: 1, fontFamily: 'var(--font-sans)',
-                  color: 'var(--color-text-primary)', letterSpacing: '-0.02em',
-                }}
-              >
-                <AnimatedNumber value={liveIndex} />
-              </span>
-              <div style={{ paddingBottom: 8 }}>
-                <span
-                  style={{
-                    fontSize: 'var(--text-caption-size)', color: 'var(--color-text-tertiary)',
-                    fontFamily: 'var(--font-sans)',
-                  }}
-                >
-                  Base: 100 · Jan 2020
-                </span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 24, flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontSize: '2.5rem', fontWeight: 800, color: 'rgba(255,255,255,0.3)', fontFamily: 'var(--font-sans)', letterSpacing: '-0.03em', marginBottom: 4 }}>
+                  — —
+                </div>
+                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--color-warning)', background: 'rgba(217,119,6,0.2)', padding: '4px 10px', borderRadius: 4, display: 'inline-block', fontFamily: 'var(--font-sans)' }}>
+                  INDEX NOT PUBLISHED
+                </div>
+              </div>
+              <div style={{ flex: 1, maxWidth: 400 }}>
+                <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)', fontFamily: 'var(--font-sans)', lineHeight: 1.6, marginBottom: 12 }}>
+                  No real airfare observations available. All airline sources are showing <strong style={{ color: '#fcd34d' }}>CHALLENGE DETECTED</strong> — configure a backend collector to activate the index.
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {['IndiGo', 'Air India', 'Akasa', 'SpiceJet', 'AIX'].map(a => (
+                    <span key={a} style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-warning)', background: 'rgba(217,119,6,0.2)', padding: '2px 7px', borderRadius: 3, fontFamily: 'var(--font-sans)', letterSpacing: '0.04em' }}>
+                      {a} · BLOCKED
+                    </span>
+                  ))}
+                </div>
               </div>
             </div>
-            <div className="flex flex-wrap" style={{ gap: 'var(--space-xl)' }}>
-              {[
-                { label: '7-DAY', dir: 'up' as const, val: indexChange7d },
-                { label: '30-DAY', dir: 'up' as const, val: indexChange30d },
-              ].map(({ label, dir, val }) => (
-                <div key={label} className="flex flex-col" style={{ gap: 'var(--space-xs)' }}>
-                  <span
-                    style={{
-                      fontSize: 9, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase',
-                      fontFamily: 'var(--font-sans)', color: 'var(--color-text-tertiary)',
-                    }}
-                  >
-                    {label}
-                  </span>
-                  <TrendIndicator direction={dir} value={val} />
+
+            {govData.dgcaMonthly.length > 0 && (
+              <div style={{ padding: '12px 16px', borderRadius: 'var(--radius-md)', background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)' }}>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: '#60a5fa', marginBottom: 8, fontFamily: 'var(--font-sans)' }}>
+                  OFFICIAL REFERENCE DATA — DGCA
+                </div>
+                <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+                  {govData.dgcaMonthly.slice(0, 3).map(m => (
+                    <div key={m.month}>
+                      <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--font-mono)' }}>{m.month}</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: 'rgba(255,255,255,0.85)', fontFamily: 'var(--font-sans)' }}>
+                        {(m.domestic_passengers / 1_000_000).toFixed(1)}M pax
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', gap: 12, marginTop: 24, flexWrap: 'wrap' }}>
+            <Button variant="primary" onClick={() => onNavigate('map')} iconEnd={<MapIcon size={14} />}>Explore Airfare Map</Button>
+            <Button variant="ghost" onClick={() => onNavigate('routes')} iconEnd={<ArrowRight size={14} />} style={{ color: 'rgba(255,255,255,0.7)', borderColor: 'rgba(255,255,255,0.2)' }}>Check a Route</Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Route search */}
+      <div style={card}>
+        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', marginBottom: 'var(--space-md)', fontFamily: 'var(--font-sans)' }}>
+          CHECK AIRFARE INTELLIGENCE
+        </div>
+        <form onSubmit={handleSearch} style={{ display: 'flex', gap: 'var(--space-md)', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--color-text-tertiary)', letterSpacing: '0.05em', fontFamily: 'var(--font-sans)' }}>FROM</label>
+            <select value={fromCity} onChange={e => { setFromCity(e.target.value); setSearchResult(null) }} style={selectStyle}>
+              {cityOptions.map(c => <option key={c.value} value={c.value}>{c.label} ({c.value})</option>)}
+            </select>
+          </div>
+          <div style={{ paddingBottom: 10, color: 'var(--color-text-tertiary)', fontSize: 18 }}>→</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--color-text-tertiary)', letterSpacing: '0.05em', fontFamily: 'var(--font-sans)' }}>TO</label>
+            <select value={toCity} onChange={e => { setToCity(e.target.value); setSearchResult(null) }} style={selectStyle}>
+              {cityOptions.map(c => <option key={c.value} value={c.value}>{c.label} ({c.value})</option>)}
+            </select>
+          </div>
+          <Button type="submit" variant="primary" iconEnd={<ArrowRight size={14} />}>CHECK ROUTE</Button>
+        </form>
+
+        {searchResult && (
+          <div className="animate-fade-up" style={{ marginTop: 'var(--space-xl)', padding: 'var(--space-lg)', borderRadius: 'var(--radius-lg)', background: 'var(--color-surface-secondary)', border: '1px solid var(--color-border-primary)' }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', marginBottom: 8 }}>
+              {fromCity} → {toCity}
+            </div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-warning)', fontFamily: 'var(--font-sans)', marginBottom: 4 }}>NO LIVE OBSERVATION AVAILABLE</div>
+            <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginBottom: 12 }}>
+              No real airfare observations collected for this corridor. All airline sources are showing CHALLENGE DETECTED.
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button variant="subtle" onClick={() => onNavigate('sources')}>View Source Status</Button>
+              <Button variant="subtle" onClick={() => onNavigate('livefares')}>Live Fares Table</Button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Rising / Falling corridors */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-lg)' }}>
+        {[
+          { title: 'RISING FARES', items: rising, color: 'var(--color-danger)', icon: TrendingUp },
+          { title: 'FALLING FARES', items: falling, color: 'var(--color-success)', icon: TrendingDown },
+        ].map(({ title, items, color, icon: Icon }) => (
+          <div key={title} style={card}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--space-lg)' }}>
+              <Icon size={14} style={{ color }} />
+              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>{title}</span>
+              <span style={{ fontSize: 9, color: 'var(--color-warning)', background: 'var(--color-warning-bg)', padding: '1px 5px', borderRadius: 3, fontFamily: 'var(--font-sans)', fontWeight: 600 }}>GENERATED</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+              {items.map(c => (
+                <div key={c.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderRadius: 'var(--radius-md)', background: 'var(--color-surface-secondary)', cursor: 'pointer' }}
+                  onClick={() => onNavigate('routes')}
+                >
+                  <div>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}>{c.from} → {c.to}</span>
+                    <DataFreshness minutesAgo={c.freshness} className="ml-sm" />
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>₹{c.currentFare.toLocaleString('en-IN')}</div>
+                    <TrendIndicator direction={c.trend} value={Math.abs(c.change7d)} size="sm" />
+                  </div>
                 </div>
               ))}
             </div>
           </div>
+        ))}
+      </div>
 
-          {/* Stats column */}
-          <div className="flex flex-col" style={{ gap: 'var(--space-lg)', flex: '1 1 200px' }}>
-            {[
-              { label: 'CORRIDORS MONITORED', value: corridors.length },
-              { label: 'VALIDATED OBSERVATIONS', value: totalObservations.toLocaleString('en-IN') },
-              { label: 'ACTIVE SOURCES', value: activeSources },
-            ].map(({ label, value }) => (
-              <div key={label} className="flex items-center justify-between" style={{ gap: 'var(--space-md)' }}>
-                <span
-                  style={{
-                    fontSize: 9, fontWeight: 600, letterSpacing: '0.09em', textTransform: 'uppercase',
-                    fontFamily: 'var(--font-sans)', color: 'var(--color-text-tertiary)',
-                  }}
-                >
-                  {label}
-                </span>
-                <span
-                  style={{
-                    fontSize: 'var(--text-label-size)', fontWeight: 600,
-                    fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)',
-                  }}
-                >
-                  {value}
-                </span>
-              </div>
-            ))}
-            <DataFreshness minutesAgo={18} />
+      {/* Booking window mini chart */}
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-lg)', flexWrap: 'wrap', gap: 'var(--space-md)' }}>
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', marginBottom: 4, fontFamily: 'var(--font-sans)' }}>BOOKING WINDOW PATTERN</div>
+            <div style={{ fontSize: 'var(--text-label-size)', fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}>Advance purchase fare curve</div>
           </div>
+          <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
+            <Badge label="GENERATED" variant="warning" />
+            <Button variant="subtle" onClick={() => onNavigate('routes')} iconEnd={<ArrowRight size={13} />}>Route Explorer</Button>
+          </div>
+        </div>
+        <BookingSparkline />
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
+          <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>T+1 (tomorrow)</span>
+          <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>T+45 (45 days)</span>
+        </div>
+        <div style={{ marginTop: 12, padding: '8px 12px', borderRadius: 'var(--radius-sm)', background: 'var(--color-warning-bg)', fontSize: 11, color: 'var(--color-warning)', fontFamily: 'var(--font-sans)' }}>
+          ⚠ Booking window analysis requires real observations for T+1, T+7, T+15, T+30, T+45. Currently showing generated baseline.
         </div>
       </div>
 
-      {/* ── Market movement + Quick search ────────────────── */}
-      <div className="flex flex-wrap" style={{ gap: 'var(--space-xl)' }}>
-
-        {/* Rising */}
-        <div style={{ ...card, flex: '1 1 200px', minWidth: 200 }}>
-          <div className="flex items-center" style={{ gap: 'var(--space-sm)', marginBottom: 'var(--space-lg)' }}>
-            <div
-              style={{
-                width: 28, height: 28, borderRadius: 'var(--radius-md)', display: 'flex',
-                alignItems: 'center', justifyContent: 'center',
-                background: 'var(--color-danger-bg)',
-              }}
-            >
-              <TrendingUp size={14} style={{ color: 'var(--color-danger)' }} />
-            </div>
-            <span style={{ fontSize: 'var(--text-label-size)', fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)' }}>Rising</span>
-          </div>
-          <div className="flex flex-col" style={{ gap: 4 }}>
-            {risingRoutes.map(c => (
-              <button
-                key={c.id}
-                onClick={() => onNavigate('routes')}
-                className="flex items-center justify-between"
-                style={{
-                  padding: 'var(--space-sm) var(--space-md)', borderRadius: 'var(--radius-md)',
-                  transition: '150ms', background: 'transparent', border: 'none', cursor: 'pointer', width: '100%',
-                }}
-                onMouseOver={e => { (e.currentTarget as HTMLElement).style.background = 'var(--color-surface-hover)' }}
-                onMouseOut={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
-              >
-                <span style={{ fontSize: 'var(--text-body-size)', fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)', fontWeight: 500 }}>
-                  {c.from} → {c.to}
-                </span>
-                <div className="flex items-center" style={{ gap: 'var(--space-sm)' }}>
-                  <span style={{ fontSize: 'var(--text-caption-size)', fontFamily: 'var(--font-sans)', color: 'var(--color-text-tertiary)' }}>
-                    ₹{c.currentFare.toLocaleString('en-IN')}
-                  </span>
-                  <TrendIndicator direction="up" value={c.change7d} size="sm" />
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Falling */}
-        <div style={{ ...card, flex: '1 1 200px', minWidth: 200 }}>
-          <div className="flex items-center" style={{ gap: 'var(--space-sm)', marginBottom: 'var(--space-lg)' }}>
-            <div
-              style={{
-                width: 28, height: 28, borderRadius: 'var(--radius-md)', display: 'flex',
-                alignItems: 'center', justifyContent: 'center',
-                background: 'var(--color-success-bg)',
-              }}
-            >
-              <TrendingDown size={14} style={{ color: 'var(--color-success)' }} />
-            </div>
-            <span style={{ fontSize: 'var(--text-label-size)', fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)' }}>Falling</span>
-          </div>
-          <div className="flex flex-col" style={{ gap: 4 }}>
-            {fallingRoutes.map(c => (
-              <button
-                key={c.id}
-                onClick={() => onNavigate('routes')}
-                className="flex items-center justify-between"
-                style={{
-                  padding: 'var(--space-sm) var(--space-md)', borderRadius: 'var(--radius-md)',
-                  transition: '150ms', background: 'transparent', border: 'none', cursor: 'pointer', width: '100%',
-                }}
-                onMouseOver={e => { (e.currentTarget as HTMLElement).style.background = 'var(--color-surface-hover)' }}
-                onMouseOut={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
-              >
-                <span style={{ fontSize: 'var(--text-body-size)', fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)', fontWeight: 500 }}>
-                  {c.from} → {c.to}
-                </span>
-                <div className="flex items-center" style={{ gap: 'var(--space-sm)' }}>
-                  <span style={{ fontSize: 'var(--text-caption-size)', fontFamily: 'var(--font-sans)', color: 'var(--color-text-tertiary)' }}>
-                    ₹{c.currentFare.toLocaleString('en-IN')}
-                  </span>
-                  <TrendIndicator direction="down" value={Math.abs(c.change7d)} size="sm" />
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Quick route check */}
-        <div style={{ ...card, flex: '2 1 320px' }}>
-          <div className="flex items-center" style={{ gap: 'var(--space-sm)', marginBottom: 'var(--space-lg)' }}>
-            <div style={{ width: 28, height: 28, borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-brand-muted)' }}>
-              <Zap size={14} style={{ color: 'var(--color-brand-primary)' }} />
-            </div>
-            <span style={{ fontSize: 'var(--text-label-size)', fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)' }}>Quick Fare Check</span>
-          </div>
-          <div className="flex flex-wrap items-end" style={{ gap: 'var(--space-md)' }}>
-            <div style={{ flex: '1 1 120px' }}>
-              <label style={{ fontSize: 9, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', fontFamily: 'var(--font-sans)', color: 'var(--color-text-tertiary)', display: 'block', marginBottom: 4 }}>From</label>
-              <select
-                value={from}
-                onChange={e => setFrom(e.target.value)}
-                style={{
-                  width: '100%', padding: 'var(--space-sm) var(--space-md)',
-                  border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-md)',
-                  background: 'var(--color-surface-secondary)', color: 'var(--color-text-primary)',
-                  fontFamily: 'var(--font-sans)', fontSize: 'var(--text-body-size)', cursor: 'pointer',
-                }}
-              >
-                {cityOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-            </div>
-            <div style={{ flex: '1 1 120px' }}>
-              <label style={{ fontSize: 9, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', fontFamily: 'var(--font-sans)', color: 'var(--color-text-tertiary)', display: 'block', marginBottom: 4 }}>To</label>
-              <select
-                value={to}
-                onChange={e => setTo(e.target.value)}
-                style={{
-                  width: '100%', padding: 'var(--space-sm) var(--space-md)',
-                  border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-md)',
-                  background: 'var(--color-surface-secondary)', color: 'var(--color-text-primary)',
-                  fontFamily: 'var(--font-sans)', fontSize: 'var(--text-body-size)', cursor: 'pointer',
-                }}
-              >
-                {cityOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-            </div>
-            <Button variant="primary" onClick={() => onNavigate('routes')} iconEnd={<ArrowRight size={14} />}>
-              Check
-            </Button>
-          </div>
-          {/* Show fare for selected route */}
-          {(() => {
-            const sel = corridors.find(c => (c.from === from && c.to === to) || (c.from === to && c.to === from))
-            if (!sel) return (
-              <p style={{ fontSize: 'var(--text-caption-size)', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginTop: 'var(--space-md)' }}>
-                Select a monitored route pair to see current fare intelligence.
-              </p>
-            )
-            return (
-              <div
-                className="flex items-center flex-wrap"
-                style={{ gap: 'var(--space-lg)', marginTop: 'var(--space-lg)', padding: 'var(--space-md) var(--space-lg)', background: 'var(--color-surface-secondary)', borderRadius: 'var(--radius-md)' }}
-              >
-                <div className="flex flex-col" style={{ gap: 2 }}>
-                  <span style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.08em', fontFamily: 'var(--font-sans)', color: 'var(--color-text-tertiary)', fontWeight: 600 }}>Current Fare</span>
-                  <span style={{ fontSize: '1.5rem', fontWeight: 700, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)' }}>
-                    ₹{sel.currentFare.toLocaleString('en-IN')}
-                  </span>
-                </div>
-                <TrendIndicator direction={sel.trend} value={Math.abs(sel.change7d)} />
-                <div className="flex flex-col" style={{ gap: 2 }}>
-                  <span style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.08em', fontFamily: 'var(--font-sans)', color: 'var(--color-text-tertiary)', fontWeight: 600 }}>Book At</span>
-                  <span style={{ fontSize: 'var(--text-body-size)', fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)' }}>T+{sel.bookingWindowOptimal}</span>
-                </div>
-              </div>
-            )
-          })()}
-        </div>
-      </div>
-
-      {/* ── Booking window + Carrier row ─────────────────── */}
-      <div className="flex flex-wrap" style={{ gap: 'var(--space-xl)' }}>
-
-        {/* Booking window */}
-        <div style={{ ...card, flex: '2 1 300px' }}>
-          <div style={{ marginBottom: 'var(--space-lg)' }}>
-            <h2 style={{ fontSize: 'var(--text-heading-size)', fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)', marginBottom: 'var(--space-xs)' }}>
-              Booking Window Effect
-            </h2>
-            <p style={{ fontSize: 'var(--text-body-size)', fontFamily: 'var(--font-sans)', color: 'var(--color-text-secondary)' }}>
-              Earlier booking = lower fares. Optimal window: T+{optimalRoute?.window ?? 21} days
-            </p>
-          </div>
-          <BookingSparkline />
-          <div className="flex flex-wrap" style={{ gap: 'var(--space-xl)', marginTop: 'var(--space-md)' }}>
-            {bookingWindowData.filter((_, i) => i % 3 === 0).map(d => (
-              <div key={d.window} className="flex flex-col" style={{ gap: 2 }}>
-                <span style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.08em', fontFamily: 'var(--font-sans)', color: 'var(--color-text-tertiary)', fontWeight: 600 }}>{d.label}</span>
-                <span style={{ fontSize: 'var(--text-label-size)', fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)' }}>
-                  ₹{d.avgFare.toLocaleString('en-IN')}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Carrier summary */}
-        <div style={{ ...card, flex: '1 1 220px' }}>
-          <h2 style={{ fontSize: 'var(--text-heading-size)', fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)', marginBottom: 'var(--space-lg)' }}>
-            Carrier Share
-          </h2>
-          <div className="flex flex-col" style={{ gap: 'var(--space-sm)' }}>
-            {carriers.map(car => (
-              <div key={car.code} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center" style={{ gap: 'var(--space-sm)' }}>
-                    <span style={{ width: 10, height: 10, borderRadius: '50%', background: car.color, display: 'block', flexShrink: 0 }} />
-                    <span style={{ fontSize: 'var(--text-body-size)', fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)', fontWeight: 500 }}>{car.name}</span>
-                  </div>
-                  <span style={{ fontSize: 'var(--text-caption-size)', fontFamily: 'var(--font-sans)', color: 'var(--color-text-secondary)' }}>{car.marketShare}%</span>
-                </div>
-                <div style={{ height: 4, borderRadius: 'var(--radius-full)', background: 'var(--color-surface-secondary)', overflow: 'hidden' }}>
-                  <div style={{ height: '100%', width: `${car.marketShare}%`, background: car.color, borderRadius: 'var(--radius-full)', transition: 'width 1s ease' }} />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* ── Regional index ────────────────────────────────── */}
+      {/* Regional cards */}
       <div>
-        <h2 style={{ fontSize: 'var(--text-heading-size)', fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)', marginBottom: 'var(--space-xl)' }}>
-          Regional Airfare Index
-        </h2>
-        <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--space-md)' }}>
-          {regionalData.map(r => {
-            const dir = r.change7d > 0.5 ? 'up' : r.change7d < -0.5 ? 'down' : 'stable'
-            return (
-              <div
-                key={r.region}
-                style={{
-                  ...card,
-                  cursor: 'pointer',
-                  transition: 'all 200ms',
-                  padding: 'var(--space-lg)',
-                  position: 'relative',
-                  overflow: 'hidden',
-                }}
-                onMouseOver={e => {
-                  const el = e.currentTarget as HTMLElement
-                  el.style.transform = 'translateY(-2px)'
-                  el.style.boxShadow = 'var(--shadow-md)'
-                }}
-                onMouseOut={e => {
-                  const el = e.currentTarget as HTMLElement
-                  el.style.transform = 'translateY(0)'
-                  el.style.boxShadow = 'var(--shadow-sm)'
-                }}
-                onClick={() => onNavigate('government')}
-              >
-                <div
-                  style={{
-                    position: 'absolute', top: 0, right: 0, width: 60, height: 60,
-                    borderRadius: '0 0 0 60px',
-                    background: dir === 'up' ? 'var(--color-danger-bg)' : dir === 'down' ? 'var(--color-success-bg)' : 'var(--color-warning-bg)',
-                  }}
-                />
-                <span
-                  style={{
-                    fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.1em',
-                    fontFamily: 'var(--font-sans)', color: 'var(--color-text-tertiary)', fontWeight: 600,
-                    display: 'block', marginBottom: 'var(--space-sm)',
-                  }}
-                >
-                  {r.region}
-                </span>
-                <div
-                  style={{
-                    fontSize: '1.6rem', fontWeight: 700, fontFamily: 'var(--font-sans)',
-                    color: 'var(--color-text-primary)', lineHeight: 1.1, marginBottom: 'var(--space-sm)',
-                  }}
-                >
-                  ₹{r.avgFare.toLocaleString('en-IN')}
-                </div>
-                <TrendIndicator direction={dir} value={Math.abs(r.change7d)} size="sm" />
-                <div
-                  style={{
-                    fontSize: 9, fontFamily: 'var(--font-sans)', color: 'var(--color-text-tertiary)',
-                    marginTop: 'var(--space-xs)',
-                  }}
-                >
-                  {r.routeCount} routes · {r.observations.toLocaleString('en-IN')} obs
-                </div>
-              </div>
-            )
-          })}
+        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', marginBottom: 'var(--space-md)', fontFamily: 'var(--font-sans)', display: 'flex', alignItems: 'center', gap: 8 }}>
+          REGIONAL INDEX
+          <span style={{ fontSize: 9, color: 'var(--color-warning)', background: 'var(--color-warning-bg)', padding: '1px 5px', borderRadius: 3, fontWeight: 600 }}>GENERATED</span>
         </div>
-      </div>
-
-      {/* ── Recent anomalies + Events row ─────────────────── */}
-      <div className="flex flex-wrap" style={{ gap: 'var(--space-xl)' }}>
-
-        {/* Anomalies */}
-        <div style={{ ...card, flex: '3 1 320px' }}>
-          <div className="flex items-center justify-between" style={{ marginBottom: 'var(--space-lg)' }}>
-            <div className="flex items-center" style={{ gap: 'var(--space-sm)' }}>
-              <AlertTriangle size={15} style={{ color: 'var(--color-warning)' }} />
-              <h2 style={{ fontSize: 'var(--text-heading-size)', fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)' }}>
-                Recent Anomalies
-              </h2>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--space-md)' }}>
+          {regionalData.map(r => (
+            <div key={r.region} style={{ ...card, padding: 'var(--space-lg)' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', marginBottom: 4, fontFamily: 'var(--font-sans)' }}>{r.region}</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', marginBottom: 2 }}>₹{r.avgFare.toLocaleString('en-IN')}</div>
+              <TrendIndicator direction={r.change7d > 0.5 ? 'up' : r.change7d < -0.5 ? 'down' : 'stable'} value={Math.abs(r.change7d)} size="sm" />
+              <div style={{ marginTop: 4, fontSize: 10, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>{r.routeCount} routes</div>
             </div>
-            <Badge label={`${recentAnomalies.filter(a => !a.resolved).length} active`} variant="warning" />
-          </div>
-          <div className="flex flex-col" style={{ gap: 'var(--space-sm)' }}>
-            {recentAnomalies.slice(0, 4).map(a => (
-              <div
-                key={a.id}
-                className="flex items-start justify-between"
-                style={{
-                  padding: 'var(--space-md) var(--space-lg)',
-                  background: a.resolved ? 'var(--color-surface-secondary)' : 'var(--color-warning-bg)',
-                  borderRadius: 'var(--radius-md)',
-                  borderLeft: `3px solid ${a.resolved ? 'var(--color-border-secondary)' : a.type === 'SPIKE' ? 'var(--color-danger)' : a.type === 'DIP' ? 'var(--color-success)' : 'var(--color-warning)'}`,
-                }}
-              >
-                <div className="flex flex-col" style={{ gap: 2 }}>
-                  <span style={{ fontSize: 'var(--text-body-size)', fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)' }}>
-                    {a.route} — {a.type}
-                  </span>
-                  <span style={{ fontSize: 'var(--text-caption-size)', fontFamily: 'var(--font-sans)', color: 'var(--color-text-secondary)' }}>
-                    ₹{a.fare.toLocaleString('en-IN')} vs expected ₹{a.expectedFare.toLocaleString('en-IN')} · {a.detectedAt}
-                  </span>
-                </div>
-                <Badge label={a.resolved ? 'Resolved' : 'Active'} variant={a.resolved ? 'default' : 'warning'} />
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Upcoming price pressure */}
-        <div style={{ ...card, flex: '2 1 220px' }}>
-          <div className="flex items-center" style={{ gap: 'var(--space-sm)', marginBottom: 'var(--space-lg)' }}>
-            <Bell size={15} style={{ color: 'var(--color-brand-primary)' }} />
-            <h2 style={{ fontSize: 'var(--text-heading-size)', fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)' }}>
-              Upcoming Pressure
-            </h2>
-          </div>
-          <div className="flex flex-col" style={{ gap: 'var(--space-sm)' }}>
-            {pricePressureEvents.slice(0, 5).map(ev => (
-              <div key={ev.name} className="flex items-center justify-between" style={{ gap: 'var(--space-md)' }}>
-                <div className="flex flex-col" style={{ gap: 2 }}>
-                  <span style={{ fontSize: 'var(--text-body-size)', fontWeight: 500, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)' }}>{ev.name}</span>
-                  <span style={{ fontSize: 'var(--text-caption-size)', fontFamily: 'var(--font-sans)', color: 'var(--color-text-tertiary)' }}>{ev.date}</span>
-                </div>
-                <Badge
-                  label={ev.impact}
-                  variant={ev.impact === 'HIGH' ? 'danger' : ev.impact === 'MEDIUM' ? 'warning' : 'default'}
-                />
-              </div>
-            ))}
-          </div>
-          <Button variant="subtle" size="sm" onClick={() => onNavigate('alerts')} iconEnd={<ArrowRight size={13} />} style={{ marginTop: 'var(--space-lg)' }}>
-            Set fare alerts
-          </Button>
+          ))}
         </div>
       </div>
 
+      {/* Recent anomalies */}
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--space-lg)' }}>
+          <AlertTriangle size={14} style={{ color: 'var(--color-warning)' }} />
+          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>RECENT ANOMALIES</span>
+          <Badge label="GENERATED" variant="warning" />
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+          {recentAnomalies.slice(0, 4).map(a => (
+            <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', padding: '8px 12px', borderRadius: 'var(--radius-md)', background: a.type === 'SPIKE' ? 'var(--color-danger-bg)' : 'var(--color-warning-bg)' }}>
+              <Badge label={a.type} variant={a.type === 'SPIKE' ? 'danger' : 'warning'} />
+              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}>{a.route}</span>
+              <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>₹{a.fare.toLocaleString('en-IN')} vs expected ₹{a.expectedFare.toLocaleString('en-IN')}</span>
+              <span style={{ marginLeft: 'auto', fontSize: 11, color: a.resolved ? 'var(--color-success)' : 'var(--color-danger)', fontFamily: 'var(--font-sans)' }}>{a.resolved ? 'Resolved' : 'Active'}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Quick nav cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--space-md)' }}>
+        {[
+          { page: 'map' as Page, icon: MapIcon, label: 'India Map', sub: 'Route corridors + flight positions', color: 'var(--color-brand-primary)' },
+          { page: 'routes' as Page, icon: Plane, label: 'Route Explorer', sub: 'Per-corridor fare intelligence', color: 'var(--color-teal)' },
+          { page: 'insights' as Page, icon: BarChart2, label: 'Market Insights', sub: 'Carriers, price history, trends', color: 'var(--color-indigo)' },
+          { page: 'livefares' as Page, icon: AlertTriangle, label: 'Live Fares', sub: 'Observation pipeline status', color: 'var(--color-warning)' },
+        ].map(({ page, icon: Icon, label, sub, color }) => (
+          <button
+            key={page}
+            onClick={() => onNavigate(page)}
+            style={{ ...card, textAlign: 'left', cursor: 'pointer', border: `1px solid ${color}20`, transition: 'transform 150ms, box-shadow 150ms' }}
+            onMouseOver={e => { (e.currentTarget as HTMLElement).style.transform = 'translateY(-2px)'; (e.currentTarget as HTMLElement).style.boxShadow = `0 4px 16px ${color}20` }}
+            onMouseOut={e => { (e.currentTarget as HTMLElement).style.transform = 'none'; (e.currentTarget as HTMLElement).style.boxShadow = 'var(--shadow-sm)' }}
+          >
+            <Icon size={20} style={{ color, marginBottom: 10 }} />
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', marginBottom: 2 }}>{label}</div>
+            <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>{sub}</div>
+          </button>
+        ))}
+      </div>
+
+      {showUpgrade && <UpgradeModal onClose={() => setShowUpgrade(false)} onSwitchToSubscriber={() => { login('user@aeroprice.in', 'aero123'); setShowUpgrade(false) }} />}
     </div>
   )
 }

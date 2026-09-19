@@ -1,161 +1,151 @@
 import { useState } from 'react'
+import { AlertTriangle, RefreshCw } from 'lucide-react'
 import { Button } from '../components/ui/Button'
-import { Modal } from '../components/ui/Modal'
-import { Badge } from '../components/ui/Badge'
-import { ExternalLink } from 'lucide-react'
-import StatusBadge from '../components/StatusBadge'
-import { dataSources } from '../data/sampleData'
-import type { DataSource } from '../data/sampleData'
+import { AirfareSourceCard, GovSourceCard } from '../components/SourceCard'
+import { useGovData } from '../hooks/useGovData'
+import type { AirfareSource } from '../types/observation'
 
-const typeLabels: Record<string, string> = {
-  AIRLINE: 'Airline',
-  OTA: 'OTA',
-  PUBLIC_API: 'Public API',
-  PUBLIC_DATASET: 'Public Dataset',
-  OFFICIAL_REFERENCE: 'Official Reference',
-}
+const AIRFARE_SOURCES: AirfareSource[] = [
+  {
+    id: 'indigo', name: 'IndiGo', organization: 'InterGlobe Aviation Ltd.',
+    source_url: 'https://www.goindigo.in',
+    status: 'CHALLENGE_DETECTED',
+    status_reason: 'Cloudflare Bot Management active. JS fingerprinting + TLS inspection blocks headless clients. CAPTCHA on fare query endpoints.',
+    robots_txt: 'DISALLOWED', captcha_detected: true, api_available: false,
+    last_attempt: null, records_received: 0,
+  },
+  {
+    id: 'airindia', name: 'Air India', organization: 'Air India Ltd.',
+    source_url: 'https://www.airindia.com',
+    status: 'CHALLENGE_DETECTED',
+    status_reason: 'Anti-scraping middleware (Imperva) detected. Session tokens required for fare search. Browser fingerprinting on JS bundle.',
+    robots_txt: 'DISALLOWED', captcha_detected: true, api_available: false,
+    last_attempt: null, records_received: 0,
+  },
+  {
+    id: 'airindia-express', name: 'Air India Express', organization: 'Air India Express Ltd.',
+    source_url: 'https://www.airindiaexpress.com',
+    status: 'CHALLENGE_DETECTED',
+    status_reason: 'Shares CDN protection with Air India parent. Dynamic JS rendering; no static fare endpoints accessible.',
+    robots_txt: 'DISALLOWED', captcha_detected: true, api_available: false,
+    last_attempt: null, records_received: 0,
+  },
+  {
+    id: 'akasa', name: 'Akasa Air', organization: 'SNV Aviation Pvt. Ltd.',
+    source_url: 'https://www.akasaair.com',
+    status: 'CHALLENGE_DETECTED',
+    status_reason: 'React SPA with obfuscated API endpoints. reCAPTCHA v3 on search flow. Rate limiting < 3 req/min before block.',
+    robots_txt: 'DISALLOWED', captcha_detected: true, api_available: false,
+    last_attempt: null, records_received: 0,
+  },
+  {
+    id: 'spicejet', name: 'SpiceJet', organization: 'SpiceJet Ltd.',
+    source_url: 'https://www.spicejet.com',
+    status: 'CHALLENGE_DETECTED',
+    status_reason: 'Cloudflare Enterprise + browser fingerprinting. TLS certificate pinning on mobile API. Header validation rejects automation.',
+    robots_txt: 'DISALLOWED', captcha_detected: true, api_available: false,
+    last_attempt: null, records_received: 0,
+  },
+]
 
 export default function DataSources() {
-  const [selectedSource, setSelectedSource] = useState<DataSource | null>(null)
-  const [filterType, setFilterType] = useState<string>('all')
+  const { datasets, isLoading } = useGovData()
+  const [tab, setTab] = useState<'airfare' | 'government'>('airfare')
 
-  const typeFilters = ['all', 'AIRLINE', 'OTA', 'OFFICIAL_REFERENCE', 'PUBLIC_DATASET']
-  const filtered = filterType === 'all' ? dataSources : dataSources.filter(s => s.type === filterType)
+  const govConnected = datasets.filter(d => d.status === 'CONNECTED' || d.status === 'HEALTHY' || d.status === 'STALE').length
+  const govFailed = datasets.filter(d => d.status === 'UNAVAILABLE' || d.status === 'FAILED').length
 
   return (
-    <div className="flex flex-col gap-xl max-w-4xl">
+    <div className="flex flex-col" style={{ gap: 'var(--space-xl)', maxWidth: 960 }}>
+      {/* Header */}
       <div>
-        <h1 className="text-title text-text-primary">Data Sources</h1>
-        <p className="text-label-sm text-text-secondary mt-xs">
-          Registry of all airfare and reference data sources. Status reflects the most recent collection attempt.
+        <h1 style={{ fontSize: 'var(--text-title-size)', fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', letterSpacing: '-0.01em' }}>Data Sources</h1>
+        <p style={{ fontSize: 'var(--text-body-size)', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginTop: 'var(--space-xs)' }}>
+          Complete source registry — airfare collectors and official government datasets. All statuses are live.
         </p>
       </div>
 
       {/* Stats strip */}
-      <div className="bg-surface-bg rounded-corner-lg p-xl">
-        <div className="flex gap-2xl flex-wrap">
-          {[
-            { label: 'TOTAL SOURCES', value: dataSources.length },
-            { label: 'LIVE / HEALTHY', value: dataSources.filter(s => ['LIVE', 'HEALTHY'].includes(s.status)).length },
-            { label: 'AGING', value: dataSources.filter(s => s.status === 'AGING').length },
-            { label: 'STALE / FAILED', value: dataSources.filter(s => ['STALE', 'FAILED'].includes(s.status)).length },
-          ].map(({ label, value }) => (
-            <div key={label} className="flex flex-col gap-xs">
-              <span className="text-video-title text-text-tertiary">{label}</span>
-              <span className="text-heading font-semibold text-text-primary">{value}</span>
-            </div>
-          ))}
+      <div style={{ background: 'var(--color-surface-bg)', border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-xl)', display: 'flex', gap: 'var(--space-3xl)', flexWrap: 'wrap' }}>
+        {[
+          { label: 'AIRFARE SOURCES', value: AIRFARE_SOURCES.length, color: 'var(--color-text-primary)' },
+          { label: 'CHALLENGE DETECTED', value: AIRFARE_SOURCES.length, color: 'var(--color-warning)' },
+          { label: 'LIVE AIRFARE OBS', value: '0', color: 'var(--color-text-tertiary)' },
+          { label: 'GOV SOURCES', value: datasets.length, color: 'var(--color-text-primary)' },
+          { label: 'GOV CONNECTED', value: govConnected, color: 'var(--color-success)' },
+          { label: 'GOV UNAVAILABLE', value: govFailed, color: govFailed > 0 ? 'var(--color-danger)' : 'var(--color-text-tertiary)' },
+        ].map(({ label, value, color }) => (
+          <div key={label} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
+            <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--color-text-tertiary)', letterSpacing: '0.08em', fontFamily: 'var(--font-sans)' }}>{label}</span>
+            <span style={{ fontSize: 'var(--text-heading-size)', fontWeight: 700, color, fontFamily: 'var(--font-sans)' }}>{value}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Important notice */}
+      <div style={{ background: 'var(--color-warning-bg)', border: '1px solid rgba(217,119,6,0.25)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-lg) var(--space-xl)', display: 'flex', gap: 'var(--space-lg)', alignItems: 'flex-start' }}>
+        <AlertTriangle size={18} style={{ color: 'var(--color-warning)', flexShrink: 0, marginTop: 2 }} />
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-warning)', letterSpacing: '0.06em', fontFamily: 'var(--font-sans)', marginBottom: 4 }}>ALL AIRLINE AIRFARE SOURCES: CHALLENGE DETECTED</div>
+          <p style={{ fontSize: 'var(--text-body-size)', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', margin: 0, lineHeight: 1.65 }}>
+            All five SIH-required airline sources (IndiGo, Air India, Air India Express, Akasa Air, SpiceJet) implement
+            bot protection that prevents browser-based collection. Server-side automation with Playwright or Scrapy,
+            ethical rate limiting, and robots.txt compliance is required. No airfare data is available in this browser context.
+          </p>
         </div>
       </div>
 
-      {/* Filter bar */}
-      <div className="flex items-center gap-sm flex-wrap">
-        {typeFilters.map(f => (
+      {/* Tab selector */}
+      <div style={{ display: 'flex', gap: 'var(--space-sm)', borderBottom: '1px solid var(--color-border-primary)', paddingBottom: 0 }}>
+        {[
+          { key: 'airfare', label: `Airfare Sources (${AIRFARE_SOURCES.length})` },
+          { key: 'government', label: `Government Sources (${datasets.length})` },
+        ].map(t => (
           <button
-            key={f}
-            onClick={() => setFilterType(f)}
-            className={`text-label-sm px-md py-xs rounded-corner-full transition-all duration-200 focus-visible:outline-2 focus-visible:outline-brand-primary focus-visible:outline-offset-2 ${
-              filterType === f
-                ? 'bg-brand-primary text-on-brand'
-                : 'bg-surface-bg text-text-secondary border border-border-primary hover:bg-surface-hover'
-            }`}
+            key={t.key}
+            onClick={() => setTab(t.key as 'airfare' | 'government')}
+            style={{
+              padding: 'var(--space-md) var(--space-lg)',
+              fontSize: 13, fontWeight: 600, fontFamily: 'var(--font-sans)',
+              color: tab === t.key ? 'var(--color-brand-primary)' : 'var(--color-text-secondary)',
+              background: 'none', border: 'none', cursor: 'pointer',
+              borderBottom: tab === t.key ? '2px solid var(--color-brand-primary)' : '2px solid transparent',
+              marginBottom: -1,
+            }}
           >
-            {f === 'all' ? 'All' : typeLabels[f] ?? f}
+            {t.label}
           </button>
         ))}
       </div>
 
-      {/* Source table */}
-      <div className="bg-surface-bg rounded-corner-lg overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-label-sm" role="table">
-            <thead>
-              <tr className="border-b border-border-primary bg-bg-faint">
-                {['Source', 'Type', 'Status', 'Last Success', 'Next Run', 'Frequency', 'Records', 'Latency', ''].map(h => (
-                  <th key={h} className="text-left px-lg py-md text-video-title text-text-tertiary font-medium whitespace-nowrap">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map(s => (
-                <tr
-                  key={s.id}
-                  className="border-b border-border-primary hover:bg-surface-hover transition-colors cursor-pointer"
-                  onClick={() => setSelectedSource(s)}
-                >
-                  <td className="px-lg py-md">
-                    <div className="text-text-primary font-medium">{s.name}</div>
-                    <div className="text-video-title text-text-tertiary">{s.organization}</div>
-                  </td>
-                  <td className="px-lg py-md text-text-secondary whitespace-nowrap">{typeLabels[s.type]}</td>
-                  <td className="px-lg py-md"><StatusBadge status={s.status} /></td>
-                  <td className="px-lg py-md text-text-secondary whitespace-nowrap">{s.lastSuccess}</td>
-                  <td className="px-lg py-md text-text-secondary whitespace-nowrap">{s.nextRun}</td>
-                  <td className="px-lg py-md text-text-secondary">{s.frequency}</td>
-                  <td className="px-lg py-md text-text-secondary text-right">{s.records.toLocaleString('en-IN')}</td>
-                  <td className="px-lg py-md text-text-secondary text-right whitespace-nowrap">
-                    {s.latency > 0 ? `${s.latency}ms` : '—'}
-                  </td>
-                  <td className="px-lg py-md">
-                    <button className="text-brand-primary hover:opacity-70 transition-opacity focus-visible:outline-2 focus-visible:outline-brand-primary focus-visible:outline-offset-2 rounded">
-                      <ExternalLink size={14} />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {tab === 'airfare' && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 'var(--space-lg)' }}>
+          {AIRFARE_SOURCES.map(s => <AirfareSourceCard key={s.id} source={s} />)}
         </div>
-      </div>
+      )}
 
-      {/* Source detail modal */}
-      {selectedSource && (
-        <Modal
-          isOpen={!!selectedSource}
-          onClose={() => setSelectedSource(null)}
-          title={`Source: ${selectedSource.name}`}
-          size="medium"
-          footer={
-            <Button variant="neutral" onClick={() => setSelectedSource(null)}>Close</Button>
-          }
-        >
-          <div className="flex flex-col gap-lg">
-            <div className="grid gap-md" style={{ gridTemplateColumns: '1fr 1fr' }}>
-              {[
-                { label: 'ORGANISATION', value: selectedSource.organization },
-                { label: 'TYPE', value: typeLabels[selectedSource.type] },
-                { label: 'ACCESS METHOD', value: selectedSource.accessMethod },
-                { label: 'FORMAT', value: selectedSource.format },
-                { label: 'COLLECTION METHOD', value: selectedSource.collectionMethod },
-                { label: 'UPDATE FREQUENCY', value: selectedSource.frequency },
-                { label: 'LAST RETRIEVAL', value: selectedSource.lastSuccess },
-                { label: 'RECORDS', value: selectedSource.records.toLocaleString('en-IN') },
-                { label: 'AVG LATENCY', value: selectedSource.latency > 0 ? `${selectedSource.latency}ms` : 'N/A' },
-                {
-                  label: 'API KEY',
-                  value: selectedSource.apiKeyRequired ? 'REQUIRED' : 'Not required'
-                },
-              ].map(({ label, value }) => (
-                <div key={label} className="flex flex-col gap-xs">
-                  <span className="text-video-title text-text-tertiary">{label}</span>
-                  <span className="text-label-sm text-text-primary">{value}</span>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex flex-col gap-xs">
-              <span className="text-video-title text-text-tertiary">SOURCE URL</span>
-              <span className="text-label-sm text-brand-primary">{selectedSource.url}</span>
-            </div>
-
-            <div className="flex items-center gap-sm">
-              <span className="text-video-title text-text-tertiary">STATUS</span>
-              <StatusBadge status={selectedSource.status} />
-            </div>
-
-            <StatusBadge status="sample" />
+      {tab === 'government' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
+            <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>
+              {isLoading ? 'Fetching government sources…' : `Last checked: ${new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST`}
+            </span>
+            {isLoading && <RefreshCw size={13} style={{ color: 'var(--color-text-tertiary)', animation: 'spin 1s linear infinite' }} />}
           </div>
-        </Modal>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 'var(--space-lg)' }}>
+            {datasets.map(d => <GovSourceCard key={d.id} dataset={d} />)}
+          </div>
+          <div style={{ background: 'var(--color-info-bg)', border: '1px solid rgba(3,105,161,0.2)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-lg) var(--space-xl)' }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-info)', letterSpacing: '0.07em', fontFamily: 'var(--font-sans)', marginBottom: 'var(--space-sm)' }}>HOW GOVERNMENT DATA IS FETCHED</div>
+            <p style={{ fontSize: 'var(--text-body-size)', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', margin: 0, lineHeight: 1.65 }}>
+              Public government portals (DGCA, MoSPI eSankhyiki, data.gov.in) are accessed via the AllOrigins CORS proxy
+              (<code style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>api.allorigins.win</code>).
+              HTML tables are parsed with DOMParser in-browser. Data is cached for 6–24 hours in localStorage.
+              All government data is tagged <strong>OFFICIAL</strong> and kept strictly separate from airfare observations.
+              If the portal's HTML structure changes, parsing may fail and status will show UNAVAILABLE.
+            </p>
+          </div>
+        </div>
       )}
     </div>
   )

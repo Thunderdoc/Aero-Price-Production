@@ -1,447 +1,332 @@
 import { useState } from 'react'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
-import { dataSources } from '../data/sampleData'
+import { useGovData } from '../hooks/useGovData'
+import { AlertTriangle, CheckCircle, XCircle, Shield, Users, Activity, FileText, Settings, ToggleLeft } from 'lucide-react'
 
-// ── Types ──────────────────────────────────────────────────
-
-interface Toast {
-  id: number
-  message: string
-}
-
-interface LogEntry {
-  ts: string
-  level: 'INFO' | 'WARN' | 'ERROR'
-  message: string
-}
-
-// ── Static data ────────────────────────────────────────────
-
-const pipelineLogs: LogEntry[] = [
-  { ts: '13:02:04', level: 'INFO',  message: 'collector-mumbai-01: batch complete — 482 records ingested from MakeMyTrip API' },
-  { ts: '13:02:01', level: 'INFO',  message: 'collector-delhi-01: Amadeus GDS ping OK — latency 308ms' },
-  { ts: '13:01:58', level: 'INFO',  message: 'Index recomputed — v2026.09.18.1302 published. Value: 115.85' },
-  { ts: '13:01:52', level: 'INFO',  message: 'collector-mumbai-01: IndiGo Direct heartbeat OK' },
-  { ts: '13:01:48', level: 'WARN',  message: 'collector-bangalore-01: DGCA Public Tariff latency high (892ms) — threshold 500ms' },
-  { ts: '13:01:45', level: 'INFO',  message: 'collector-delhi-01: heartbeat OK — 3,960 req/hr' },
-  { ts: '13:01:38', level: 'INFO',  message: 'Yatra OTA Feed: 391 new observations pushed to dedup queue' },
-  { ts: '13:01:32', level: 'INFO',  message: 'Dedup engine: 23 duplicates resolved across 3 sources' },
-  { ts: '13:01:25', level: 'INFO',  message: 'Outlier check: DEL-BOM p99 fare ₹13,500 — within 3.5σ band. Accepted.' },
-  { ts: '13:01:20', level: 'ERROR', message: 'Alert anom-001 (DEL-SXR +99.0% spike) — quarantined, awaiting second source confirmation' },
-  { ts: '13:01:14', level: 'INFO',  message: 'Booking window segmentation: 15,240 obs tagged across T+1..T+90 buckets' },
-  { ts: '13:01:08', level: 'INFO',  message: 'Route weight refresh skipped — next scheduled 2026-10-01' },
-  { ts: '13:01:00', level: 'INFO',  message: 'Index publish: 1,247 jobs queued across 3 workers' },
-  { ts: '13:00:55', level: 'WARN',  message: 'Skyscanner Aggregate: success rate dropped to 94.1% — monitoring' },
-  { ts: '13:00:48', level: 'INFO',  message: 'STL decomposition: seasonal components updated for 21 corridors' },
-  { ts: '13:00:40', level: 'INFO',  message: 'Isolation Forest anomaly scan: 6 open anomalies, 3 resolved this cycle' },
-  { ts: '13:00:33', level: 'INFO',  message: 'Cross-source consensus check: all active sources within 12% median band' },
-  { ts: '13:00:28', level: 'WARN',  message: 'DGCA Public Tariff: freshness 234 min — interpolating corridor contributions' },
-  { ts: '13:00:22', level: 'INFO',  message: 'Freshness scorer: DEL-SXR freshness 18 min — within threshold' },
-  { ts: '13:00:15', level: 'INFO',  message: 'Holiday calendar sync: 9 upcoming events loaded through 2027-03-01' },
-  { ts: '13:00:08', level: 'INFO',  message: 'Audit log flush: 4,820 records persisted to ap-south-1a and ap-south-1b' },
-  { ts: '13:00:00', level: 'INFO',  message: 'Scheduler: next index run in 14 min — all workers healthy' },
+const AIRFARE_SOURCES_ADMIN = [
+  { id: 'indigo', name: 'IndiGo', status: 'CHALLENGE_DETECTED', enabled: false },
+  { id: 'airindia', name: 'Air India', status: 'CHALLENGE_DETECTED', enabled: false },
+  { id: 'aiex', name: 'Air India Express', status: 'CHALLENGE_DETECTED', enabled: false },
+  { id: 'akasa', name: 'Akasa Air', status: 'CHALLENGE_DETECTED', enabled: false },
+  { id: 'spicejet', name: 'SpiceJet', status: 'CHALLENGE_DETECTED', enabled: false },
 ]
 
-const userSessions = [
-  { username: 'arjun.sharma@aeroprice.in',  ip: '10.0.4.21',  lastActivity: '13:01:55', pages: 14 },
-  { username: 'priya.menon@aeroprice.in',   ip: '10.0.4.38',  lastActivity: '12:58:40', pages: 7  },
-  { username: 'rahul.verma@aeroprice.in',   ip: '10.0.4.57',  lastActivity: '12:47:12', pages: 3  },
-  { username: 'sneha.iyer@aeroprice.in',    ip: '192.168.3.9', lastActivity: '12:31:09', pages: 22 },
-  { username: 'devops-bot@aeroprice.in',    ip: '10.0.1.1',   lastActivity: '13:02:03', pages: 1  },
+const GOV_SOURCES_ADMIN = [
+  { id: 'dgca-pax', name: 'DGCA Monthly Stats', status: 'CONFIGURED', enabled: true },
+  { id: 'mospi-cpi', name: 'MoSPI CPI Transport', status: 'CONFIGURED', enabled: true },
+  { id: 'datagov', name: 'data.gov.in Aviation', status: 'CONFIGURED', enabled: true },
+  { id: 'ppac', name: 'PPAC Fuel Prices', status: 'CONFIGURED', enabled: true },
 ]
 
-const levelColor: Record<string, string> = {
-  INFO:  'var(--color-text-tertiary)',
-  WARN:  'var(--color-warning)',
-  ERROR: 'var(--color-danger)',
+const INITIAL_AUDIT = [
+  { ts: '2026-09-19T08:15:00Z', actor: 'admin@aeroprice.in', action: 'GOV_FETCH', detail: 'DGCA Monthly Stats fetch initiated via AllOrigins proxy' },
+  { ts: '2026-09-19T08:15:02Z', actor: 'system', action: 'GOV_FETCH', detail: 'MoSPI eSankhyiki — SPA detected, fallback to generated baseline' },
+  { ts: '2026-09-19T08:15:04Z', actor: 'system', action: 'SOURCE_CHECK', detail: 'IndiGo — CHALLENGE DETECTED (Cloudflare). Collection paused.' },
+  { ts: '2026-09-19T08:15:04Z', actor: 'system', action: 'SOURCE_CHECK', detail: 'Air India — CHALLENGE DETECTED (Akamai). Collection paused.' },
+  { ts: '2026-09-19T08:00:00Z', actor: 'admin@aeroprice.in', action: 'LOGIN', detail: 'Admin login from 127.0.0.1 (demo session)' },
+  { ts: '2026-09-18T14:30:00Z', actor: 'dgca@gov.in', action: 'LOGIN', detail: 'Analyst login (GOVERNMENT plan)' },
+]
+
+const THRESHOLDS = [
+  { key: 'anomaly_zscore', label: 'Anomaly Z-score threshold', value: 3.5, unit: 'σ' },
+  { key: 'consensus_deviation', label: 'Cross-source consensus deviation', value: 12, unit: '%' },
+  { key: 'freshness_warning', label: 'Freshness warning threshold', value: 60, unit: 'min' },
+  { key: 'min_corridors_index', label: 'Min corridors to publish index', value: 15, unit: 'corridors' },
+]
+
+const ROLE_BADGE = {
+  ADMIN:   { color: 'var(--color-danger)',       bg: 'var(--color-danger-bg)' },
+  ANALYST: { color: 'var(--color-info)',          bg: 'var(--color-info-bg)' },
+  PUBLIC:  { color: 'var(--color-brand-primary)', bg: 'var(--color-brand-muted)' },
 }
+
+const ACTION_COLOR: Record<string, string> = {
+  GOV_FETCH: 'var(--color-info)',
+  SOURCE_CHECK: 'var(--color-warning)',
+  LOGIN: 'var(--color-success)',
+  ROLE_CHANGE: 'var(--color-danger)',
+}
+
+type Tab = 'users' | 'pipeline' | 'audit' | 'config'
+
+const DEMO_USERS = [
+  { email: 'admin@aeroprice.in', role: 'ADMIN', plan: 'ADMIN', name: 'Admin User', lastLogin: '2026-09-19 13:01 IST', status: 'ACTIVE' },
+  { email: 'dgca@gov.in', role: 'ANALYST', plan: 'GOVERNMENT', name: 'DGCA Analyst', lastLogin: '2026-09-19 10:32 IST', status: 'ACTIVE' },
+  { email: 'user@aeroprice.in', role: 'PUBLIC', plan: 'SUBSCRIBER', name: 'Demo User', lastLogin: '2026-09-19 09:15 IST', status: 'ACTIVE' },
+  { email: 'free@example.com', role: 'PUBLIC', plan: 'FREE', name: 'Free User', lastLogin: '2026-09-18 22:00 IST', status: 'ACTIVE' },
+]
+
+const AIRFARE_PIPELINE = [
+  { name: 'IndiGo (goindigo.in)', status: 'CHALLENGE_DETECTED', reason: 'Cloudflare Bot Management' },
+  { name: 'Air India (airindia.com)', status: 'CHALLENGE_DETECTED', reason: 'Imperva anti-scraping' },
+  { name: 'Air India Express', status: 'CHALLENGE_DETECTED', reason: 'Shared CDN protection' },
+  { name: 'Akasa Air (akasaair.com)', status: 'CHALLENGE_DETECTED', reason: 'JS SPA + reCAPTCHA v3' },
+  { name: 'SpiceJet (spicejet.com)', status: 'CHALLENGE_DETECTED', reason: 'Cloudflare Enterprise' },
+]
+
+const AUDIT_LOG = [
+  { ts: new Date().toISOString(), level: 'INFO' as const, message: 'Admin dashboard opened · admin@aeroprice.in' },
+  { ts: new Date(Date.now() - 60000).toISOString(), level: 'WARN' as const, message: 'Gov fetch attempted: dgca.gov.in — awaiting AllOrigins proxy response' },
+  { ts: new Date(Date.now() - 120000).toISOString(), level: 'INFO' as const, message: 'Auth: dgca@gov.in logged in (ANALYST/GOVERNMENT)' },
+  { ts: new Date(Date.now() - 300000).toISOString(), level: 'INFO' as const, message: 'Auth: user@aeroprice.in logged in (PUBLIC/SUBSCRIBER)' },
+  { ts: new Date(Date.now() - 600000).toISOString(), level: 'WARN' as const, message: 'Airfare collection attempt: IndiGo — CHALLENGE DETECTED. Cloudflare blocked request.' },
+  { ts: new Date(Date.now() - 660000).toISOString(), level: 'WARN' as const, message: 'Airfare collection attempt: Air India — CHALLENGE DETECTED. Imperva middleware blocked.' },
+  { ts: new Date(Date.now() - 720000).toISOString(), level: 'ERROR' as const, message: 'No live airfare observations available — all 5 sources blocked by bot protection' },
+  { ts: new Date(Date.now() - 1800000).toISOString(), level: 'INFO' as const, message: 'System started · SIH26056 AeroPrice India v2.0.0' },
+]
 
 const levelBg: Record<string, string> = {
-  INFO:  'transparent',
-  WARN:  'rgba(217,119,6,0.08)',
-  ERROR: 'rgba(220,38,38,0.1)',
+  INFO: 'transparent',
+  WARN: 'rgba(217,119,6,0.08)',
+  ERROR: 'rgba(239,68,68,0.08)',
 }
-
-// ── Sub-components ─────────────────────────────────────────
-
-function PulseDot({ color = 'var(--color-success)' }: { color?: string }) {
-  return (
-    <span style={{ position: 'relative', display: 'inline-block', width: 10, height: 10 }}>
-      <span style={{
-        display: 'block', width: 10, height: 10,
-        borderRadius: '50%', background: color, position: 'absolute',
-      }} />
-      <span style={{
-        display: 'block', width: 10, height: 10,
-        borderRadius: '50%', background: color, position: 'absolute',
-        animation: 'ping 1.4s cubic-bezier(0,0,0.2,1) infinite',
-        opacity: 0.6,
-      }} />
-    </span>
-  )
+const levelColor: Record<string, string> = {
+  INFO: 'var(--color-info)',
+  WARN: 'var(--color-warning)',
+  ERROR: 'var(--color-danger)',
 }
 
 function MetricCard({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{
-      background: 'var(--color-surface-bg)',
-      border: '1px solid rgba(255,255,255,0.08)',
-      borderRadius: 'var(--radius-lg)',
-      padding: 'var(--space-xl)',
-      minWidth: 140,
-      flexShrink: 0,
-    }}>
-      <div className="text-caption" style={{ color: 'rgba(255,255,255,0.5)', marginBottom: 'var(--space-xs)' }}>{label}</div>
-      <div className="text-heading" style={{ color: 'rgba(255,255,255,0.9)' }}>{value}</div>
+    <div style={{ background: 'var(--color-surface-secondary)', borderRadius: 'var(--radius-md)', padding: '10px 14px', minWidth: 110 }}>
+      <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>{value}</div>
     </div>
   )
 }
-
-function CollapsibleSection({ title, children }: { title: string; children: React.ReactNode }) {
-  const [open, setOpen] = useState(true)
-  return (
-    <div style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
-      <button
-        onClick={() => setOpen(o => !o)}
-        style={{
-          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: 'var(--space-xl)', background: 'rgba(255,255,255,0.04)', cursor: 'pointer', border: 'none',
-        }}
-      >
-        <span className="text-label" style={{ color: 'rgba(255,255,255,0.85)' }}>{title}</span>
-        <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>{open ? '▲' : '▼'}</span>
-      </button>
-      {open && (
-        <div style={{ padding: 'var(--space-xl)', display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>
-          {children}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function ConfigRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-xl)' }}>
-      <span className="text-body" style={{ color: 'rgba(255,255,255,0.6)' }}>{label}</span>
-      {children}
-    </div>
-  )
-}
-
-function FakeSelect({ value }: { value: string }) {
-  return (
-    <div style={{
-      background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)',
-      borderRadius: 'var(--radius-md)', padding: '6px 12px', color: 'rgba(255,255,255,0.85)',
-      fontSize: 13, display: 'flex', alignItems: 'center', gap: 8, cursor: 'default',
-    }}>
-      {value} <span style={{ color: 'rgba(255,255,255,0.3)' }}>▾</span>
-    </div>
-  )
-}
-
-function FakeToggle({ checked, label }: { checked: boolean; label: string }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <div style={{
-        width: 36, height: 20, borderRadius: 10,
-        background: checked ? 'var(--color-brand-primary)' : 'rgba(255,255,255,0.15)',
-        position: 'relative', cursor: 'default',
-      }}>
-        <div style={{
-          width: 16, height: 16, borderRadius: '50%', background: '#fff',
-          position: 'absolute', top: 2, left: checked ? 18 : 2,
-          transition: 'left 0.2s ease',
-        }} />
-      </div>
-      <span className="text-caption" style={{ color: 'rgba(255,255,255,0.5)' }}>{label}</span>
-    </div>
-  )
-}
-
-// ── Main component ─────────────────────────────────────────
 
 export default function AdminDashboard() {
-  const [toasts, setToasts] = useState<Toast[]>([])
+  const [tab, setTab] = useState<Tab>('users')
+  const [audit] = useState(INITIAL_AUDIT)
+  const [thresholds, setThresholds] = useState(THRESHOLDS)
+  const govData = useGovData()
   const now = new Date()
   const timestamp = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false }) + ' IST'
 
-  function showToast(message: string) {
-    const id = Date.now()
-    setToasts(t => [...t, { id, message }])
-    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 3000)
-  }
-
-  const statusBadge = (s: string) => {
-    if (s === 'LIVE') return <Badge label="LIVE" variant="success" />
-    if (s === 'HEALTHY') return <Badge label="HEALTHY" variant="success" />
-    if (s === 'AGING') return <Badge label="AGING" variant="warning" />
-    if (s === 'STALE') return <Badge label="STALE" variant="danger" />
-    if (s === 'FAILED') return <Badge label="FAILED" variant="danger" />
-    return <Badge label={s} variant="default" />
-  }
+  const TABS: { id: Tab; label: string; icon: typeof Shield }[] = [
+    { id: 'users', label: 'User Management', icon: Users },
+    { id: 'pipeline', label: 'Pipeline Controls', icon: Activity },
+    { id: 'audit', label: 'Audit Log', icon: FileText },
+    { id: 'config', label: 'Configuration', icon: Settings },
+  ]
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--color-surface-dark)', fontFamily: 'var(--font-sans)' }}>
+    <div className="flex flex-col" style={{ gap: 'var(--space-xl)' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-sm)', marginBottom: 'var(--space-xs)' }}>
+        <Shield size={16} style={{ color: 'var(--color-danger)', marginTop: 3 }} />
+        <div>
+          <h1 style={{ fontSize: 'var(--text-title-size)', fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}>Admin Console</h1>
+          <p style={{ fontSize: 'var(--text-body-size)', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginTop: 'var(--space-xs)' }}>User management, pipeline controls, audit log, and system configuration.</p>
+        </div>
+      </div>
 
-      {/* Toast layer */}
-      <div style={{ position: 'fixed', bottom: 24, right: 24, zIndex: 1000, display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {toasts.map(t => (
-          <div key={t.id} style={{
-            background: 'var(--color-surface-bg)', border: '1px solid rgba(255,255,255,0.15)',
-            borderRadius: 'var(--radius-md)', padding: '10px 16px',
-            color: 'var(--color-text-primary)', fontSize: 13, boxShadow: 'var(--shadow-lg)',
-            animation: 'fadeIn 0.15s ease',
-          }}>
-            {t.message}
+      {/* Metrics strip */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 'var(--space-md)' }}>
+        {[
+          { label: 'Observations/hr', value: '0', color: 'var(--color-text-tertiary)', sub: 'no airfare sources connected' },
+          { label: 'Active Users', value: '3', color: 'var(--color-brand-primary)', sub: 'demo session' },
+          { label: 'Gov Fetches/day', value: '4', color: 'var(--color-info)', sub: 'CONFIGURED' },
+          { label: 'Anomalies (24h)', value: '0', color: 'var(--color-success)', sub: 'no real data' },
+        ].map(({ label, value, color, sub }) => (
+          <div key={label} style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-lg)', border: '1px solid var(--color-border-primary)' }}>
+            <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginBottom: 4 }}>{label}</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color, fontFamily: 'var(--font-sans)' }}>{value}</div>
+            <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>{sub}</div>
           </div>
         ))}
       </div>
 
-      <style>{`
-        @keyframes ping { 75%, 100% { transform: scale(2); opacity: 0; } }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-      `}</style>
+      {/* Tabs */}
+      <div style={{ display: 'flex', borderBottom: '1px solid var(--color-border-primary)', gap: 0 }}>
+        {TABS.map(({ id, label, icon: Icon }) => (
+          <button key={id} onClick={() => setTab(id)} style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '10px 16px', border: 'none', background: 'transparent', cursor: 'pointer',
+            fontSize: 12, fontWeight: tab === id ? 600 : 400, fontFamily: 'var(--font-sans)',
+            color: tab === id ? 'var(--color-brand-primary)' : 'var(--color-text-secondary)',
+            borderBottom: tab === id ? '2px solid var(--color-brand-primary)' : '2px solid transparent',
+            marginBottom: -1,
+          }}>
+            <Icon size={13} />
+            {label}
+          </button>
+        ))}
+      </div>
 
-      <div style={{ maxWidth: 1280, margin: '0 auto', padding: 'var(--space-2xl)' }}>
-
-        {/* 1. Header */}
-        <div style={{
-          display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
-          marginBottom: 'var(--space-3xl)', flexWrap: 'wrap', gap: 'var(--space-xl)',
-        }}>
-          <div>
-            <div className="text-caption" style={{ color: 'var(--color-brand-primary)', letterSpacing: '0.12em', marginBottom: 'var(--space-xs)' }}>
-              ADMIN CONSOLE
-            </div>
-            <h1 className="text-title" style={{ color: 'rgba(255,255,255,0.9)', margin: 0 }}>System Administration</h1>
+      {/* Tab content */}
+      {tab === 'users' && (
+        <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', overflow: 'hidden' }}>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: 'var(--font-sans)' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--color-border-primary)', background: 'var(--color-surface-secondary)' }}>
+                  {['User', 'Email', 'Role', 'Plan', 'Last Login', 'Status'].map(h => (
+                    <th key={h} style={{ textAlign: 'left', padding: '10px 14px', fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {DEMO_USERS.map(u => {
+                  const rb = ROLE_BADGE[u.role as keyof typeof ROLE_BADGE] ?? ROLE_BADGE['PUBLIC']
+                  return (
+                    <tr key={u.email} style={{ borderBottom: '1px solid var(--color-border-primary)' }}>
+                      <td style={{ padding: '10px 14px', fontWeight: 500, color: 'var(--color-text-primary)' }}>{u.name}</td>
+                      <td style={{ padding: '10px 14px', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{u.email}</td>
+                      <td style={{ padding: '10px 14px' }}>
+                        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.05em', color: rb.color, background: rb.bg, padding: '2px 6px', borderRadius: 3 }}>{u.role}</span>
+                      </td>
+                      <td style={{ padding: '10px 14px', color: 'var(--color-text-secondary)' }}>{u.plan}</td>
+                      <td style={{ padding: '10px 14px', color: 'var(--color-text-secondary)', fontSize: 11 }}>{u.lastLogin}</td>
+                      <td style={{ padding: '10px 14px' }}>
+                        <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-success)', background: 'var(--color-success-bg)', padding: '2px 6px', borderRadius: 3 }}>{u.status}</span>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', flexShrink: 0 }}>
-            <PulseDot />
-            <span className="text-body" style={{ color: 'rgba(255,255,255,0.7)' }}>All Systems Operational</span>
-            <span className="text-caption" style={{ color: 'rgba(255,255,255,0.35)', marginLeft: 'var(--space-md)' }}>{timestamp}</span>
+          <div style={{ padding: '10px 14px', fontSize: 11, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', borderTop: '1px solid var(--color-border-primary)' }}>
+            Demo environment — 3 users shown. Production would include full user CRUD, invite flows, and SSO.
           </div>
         </div>
+      )}
 
-        {/* 2. System Health Grid */}
-        <div style={{ marginBottom: 'var(--space-3xl)' }}>
-          <div className="text-label" style={{ color: 'rgba(255,255,255,0.5)', marginBottom: 'var(--space-lg)', letterSpacing: '0.08em', textTransform: 'uppercase', fontSize: 11 }}>
-            SYSTEM HEALTH
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(240px,1fr))', gap: 'var(--space-xl)' }}>
-            {[
-              { title: 'API Gateway',   status: 'HEALTHY', lines: ['99.7% uptime', '42ms avg latency'] },
-              { title: 'Data Pipeline', status: 'ACTIVE',  lines: ['3 collectors running', '1,247 jobs queued'] },
-              { title: 'Database',      status: 'HEALTHY', lines: ['4.2 GB used', '95.8 GB free'] },
-              { title: 'Scheduler',     status: 'RUNNING', lines: ['Next run in 14 min', 'Last: success'] },
-            ].map(card => (
-              <div key={card.title} style={{
-                background: 'var(--color-surface-bg)',
-                border: '1px solid rgba(255,255,255,0.07)',
-                borderRadius: 'var(--radius-lg)',
-                padding: 'var(--space-xl)',
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-lg)' }}>
-                  <span className="text-label" style={{ color: 'rgba(255,255,255,0.85)' }}>{card.title}</span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <PulseDot />
-                    <span className="text-caption" style={{ color: 'var(--color-success)' }}>{card.status}</span>
+      {tab === 'pipeline' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>
+          {/* Airfare sources */}
+          <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', padding: 'var(--space-xl)' }}>
+            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginBottom: 'var(--space-lg)' }}>AIRFARE COLLECTOR SOURCES</div>
+            <div style={{ padding: '10px 14px', borderRadius: 'var(--radius-md)', background: 'var(--color-warning-bg)', fontSize: 12, color: 'var(--color-warning)', fontFamily: 'var(--font-sans)', marginBottom: 'var(--space-md)', display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+              <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+              All airfare sources blocked by bot protection. Collection requires a Playwright/Scrapy backend collector deployed outside the browser.
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+              {AIRFARE_SOURCES_ADMIN.map(src => (
+                <div key={src.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderRadius: 'var(--radius-md)', background: 'var(--color-surface-secondary)', border: '1px solid var(--color-warning)30' }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}>{src.name}</div>
+                    <div style={{ fontSize: 10, color: 'var(--color-warning)', fontFamily: 'var(--font-sans)' }}>CHALLENGE DETECTED — cannot enable</div>
                   </div>
+                  <ToggleLeft size={24} style={{ color: 'var(--color-text-tertiary)', opacity: 0.4 }} />
                 </div>
-                {card.lines.map(l => (
-                  <div key={l} className="text-body" style={{ color: 'rgba(255,255,255,0.5)', marginBottom: 2 }}>{l}</div>
-                ))}
-              </div>
-            ))}
+              ))}
           </div>
-        </div>
+          </div>
 
-        {/* 3. Live Metrics Strip */}
-        <div style={{ marginBottom: 'var(--space-3xl)' }}>
-          <div className="text-caption" style={{ color: 'rgba(255,255,255,0.4)', marginBottom: 'var(--space-lg)', letterSpacing: '0.08em', textTransform: 'uppercase', fontSize: 11 }}>
-            LIVE METRICS
-          </div>
-          <div style={{ display: 'flex', gap: 'var(--space-xl)', overflowX: 'auto', paddingBottom: 4 }}>
-            {[
-              { label: 'Requests/min',    value: '1,847' },
-              { label: 'Avg Response',    value: '127ms' },
-              { label: 'Cache Hit Rate',  value: '89.3%' },
-              { label: 'Error Rate',      value: '0.12%' },
-              { label: 'Active Sessions', value: '23' },
-            ].map(m => <MetricCard key={m.label} {...m} />)}
-          </div>
-        </div>
-
-        {/* 4. Source Health Matrix */}
-        <div style={{ marginBottom: 'var(--space-3xl)' }}>
-          <div className="text-caption" style={{ color: 'rgba(255,255,255,0.4)', marginBottom: 'var(--space-lg)', letterSpacing: '0.08em', textTransform: 'uppercase', fontSize: 11 }}>
-            SOURCE HEALTH MATRIX
-          </div>
-          <div style={{
-            background: 'var(--color-surface-bg)', border: '1px solid rgba(255,255,255,0.07)',
-            borderRadius: 'var(--radius-lg)', overflow: 'hidden',
-          }}>
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
-                    {['Source', 'Status', 'Last Fetch', 'Records', 'Latency', 'Error Rate', 'Actions'].map(h => (
-                      <th key={h} style={{
-                        padding: '10px 16px', textAlign: 'left', fontWeight: 500, fontSize: 11,
-                        color: 'rgba(255,255,255,0.4)', letterSpacing: '0.06em', textTransform: 'uppercase',
-                        whiteSpace: 'nowrap',
-                      }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {dataSources.map((src, i) => {
-                    const lastFetch = new Date(src.lastPing)
-                    const fetchStr = lastFetch.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
-                    const errorRate = (100 - src.successRate).toFixed(1)
-                    return (
-                      <tr key={src.id} style={{
-                        borderBottom: i < dataSources.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none',
-                        transition: 'background 0.15s',
-                      }}>
-                        <td style={{ padding: '12px 16px', whiteSpace: 'nowrap' }}>
-                          <div style={{ color: 'rgba(255,255,255,0.85)', fontWeight: 500 }}>{src.name}</div>
-                          <div style={{ color: 'rgba(255,255,255,0.35)', fontSize: 11, marginTop: 2 }}>{src.type} · {src.apiVersion}</div>
-                        </td>
-                        <td style={{ padding: '12px 16px' }}>{statusBadge(src.status)}</td>
-                        <td style={{ padding: '12px 16px', color: 'rgba(255,255,255,0.55)', fontSize: 12, whiteSpace: 'nowrap' }}>{fetchStr} IST</td>
-                        <td style={{ padding: '12px 16px', color: 'rgba(255,255,255,0.7)' }}>{src.recordsToday.toLocaleString()}</td>
-                        <td style={{ padding: '12px 16px', color: src.latencyMs > 500 ? 'var(--color-warning)' : 'rgba(255,255,255,0.7)' }}>{src.latencyMs}ms</td>
-                        <td style={{ padding: '12px 16px', color: parseFloat(errorRate) > 3 ? 'var(--color-warning)' : 'rgba(255,255,255,0.7)' }}>{errorRate}%</td>
-                        <td style={{ padding: '12px 16px' }}>
-                          <div style={{ display: 'flex', gap: 6 }}>
-                            <Button variant="neutral" size="sm" onClick={() => showToast(`Refreshing ${src.name}…`)}>Refresh</Button>
-                            <Button variant="danger" size="sm" onClick={() => showToast(`${src.name} disabled.`)}>Disable</Button>
-                          </div>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
+          {/* Gov sources pipeline */}
+          <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', padding: 'var(--space-xl)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-lg)' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>GOVERNMENT DATA SOURCES</div>
+              <span style={{ fontSize: 10, fontWeight: 700, color: govData.anyConnected ? 'var(--color-success)' : 'var(--color-text-tertiary)', letterSpacing: '0.07em', fontFamily: 'var(--font-sans)' }}>
+                {govData.datasets.filter(d => d.status === 'CONNECTED' || d.status === 'HEALTHY').length} / {govData.datasets.length} CONNECTED
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+              {govData.datasets.map(src => {
+                const ok = src.status === 'CONNECTED' || src.status === 'HEALTHY'
+                return (
+                  <div key={src.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderRadius: 'var(--radius-md)', background: 'var(--color-surface-secondary)', border: `1px solid ${ok ? 'var(--color-success)' : 'var(--color-border-primary)'}30` }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      {ok ? <CheckCircle size={13} style={{ color: 'var(--color-success)' }} /> : <XCircle size={13} style={{ color: 'var(--color-danger)' }} />}
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}>{src.source}</div>
+                        <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>
+                          {src.format} · {src.record_count != null ? `${src.record_count} records` : 'No records'}
+                          {src.last_retrieved ? ` · fetched ${new Date(src.last_retrieved).toLocaleTimeString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' })} IST` : ''}
+                        </div>
+                      </div>
+                    </div>
+                    <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: ok ? 'var(--color-success)' : 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>{src.status}</span>
+                  </div>
+                )
+              })}
             </div>
           </div>
-        </div>
 
-        {/* 5. Pipeline Activity */}
-        <div style={{ marginBottom: 'var(--space-3xl)' }}>
-          <div className="text-caption" style={{ color: 'rgba(255,255,255,0.4)', marginBottom: 'var(--space-lg)', letterSpacing: '0.08em', textTransform: 'uppercase', fontSize: 11 }}>
-            PIPELINE ACTIVITY
-          </div>
-          <div style={{
-            background: 'var(--color-surface-dark)', border: '1px solid rgba(255,255,255,0.07)',
-            borderRadius: 'var(--radius-lg)', overflow: 'hidden',
-          }}>
-            <div style={{ height: 360, overflowY: 'auto', padding: 'var(--space-lg)' }}>
-              {pipelineLogs.map((entry, i) => (
-                <div key={i} style={{
-                  display: 'flex', gap: 'var(--space-lg)',
-                  padding: '5px var(--space-md)',
-                  borderRadius: 'var(--radius-sm)',
-                  background: levelBg[entry.level],
-                  marginBottom: 2,
-                }}>
-                  <span style={{ color: 'rgba(255,255,255,0.3)', fontFamily: 'var(--font-mono)', fontSize: 12, flexShrink: 0 }}>{entry.ts}</span>
-                  <span style={{ color: levelColor[entry.level], fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, flexShrink: 0, width: 42 }}>{entry.level}</span>
-                  <span style={{ color: 'rgba(255,255,255,0.7)', fontFamily: 'var(--font-mono)', fontSize: 12, lineHeight: 1.5 }}>{entry.message}</span>
+          {/* Live metrics */}
+          <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', padding: 'var(--space-xl)' }}>
+            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginBottom: 'var(--space-lg)' }}>SYSTEM METRICS</div>
+            <div style={{ display: 'flex', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
+              {[
+                { label: 'Obs/hr (airfare)', value: '0', note: 'no sources' },
+                { label: 'Obs/hr (gov)', value: govData.anyConnected ? '4' : '0', note: govData.anyConnected ? 'live' : 'unavailable' },
+                { label: 'Gov fetch latency', value: '—', note: 'AllOrigins proxy' },
+                { label: 'Active sessions', value: '3', note: 'demo' },
+                { label: 'Index status', value: 'NOT PUB.', note: '<15 corridors' },
+              ].map(m => (
+                <div key={m.label} style={{ background: 'var(--color-surface-secondary)', borderRadius: 'var(--radius-md)', padding: '10px 14px', minWidth: 120 }}>
+                  <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginBottom: 4 }}>{m.label}</div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>{m.value}</div>
+                  <div style={{ fontSize: 9, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginTop: 2 }}>{m.note}</div>
                 </div>
               ))}
             </div>
           </div>
         </div>
+      )}
 
-        {/* 6. Configuration Panel */}
-        <div style={{ marginBottom: 'var(--space-3xl)' }}>
-          <div className="text-caption" style={{ color: 'rgba(255,255,255,0.4)', marginBottom: 'var(--space-lg)', letterSpacing: '0.08em', textTransform: 'uppercase', fontSize: 11 }}>
-            CONFIGURATION
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
-            <CollapsibleSection title="Collection Settings">
-              <ConfigRow label="Collection interval">
-                <FakeSelect value="30 minutes" />
-              </ConfigRow>
-              <ConfigRow label="Max retries per request">
-                <FakeSelect value="3" />
-              </ConfigRow>
-              <ConfigRow label="Request timeout">
-                <FakeSelect value="30 seconds" />
-              </ConfigRow>
-              <ConfigRow label="Dedup fingerprinting">
-                <FakeToggle checked label="Enabled" />
-              </ConfigRow>
-            </CollapsibleSection>
-
-            <CollapsibleSection title="Index Settings">
-              <ConfigRow label="Base period">
-                <FakeSelect value="January 2025" />
-              </ConfigRow>
-              <ConfigRow label="Update frequency">
-                <FakeSelect value="Hourly" />
-              </ConfigRow>
-              <ConfigRow label="Fare smoothing window">
-                <FakeSelect value="7-day rolling" />
-              </ConfigRow>
-              <ConfigRow label="STL decomposition">
-                <FakeToggle checked label="Active" />
-              </ConfigRow>
-            </CollapsibleSection>
-
-            <CollapsibleSection title="Alert Thresholds">
-              <ConfigRow label="Spike detection threshold">
-                <FakeSelect value="> 15% deviation" />
-              </ConfigRow>
-              <ConfigRow label="Staleness warning">
-                <FakeSelect value="> 2 hours" />
-              </ConfigRow>
-              <ConfigRow label="Cross-source deviation cap">
-                <FakeSelect value="12%" />
-              </ConfigRow>
-              <ConfigRow label="Auto-quarantine on anomaly">
-                <FakeToggle checked label="Enabled" />
-              </ConfigRow>
-            </CollapsibleSection>
-          </div>
-        </div>
-
-        {/* 7. User Sessions */}
-        <div style={{ marginBottom: 'var(--space-3xl)' }}>
-          <div className="text-caption" style={{ color: 'rgba(255,255,255,0.4)', marginBottom: 'var(--space-lg)', letterSpacing: '0.08em', textTransform: 'uppercase', fontSize: 11 }}>
-            ACTIVE SESSIONS
-          </div>
-          <div style={{
-            background: 'var(--color-surface-bg)', border: '1px solid rgba(255,255,255,0.07)',
-            borderRadius: 'var(--radius-lg)', overflow: 'hidden',
-          }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+      {tab === 'audit' && (
+        <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', overflow: 'hidden' }}>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: 'var(--font-sans)' }}>
               <thead>
-                <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
-                  {['User', 'IP Address', 'Last Activity', 'Pages Viewed'].map(h => (
-                    <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 500, fontSize: 11, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>{h}</th>
+                <tr style={{ borderBottom: '1px solid var(--color-border-primary)', background: 'var(--color-surface-secondary)' }}>
+                  {['Timestamp', 'Actor', 'Action', 'Detail'].map(h => (
+                    <th key={h} style={{ textAlign: 'left', padding: '10px 14px', fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {userSessions.map((s, i) => (
-                  <tr key={s.username} style={{ borderBottom: i < userSessions.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none' }}>
-                    <td style={{ padding: '12px 16px', color: 'rgba(255,255,255,0.85)', fontWeight: 500 }}>{s.username}</td>
-                    <td style={{ padding: '12px 16px', color: 'rgba(255,255,255,0.45)', fontFamily: 'var(--font-mono)', fontSize: 12 }}>{s.ip}</td>
-                    <td style={{ padding: '12px 16px', color: 'rgba(255,255,255,0.55)', fontFamily: 'var(--font-mono)', fontSize: 12 }}>{s.lastActivity} IST</td>
-                    <td style={{ padding: '12px 16px', color: 'rgba(255,255,255,0.7)' }}>{s.pages}</td>
+                {audit.map((entry, i) => (
+                  <tr key={i} style={{ borderBottom: '1px solid var(--color-border-primary)' }}>
+                    <td style={{ padding: '8px 14px', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)', fontSize: 11, whiteSpace: 'nowrap' }}>
+                      {new Date(entry.ts).toLocaleTimeString('en-IN', { hour12: false })}
+                    </td>
+                    <td style={{ padding: '8px 14px', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{entry.actor}</td>
+                    <td style={{ padding: '8px 14px' }}>
+                      <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.05em', color: ACTION_COLOR[entry.action] ?? 'var(--color-text-tertiary)', padding: '2px 6px', borderRadius: 3, background: 'var(--color-surface-secondary)' }}>
+                        {entry.action}
+                      </span>
+                    </td>
+                    <td style={{ padding: '8px 14px', color: 'var(--color-text-secondary)', fontSize: 11 }}>{entry.detail}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         </div>
+      )}
 
-      </div>
+      {tab === 'config' && (
+        <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', padding: 'var(--space-xl)' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginBottom: 'var(--space-lg)' }}>INDEX & COLLECTION PARAMETERS</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+            {thresholds.map(t => (
+              <div key={t.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-lg)', padding: '10px 14px', borderRadius: 'var(--radius-md)', background: 'var(--color-surface-secondary)' }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}>{t.label}</div>
+                  <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>{t.key}</div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <input
+                    type="number"
+                    value={t.value}
+                    onChange={e => setThresholds(prev => prev.map(item => item.key === t.key ? { ...item, value: Number(e.target.value) } : item))}
+                    style={{ width: 72, padding: '5px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border-primary)', background: 'var(--color-surface-bg)', color: 'var(--color-text-primary)', fontSize: 13, fontFamily: 'var(--font-mono)', textAlign: 'right', outline: 'none' }}
+                  />
+                  <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', minWidth: 64 }}>{t.unit}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop: 'var(--space-lg)', fontSize: 11, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>
+            Changes apply on next collection cycle. Current values reflect the SIH26056 reference configuration.
+          </div>
+        </div>
+      )}
     </div>
   )
 }

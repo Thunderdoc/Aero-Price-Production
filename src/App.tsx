@@ -1,6 +1,8 @@
 import { useState } from 'react'
+import { AuthProvider, useAuth } from './contexts/AuthContext'
 import AppShell from './components/AppShell'
 import type { Page } from './components/AppShell'
+import LoginPage from './pages/LoginPage'
 import Overview from './pages/Overview'
 import AirfareMap from './pages/AirfareMap'
 import RouteExplorer from './pages/RouteExplorer'
@@ -12,9 +14,15 @@ import Collection from './pages/Collection'
 import Methodology from './pages/Methodology'
 import Exports from './pages/Exports'
 import AdminDashboard from './pages/AdminDashboard'
+import LiveFares from './pages/LiveFares'
 
-export default function App() {
+function AppContent() {
+  const { user } = useAuth()
   const [currentPage, setCurrentPage] = useState<Page>('overview')
+
+  if (!user) {
+    return <LoginPage onLogin={() => setCurrentPage('overview')} />
+  }
 
   function renderPage() {
     switch (currentPage) {
@@ -29,6 +37,7 @@ export default function App() {
       case 'methodology': return <Methodology />
       case 'exports':     return <Exports />
       case 'admin':       return <AdminDashboard />
+      case 'livefares':   return <LiveFares />
     }
   }
 
@@ -36,5 +45,13 @@ export default function App() {
     <AppShell currentPage={currentPage} onNavigate={setCurrentPage}>
       {renderPage()}
     </AppShell>
+  )
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   )
 }

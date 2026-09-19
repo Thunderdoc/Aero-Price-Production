@@ -1,160 +1,166 @@
 import { useState } from 'react'
-import { Badge } from '../components/ui/Badge'
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { ChevronDown, ChevronRight, AlertTriangle, CheckCircle, Clock, XCircle } from 'lucide-react'
 import { methodologySteps } from '../data/sampleData'
 
-const CATEGORY_COLORS: Record<string, string> = {
-  COLLECTION:   'var(--color-brand-primary)',
-  PROCESSING:   'var(--color-indigo)',
-  INDEXING:     'var(--color-teal)',
-  VALIDATION:   'var(--color-warning)',
-  DISTRIBUTION: 'var(--color-success)',
+type NodeStatus = 'ACTIVE' | 'BLOCKED' | 'PENDING' | 'CONNECTED'
+
+interface StepMeta {
+  status: NodeStatus
+  statusDetail: string
+  linkedSource?: string
 }
 
-const CATEGORY_VARIANTS: Record<string, 'brand' | 'info' | 'success' | 'warning' | 'default'> = {
-  COLLECTION:   'brand',
-  PROCESSING:   'info',
-  INDEXING:     'info',
-  VALIDATION:   'warning',
-  DISTRIBUTION: 'success',
+const STEP_META: Record<number, StepMeta> = {
+  1: { status: 'BLOCKED', statusDetail: 'All airfare sources returning CHALLENGE DETECTED — backend collector required', linkedSource: 'sources' },
+  2: { status: 'PENDING', statusDetail: 'Pending real observations from acquisition stage' },
+  3: { status: 'PENDING', statusDetail: 'Pending real observations — outlier detection inactive' },
+  4: { status: 'PENDING', statusDetail: 'Pending real observations for normalisation pipeline' },
+  5: { status: 'PENDING', statusDetail: 'Pending real observations — tax-strip tables loaded' },
+  6: { status: 'PENDING', statusDetail: 'Pending T+1→T+45 observations per corridor' },
+  7: { status: 'CONNECTED', statusDetail: 'DGCA traffic weights loaded (AllOrigins fetch)', linkedSource: 'government' },
+  8: { status: 'PENDING', statusDetail: 'INDEX NOT PUBLISHED — insufficient matched-sample corridors (<15)' },
+  9: { status: 'PENDING', statusDetail: 'STL decomposition inactive — no time series available' },
+  10: { status: 'PENDING', statusDetail: 'Isolation Forest model not yet trained — awaiting observations' },
+  11: { status: 'PENDING', statusDetail: 'Cross-source consensus unavailable — no active sources' },
+  12: { status: 'PENDING', statusDetail: 'Freshness scoring inactive — no live corridors' },
 }
+
+const CATEGORY_STYLE: Record<string, { label: string; color: string; bg: string }> = {
+  COLLECTION:  { label: 'COLLECTION',  color: 'var(--color-danger)',       bg: 'var(--color-danger-bg)' },
+  PROCESSING:  { label: 'PROCESSING',  color: 'var(--color-info)',          bg: 'var(--color-info-bg)' },
+  INDEXING:    { label: 'INDEXING',    color: 'var(--color-brand-primary)', bg: 'var(--color-brand-muted)' },
+  VALIDATION:  { label: 'VALIDATION',  color: 'var(--color-success)',       bg: 'var(--color-success-bg)' },
+}
+
+const NODE_STATUS_STYLE: Record<NodeStatus, { icon: typeof CheckCircle; color: string; bg: string; label: string }> = {
+  ACTIVE:    { icon: CheckCircle, color: 'var(--color-success)', bg: 'var(--color-success-bg)', label: 'ACTIVE' },
+  BLOCKED:   { icon: XCircle,     color: 'var(--color-danger)',  bg: 'var(--color-danger-bg)',  label: 'BLOCKED' },
+  PENDING:   { icon: Clock,       color: 'var(--color-warning)', bg: 'var(--color-warning-bg)', label: 'PENDING' },
+  CONNECTED: { icon: CheckCircle, color: 'var(--color-info)',    bg: 'var(--color-info-bg)',    label: 'CONNECTED' },
+}
+
+const JEVONS = `P = Π (p_it / p_i0)^(1/n)
+
+where:
+  p_it   = fare for corridor i at time t
+  p_i0   = base-period fare (January 2025 = 100)
+  n      = matched corridors with obs. in both periods
+  Π      = product over all matched corridors i
+
+Published only when n ≥ 15.`
 
 export default function Methodology() {
-  const [expandedStep, setExpandedStep] = useState<number | null>(null)
+  const [expanded, setExpanded] = useState<Set<number>>(new Set([1]))
 
-  const toggle = (step: number) => setExpandedStep(v => v === step ? null : step)
+  function toggle(step: number) {
+    setExpanded(prev => {
+      const next = new Set(prev)
+      next.has(step) ? next.delete(step) : next.add(step)
+      return next
+    })
+  }
+
+  const categories = [...new Set(methodologySteps.map(s => s.category))]
 
   return (
-    <div className="flex flex-col" style={{ gap: 'var(--space-xl)', maxWidth: '640px' }}>
+    <div className="flex flex-col" style={{ gap: 'var(--space-2xl)' }}>
       <div>
-        <h1 style={{ fontSize: 'var(--text-title-size)', fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)' }}>
-          Methodology
-        </h1>
-        <p style={{ fontSize: 'var(--text-body-size)', fontFamily: 'var(--font-sans)', color: 'var(--color-text-secondary)', marginTop: 'var(--space-xs)', maxWidth: 520 }}>
-          Interactive pipeline from raw source collection to published all-India airfare price index. Click any stage to expand.
+        <h1 style={{ fontSize: 'var(--text-title-size)', fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', letterSpacing: '-0.01em' }}>Methodology</h1>
+        <p style={{ fontSize: 'var(--text-body-size)', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginTop: 'var(--space-xs)', maxWidth: 520 }}>
+          12-stage pipeline from raw fare ingestion to Jevons index publication. Node status reflects current collector state.
         </p>
       </div>
 
-      {/* Jevons formula */}
-      <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', padding: 'var(--space-xl)', boxShadow: 'var(--shadow-sm)', border: '1px solid var(--color-border-primary)' }}>
-        <h2 style={{ fontSize: 'var(--text-label-size)', fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)', marginBottom: 'var(--space-md)' }}>
-          Core Index Formula — Jevons
-        </h2>
-        <div style={{ background: 'var(--color-surface-secondary)', borderRadius: 'var(--radius-md)', padding: 'var(--space-lg)', fontFamily: 'var(--font-mono)', fontSize: 'var(--text-body-size)', color: 'var(--color-text-primary)' }}>
-          P<sub>J</sub> = ( ∏ p<sub>i</sub> / p<sub>0</sub> )<sup>1/n</sup> × 100
-        </div>
-        <div style={{ marginTop: 'var(--space-md)', display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
-          <p style={{ fontSize: 'var(--text-body-size)', fontFamily: 'var(--font-sans)', color: 'var(--color-text-secondary)' }}>
-            Where p<sub>i</sub> = current period fare, p<sub>0</sub> = base period fare, n = number of observations.
-          </p>
-          <p style={{ fontSize: 'var(--text-body-size)', fontFamily: 'var(--font-sans)', color: 'var(--color-text-secondary)' }}>
-            Route-level relatives are weighted by DGCA annual passenger traffic shares and aggregated via weighted geometric mean.
-          </p>
+      {/* Pipeline status banner */}
+      <div style={{ padding: '12px 16px', borderRadius: 'var(--radius-md)', background: 'var(--color-warning-bg)', border: '1px solid var(--color-warning)40', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+        <AlertTriangle size={14} style={{ color: 'var(--color-warning)', flexShrink: 0, marginTop: 1 }} />
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-warning)', fontFamily: 'var(--font-sans)' }}>PIPELINE PAUSED — ACQUISITION BLOCKED</div>
+          <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginTop: 3 }}>
+            Stage 1 (Collection) is blocked by bot-protection on all airline sources. Stages 2–12 are pending. Government data (Stage 7) is connected.
+          </div>
         </div>
       </div>
 
       {/* Category legend */}
-      <div className="flex flex-wrap" style={{ gap: 'var(--space-sm)' }}>
-        {Object.entries(CATEGORY_COLORS).map(([cat, color]) => (
-          <div key={cat} className="flex items-center" style={{ gap: 'var(--space-xs)' }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, display: 'block', flexShrink: 0 }} />
-            <span style={{ fontSize: 10, fontFamily: 'var(--font-sans)', color: 'var(--color-text-tertiary)', fontWeight: 500, letterSpacing: '0.06em' }}>{cat}</span>
-          </div>
-        ))}
+      <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+        {categories.map(cat => {
+          const cs = CATEGORY_STYLE[cat]
+          return (
+            <span key={cat} style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', color: cs.color, background: cs.bg, padding: '3px 8px', borderRadius: 'var(--radius-full)', fontFamily: 'var(--font-sans)' }}>
+              {cs.label}
+            </span>
+          )
+        })}
+        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-danger)', background: 'var(--color-danger-bg)', padding: '3px 8px', borderRadius: 'var(--radius-full)', fontFamily: 'var(--font-sans)' }}>BLOCKED</span>
+        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-warning)', background: 'var(--color-warning-bg)', padding: '3px 8px', borderRadius: 'var(--radius-full)', fontFamily: 'var(--font-sans)' }}>PENDING</span>
+        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-info)', background: 'var(--color-info-bg)', padding: '3px 8px', borderRadius: 'var(--radius-full)', fontFamily: 'var(--font-sans)' }}>CONNECTED</span>
       </div>
 
-      {/* Pipeline steps */}
-      <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', overflow: 'hidden', boxShadow: 'var(--shadow-sm)', border: '1px solid var(--color-border-primary)' }}>
-        <div style={{ padding: 'var(--space-xl)', paddingBottom: 'var(--space-md)', borderBottom: '1px solid var(--color-border-primary)' }}>
-          <h2 style={{ fontSize: 'var(--text-label-size)', fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)' }}>
-            Data Pipeline
-          </h2>
-          <p style={{ fontSize: 'var(--text-body-size)', fontFamily: 'var(--font-sans)', color: 'var(--color-text-secondary)', marginTop: 'var(--space-xs)' }}>
-            {methodologySteps.length} stages from source to publication.
-          </p>
-        </div>
+      {/* Pipeline accordion */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)', position: 'relative' }}>
+        {/* Vertical connector line */}
+        <div style={{ position: 'absolute', left: 22, top: 40, bottom: 40, width: 2, background: 'var(--color-border-primary)', zIndex: 0 }} />
 
-        <div className="flex flex-col">
-          {methodologySteps.map((step, i) => {
-            const isExpanded = expandedStep === step.step
-            const isLast = i === methodologySteps.length - 1
-            const accentColor = CATEGORY_COLORS[step.category] ?? 'var(--color-brand-primary)'
-
-            return (
-              <div
-                key={step.step}
-                style={{ borderBottom: isLast ? 'none' : '1px solid var(--color-border-primary)' }}
+        {methodologySteps.map((step) => {
+          const meta = STEP_META[step.step] ?? { status: 'PENDING' as NodeStatus, statusDetail: '' }
+          const ns = NODE_STATUS_STYLE[meta.status]
+          const NodeIcon = ns.icon
+          const cat = CATEGORY_STYLE[step.category]
+          const isOpen = expanded.has(step.step)
+          return (
+            <div key={step.step} style={{ position: 'relative', zIndex: 1 }}>
+              <button
+                onClick={() => toggle(step.step)}
+                style={{
+                  width: '100%', textAlign: 'left', border: 'none', cursor: 'pointer',
+                  background: 'transparent', padding: 0,
+                  display: 'flex', alignItems: 'flex-start', gap: 'var(--space-md)',
+                }}
               >
-                <button
-                  onClick={() => toggle(step.step)}
-                  aria-expanded={isExpanded}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 'var(--space-lg)',
-                    padding: 'var(--space-md) var(--space-xl)',
-                    background: isExpanded ? 'var(--color-surface-secondary)' : 'transparent',
-                    border: 'none',
-                    cursor: 'pointer',
-                    transition: 'background 150ms',
-                    width: '100%',
-                    textAlign: 'left',
-                  }}
-                  onMouseOver={e => { if (!isExpanded) (e.currentTarget as HTMLElement).style.background = 'var(--color-surface-hover)' }}
-                  onMouseOut={e => { if (!isExpanded) (e.currentTarget as HTMLElement).style.background = 'transparent' }}
-                >
-                  {/* Step number */}
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0, width: 24 }}>
-                    <div
-                      style={{
-                        width: 24, height: 24, borderRadius: '50%',
-                        background: isExpanded ? accentColor : 'var(--color-surface-secondary)',
-                        border: `2px solid ${isExpanded ? accentColor : 'var(--color-border-secondary)'}`,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        transition: 'all 200ms', flexShrink: 0,
-                      }}
-                    >
-                      <span style={{ fontSize: 9, fontWeight: 700, fontFamily: 'var(--font-sans)', color: isExpanded ? 'white' : 'var(--color-text-tertiary)' }}>
-                        {step.step}
-                      </span>
+                {/* Node circle */}
+                <div style={{ width: 44, height: 44, flexShrink: 0, borderRadius: '50%', background: ns.bg, border: `2px solid ${ns.color}`, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', zIndex: 2 }}>
+                  <NodeIcon size={16} style={{ color: ns.color }} />
+                </div>
+
+                {/* Step content */}
+                <div style={{ flex: 1, background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: `1px solid ${isOpen ? 'var(--color-brand-primary)' : 'var(--color-border-primary)'}`, padding: 'var(--space-lg)', transition: 'border-color 150ms' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>{String(step.step).padStart(2, '0')}</span>
+                      <span style={{ fontSize: 'var(--text-label-size)', fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}>{step.title}</span>
+                      <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.06em', color: cat.color, background: cat.bg, padding: '2px 6px', borderRadius: 3, fontFamily: 'var(--font-sans)' }}>{cat.label}</span>
+                      <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.06em', color: ns.color, background: ns.bg, padding: '2px 6px', borderRadius: 3, fontFamily: 'var(--font-sans)' }}>{ns.label}</span>
                     </div>
-                    {!isLast && (
-                      <div style={{ width: 1, flex: 1, background: 'var(--color-border-primary)', minHeight: 8, marginTop: 2 }} />
-                    )}
+                    {isOpen ? <ChevronDown size={14} style={{ color: 'var(--color-text-tertiary)', flexShrink: 0 }} /> : <ChevronRight size={14} style={{ color: 'var(--color-text-tertiary)', flexShrink: 0 }} />}
                   </div>
 
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className="flex items-center flex-wrap" style={{ gap: 'var(--space-md)' }}>
-                      <span style={{ fontSize: 'var(--text-label-size)', fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)' }}>
-                        {step.title}
-                      </span>
-                      <Badge label={step.category} variant={CATEGORY_VARIANTS[step.category] ?? 'default'} />
+                  {isOpen && (
+                    <div style={{ marginTop: 'var(--space-md)', display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+                      <p style={{ fontSize: 'var(--text-body-size)', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', lineHeight: 1.6, margin: 0 }}>{step.description}</p>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, padding: '8px 10px', borderRadius: 'var(--radius-sm)', background: ns.bg + '80', fontSize: 11, color: ns.color, fontFamily: 'var(--font-sans)' }}>
+                        <NodeIcon size={12} style={{ flexShrink: 0, marginTop: 1 }} />
+                        {meta.statusDetail}
+                      </div>
+                      {meta.linkedSource && (
+                        <div style={{ fontSize: 11, color: 'var(--color-brand-primary)', fontFamily: 'var(--font-sans)' }}>
+                          → See Data Sources for current source status
+                        </div>
+                      )}
                     </div>
-                  </div>
+                  )}
+                </div>
+              </button>
+            </div>
+          )
+        })}
+      </div>
 
-                  {isExpanded
-                    ? <ChevronDown size={15} style={{ color: 'var(--color-text-tertiary)', flexShrink: 0 }} />
-                    : <ChevronRight size={15} style={{ color: 'var(--color-text-tertiary)', flexShrink: 0 }} />
-                  }
-                </button>
-
-                {isExpanded && (
-                  <div
-                    className="animate-fade-up"
-                    style={{
-                      padding: 'var(--space-lg) var(--space-xl) var(--space-xl)',
-                      paddingLeft: 'calc(var(--space-xl) + 24px + var(--space-lg))',
-                      background: 'var(--color-surface-secondary)',
-                    }}
-                  >
-                    <p style={{ fontSize: 'var(--text-body-size)', fontFamily: 'var(--font-sans)', color: 'var(--color-text-secondary)', lineHeight: 1.65 }}>
-                      {step.description}
-                    </p>
-                  </div>
-                )}
-              </div>
-            )
-          })}
+      {/* Jevons formula */}
+      <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', padding: 'var(--space-xl)' }}>
+        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginBottom: 'var(--space-md)' }}>JEVONS PRICE INDEX FORMULA</div>
+        <div style={{ background: 'var(--color-surface-secondary)', borderRadius: 'var(--radius-md)', padding: 'var(--space-lg)', fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--color-text-primary)', lineHeight: 2, whiteSpace: 'pre-wrap' }}>
+          {JEVONS}
         </div>
       </div>
     </div>

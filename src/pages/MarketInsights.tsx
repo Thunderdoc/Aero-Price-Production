@@ -135,6 +135,14 @@ export default function MarketInsights() {
         </p>
       </div>
 
+      {/* Data provenance notice */}
+      <div style={{ background: 'var(--color-warning-bg)', border: '1px solid rgba(217,119,6,0.25)', borderRadius: 'var(--radius-lg)', padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-warning)', background: 'rgba(217,119,6,0.2)', padding: '2px 6px', borderRadius: 3, fontFamily: 'var(--font-sans)', flexShrink: 0 }}>GENERATED DATA</span>
+        <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>
+          All charts and analysis below use generated reference data. Real carrier benchmarks and corridor statistics will appear once airfare collectors are configured and real observations are collected.
+        </span>
+      </div>
+
       {/* Price History Chart */}
       <div style={card}>
         <div className="flex items-center justify-between flex-wrap" style={{ gap: 'var(--space-md)', marginBottom: 'var(--space-lg)' }}>

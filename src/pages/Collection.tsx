@@ -108,13 +108,13 @@ function CollectorCard({ collector: c, onPause, onResume }: {
 
       <div className="grid gap-md flex-wrap" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))' }}>
         {[
-          { label: 'LAST RUN', value: c.lastRun },
-          { label: 'NEXT RUN', value: c.nextRun },
+          { label: 'LAST HEARTBEAT', value: c.lastHeartbeat },
+          { label: 'UPTIME', value: `${c.uptimeHours}h` },
           { label: 'SUCCESS RATE', value: `${c.successRate.toFixed(1)}%` },
-          { label: 'RECORDS COLLECTED', value: c.recordsCollected.toLocaleString('en-IN') },
-          { label: 'RECORDS REJECTED', value: c.recordsRejected.toLocaleString('en-IN') },
-          { label: 'AVG LATENCY', value: `${c.avgLatency}ms` },
-          { label: 'RATE LIMIT EVENTS', value: c.rateLimitEvents.toString() },
+          { label: 'REQ/HOUR', value: c.requestsPerHour.toLocaleString('en-IN') },
+          { label: 'SOURCES', value: c.sourcesAssigned.length.toString() },
+          { label: 'AVG LATENCY', value: `${c.avgLatencyMs}ms` },
+          { label: 'REGION', value: c.region },
         ].map(({ label, value }) => (
           <div key={label} className="flex flex-col gap-xs p-md bg-bg-faint rounded-corner-md">
             <span className="text-video-title text-text-tertiary">{label}</span>
@@ -126,13 +126,13 @@ function CollectorCard({ collector: c, onPause, onResume }: {
       {showLogs && (
         <div className="mt-lg p-md bg-surface-dark rounded-corner-md">
           <p className="text-video-title text-on-reverse opacity-60 mb-sm">COLLECTOR LOGS — {c.name}</p>
-          {c.errors.length > 0
-            ? c.errors.map((e, i) => (
-              <div key={i} className="flex items-center gap-sm text-video-title text-warning mb-xs">
+          {c.status === 'FAILED'
+            ? (
+              <div className="flex items-center gap-sm text-video-title text-warning mb-xs">
                 <AlertCircle size={12} />
-                <span>{e}</span>
+                <span>Collector in error state. Check heartbeat at {c.lastHeartbeat}.</span>
               </div>
-            ))
+            )
             : <p className="text-video-title text-on-reverse opacity-60">No errors in recent log window.</p>
           }
         </div>

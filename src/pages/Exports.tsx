@@ -68,7 +68,7 @@ export default function Exports() {
                   <div>
                     <div className="flex items-center gap-sm mb-xs">
                       <h3 className="text-label font-medium text-text-primary">{exp.label}</h3>
-                      <Badge label={exp.format} variant="secondary" />
+                      <Badge label={exp.format} variant="default" />
                     </div>
                     <p className="text-label-sm text-text-secondary mb-md">{exp.description}</p>
                     <div className="grid gap-md" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))' }}>
