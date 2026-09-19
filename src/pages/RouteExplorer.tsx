@@ -16,10 +16,10 @@ const TABS = ['Overview', 'Price History', 'Booking Windows', 'Forecast', 'Anoma
 type Tab = typeof TABS[number]
 
 const historySeries = [
-  { name: 'IndiGo',    data: priceHistoryData.map(d => d.indigo),   color: 'var(--color-brand-primary)' },
-  { name: 'Air India', data: priceHistoryData.map(d => d.airIndia), color: 'var(--color-danger)' },
-  { name: 'Akasa',     data: priceHistoryData.map(d => d.akasa),    color: 'var(--color-success)' },
-  { name: 'Median',    data: priceHistoryData.map(d => d.median),   color: 'var(--color-warning)' },
+  { name: 'DEL–BOM',  data: priceHistoryData.map(d => d.DEL_BOM), color: 'var(--color-brand-primary)' },
+  { name: 'DEL–BLR',  data: priceHistoryData.map(d => d.DEL_BLR), color: 'var(--color-danger)' },
+  { name: 'BOM–BLR',  data: priceHistoryData.map(d => d.BOM_BLR), color: 'var(--color-success)' },
+  { name: 'Index×55', data: priceHistoryData.map(d => d.index * 55), color: 'var(--color-warning)' },
 ]
 
 export default function RouteExplorer() {
@@ -28,7 +28,7 @@ export default function RouteExplorer() {
   const [showProv, setShowProv]   = useState(false)
   const corridor = corridors.find(c => c.id === route) ?? corridors[0]
   const routeOptions = corridors.map(c => ({ value: c.id, label: `${c.from} → ${c.to}` }))
-  const bookingData  = bookingWindowData.map(d => ({ label: d.window, value: d.median, low: d.low, high: d.high }))
+  const bookingData  = bookingWindowData.map(d => ({ label: d.window, value: d.avgFare }))
 
   return (
     <div className="flex flex-col animate-fade-up" style={{ gap: 'var(--space-xl)', maxWidth: 860 }}>
@@ -150,8 +150,8 @@ export default function RouteExplorer() {
                 {bookingWindowData.map(d => (
                   <div key={d.window} style={{ background: 'var(--color-surface-secondary)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)' }}>
                     <div className="text-caption text-tertiary">{d.window}</div>
-                    <div className="text-label text-primary" style={{ fontWeight: 500 }}>₹{d.median.toLocaleString('en-IN')}</div>
-                    <div className="text-caption text-tertiary">{d.observations} obs</div>
+                    <div className="text-label text-primary" style={{ fontWeight: 500 }}>₹{d.avgFare.toLocaleString('en-IN')}</div>
+                    <div className="text-caption text-tertiary">demand {(d.demand * 100).toFixed(0)}%</div>
                   </div>
                 ))}
               </div>

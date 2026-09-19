@@ -1,184 +1,535 @@
-import { useState } from 'react'
-import { ZoomIn, ZoomOut, RotateCcw } from 'lucide-react'
-import { Button } from '../components/ui/Button'
-import DataFreshness from '../components/DataFreshness'
-import TrendIndicator from '../components/TrendIndicator'
-import { corridors } from '../data/sampleData'
+import { useState, useEffect } from 'react'
+import { MapContainer, TileLayer, CircleMarker, Tooltip, GeoJSON, useMap } from 'react-leaflet'
+import L from 'leaflet'
+import 'leaflet/dist/leaflet.css'
+import { Activity, Radio, Filter } from 'lucide-react'
+
 import type { Corridor } from '../data/sampleData'
-import type { Page } from '../components/AppShell'
+import { AIRPORTS } from '../data/airports'
+import { useLiveData } from '../hooks/useLiveData'
+import TrendIndicator from '../components/TrendIndicator'
 
-const card = { background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', padding: 'var(--space-xl)', boxShadow: 'var(--shadow-sm)' } as const
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-const INDIA_PATH = 'M 200 40 L 220 42 L 235 50 L 248 65 L 258 80 L 268 95 L 275 110 L 280 125 L 278 140 L 268 155 L 258 168 L 252 180 L 248 195 L 255 210 L 262 225 L 268 240 L 265 255 L 255 268 L 245 280 L 238 292 L 230 305 L 220 316 L 210 322 L 200 318 L 190 310 L 182 298 L 175 285 L 168 272 L 162 258 L 158 244 L 155 230 L 148 218 L 140 208 L 130 200 L 122 190 L 115 178 L 110 165 L 108 152 L 110 138 L 115 124 L 120 110 L 126 96 L 132 83 L 140 70 L 150 58 L 162 48 L 175 42 L 188 40 Z'
+type FilterMode = 'ALL' | 'RISING' | 'FALLING' | 'STABLE'
 
-const airports: Record<string, { x: number; y: number }> = {
-  DEL: { x: 155, y: 120 }, BOM: { x: 122, y: 218 }, BLR: { x: 168, y: 278 },
-  MAA: { x: 195, y: 290 }, CCU: { x: 245, y: 172 }, HYD: { x: 178, y: 245 },
+// ─── Colour helpers (raw hex needed by Leaflet) ───────────────────────────────
+
+const TREND_COLORS: Record<Corridor['trend'], string> = {
+  up: '#dc2626',      // var(--color-danger)
+  down: '#16a34a',    // var(--color-success)
+  stable: '#d97706',  // var(--color-warning)
 }
 
-function trendColor(t: Corridor['trend']) {
-  return t === 'up' ? 'var(--color-danger)' : t === 'down' ? 'var(--color-success)' : 'var(--color-warning)'
+const TIER_RADIUS: Record<string, number> = {
+  HIGH: 10,
+  MEDIUM: 7,
+  LOW: 5,
 }
 
-function arc(x1: number, y1: number, x2: number, y2: number) {
-  const mx = (x1 + x2) / 2 + (y2 - y1) * 0.25
-  const my = (y1 + y2) / 2 - (x2 - x1) * 0.25
-  return `M ${x1} ${y1} Q ${mx} ${my} ${x2} ${y2}`
+// ─── AnimatedPolyline ─────────────────────────────────────────────────────────
+
+interface AnimatedPolylineProps {
+  from: [number, number]
+  to: [number, number]
+  color: string
+  weight: number
+  highlighted?: boolean
 }
 
-export default function AirfareMap({ onNavigate }: { onNavigate: (p: Page) => void }) {
-  const [zoom, setZoom]               = useState(1)
-  const [hovered, setHovered]         = useState<Corridor | null>(null)
-  const [tooltipPos, setTooltipPos]   = useState({ x: 0, y: 0 })
-  const [filter, setFilter]           = useState<'all' | 'up' | 'down' | 'stable'>('all')
+function AnimatedPolyline({ from, to, color, weight, highlighted }: AnimatedPolylineProps) {
+  const map = useMap()
 
-  const filtered = corridors.filter(c => filter === 'all' || c.trend === filter)
+  useEffect(() => {
+    const line = L.polyline([from, to], {
+      color,
+      weight: highlighted ? weight + 2 : weight,
+      dashArray: '12 8',
+      opacity: highlighted ? 1 : 0.75,
+    }).addTo(map)
+
+    const path = (line as unknown as { _path: SVGPathElement | null })._path
+    let offset = 0
+
+    const frame = () => {
+      offset -= 1
+      if (path) path.style.strokeDashoffset = String(offset)
+    }
+    const id = setInterval(frame, 40)
+
+    return () => {
+      clearInterval(id)
+      map.removeLayer(line)
+    }
+  }, [map, from, to, color, weight, highlighted])
+
+  return null
+}
+
+// ─── GeoJSON India layer ──────────────────────────────────────────────────────
+
+function IndiaGeoJSON() {
+  const [geoData, setGeoData] = useState<object | null>(null)
+
+  useEffect(() => {
+    fetch('https://cdn.jsdelivr.net/gh/geohacker/india/state/india_state.geojson')
+      .then((r) => r.json())
+      .then((d: object) => setGeoData(d))
+      .catch(() => { /* silently skip if unavailable */ })
+  }, [])
+
+  if (!geoData) return null
 
   return (
-    <div className="flex flex-col animate-fade-up" style={{ gap: 'var(--space-xl)', maxWidth: 900 }}>
-      <div>
-        <h1 className="text-title text-primary">India Airfare Movement Map</h1>
-        <p className="text-body" style={{ color: 'var(--color-text-secondary)', marginTop: 'var(--space-xs)' }}>
-          Monitored domestic corridors colour-coded by 7-day price movement.
-        </p>
+    <GeoJSON
+      data={geoData as Parameters<typeof GeoJSON>[0]['data']}
+      style={() => ({
+        fillColor: '#f1f5f9',
+        fillOpacity: 0.6,
+        color: '#cbd5e1',
+        weight: 1,
+      })}
+    />
+  )
+}
+
+// ─── Map Controls overlay ─────────────────────────────────────────────────────
+
+interface MapControlsProps {
+  filter: FilterMode
+  onChange: (f: FilterMode) => void
+}
+
+function MapControls({ filter, onChange }: MapControlsProps) {
+  const filters: FilterMode[] = ['ALL', 'RISING', 'FALLING', 'STABLE']
+
+  const labelFor = (f: FilterMode) => {
+    if (f === 'RISING') return '▲ Rising'
+    if (f === 'FALLING') return '▼ Falling'
+    if (f === 'STABLE') return '● Stable'
+    return 'All Routes'
+  }
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        top: 'var(--space-xl)',
+        right: 'var(--space-xl)',
+        zIndex: 1000,
+        background: 'var(--color-surface-bg)',
+        border: '1px solid var(--color-border-primary)',
+        borderRadius: 'var(--radius-lg)',
+        boxShadow: 'var(--shadow-floating)',
+        padding: 'var(--space-md)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 'var(--space-xs)',
+        minWidth: 130,
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 'var(--space-xs)',
+          paddingBottom: 'var(--space-xs)',
+          borderBottom: '1px solid var(--color-border-primary)',
+          marginBottom: 'var(--space-xs)',
+        }}
+      >
+        <Filter size={12} style={{ color: 'var(--color-text-tertiary)' }} />
+        <span style={{ fontFamily: 'var(--font-sans)', fontSize: 'var(--text-caption-size)', color: 'var(--color-text-tertiary)' }}>
+          Filter Routes
+        </span>
+      </div>
+      {filters.map((f) => (
+        <button
+          key={f}
+          onClick={() => onChange(f)}
+          style={{
+            padding: 'var(--space-xs) var(--space-md)',
+            borderRadius: 'var(--radius-sm)',
+            border: 'none',
+            cursor: 'pointer',
+            fontFamily: 'var(--font-sans)',
+            fontSize: 'var(--text-caption-size)',
+            fontWeight: filter === f ? 600 : 400,
+            background: filter === f ? 'var(--color-brand-muted)' : 'transparent',
+            color: filter === f ? 'var(--color-brand-primary)' : 'var(--color-text-secondary)',
+            textAlign: 'left',
+            transition: 'background 0.15s',
+          }}
+        >
+          {labelFor(f)}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+// ─── Live flights badge ───────────────────────────────────────────────────────
+
+interface FlightsBadgeProps {
+  count: number
+  connectionStatus: 'live' | 'delayed' | 'offline'
+}
+
+function FlightsBadge({ count, connectionStatus }: FlightsBadgeProps) {
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        bottom: 'var(--space-2xl)',
+        left: 'var(--space-xl)',
+        zIndex: 1000,
+        background: 'var(--color-surface-dark)',
+        color: 'var(--color-text-on-dark)',
+        borderRadius: 'var(--radius-lg)',
+        padding: 'var(--space-md) var(--space-lg)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 'var(--space-md)',
+        boxShadow: 'var(--shadow-lg)',
+        fontFamily: 'var(--font-sans)',
+      }}
+    >
+      <Activity
+        size={14}
+        style={{
+          color: connectionStatus === 'live' ? 'var(--color-success)' : 'var(--color-warning)',
+        }}
+      />
+      <span style={{ fontSize: 'var(--text-caption-size)', fontWeight: 600 }}>
+        {count} flights over India
+      </span>
+      <span
+        style={{
+          fontSize: 'var(--text-caption-size)',
+          color:
+            connectionStatus === 'live'
+              ? 'var(--color-success)'
+              : connectionStatus === 'delayed'
+              ? 'var(--color-warning)'
+              : 'var(--color-danger)',
+          textTransform: 'uppercase',
+          letterSpacing: '0.05em',
+        }}
+      >
+        {connectionStatus}
+      </span>
+    </div>
+  )
+}
+
+// ─── Legend overlay ───────────────────────────────────────────────────────────
+
+function Legend() {
+  const items = [
+    { label: 'Rising', color: '#dc2626' },
+    { label: 'Falling', color: '#16a34a' },
+    { label: 'Stable', color: '#d97706' },
+  ]
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        bottom: 'var(--space-2xl)',
+        right: 'var(--space-xl)',
+        zIndex: 1000,
+        background: 'var(--color-surface-bg)',
+        border: '1px solid var(--color-border-primary)',
+        borderRadius: 'var(--radius-md)',
+        padding: 'var(--space-md) var(--space-lg)',
+        boxShadow: 'var(--shadow-md)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 'var(--space-xs)',
+        fontFamily: 'var(--font-sans)',
+      }}
+    >
+      <span
+        style={{
+          fontSize: 'var(--text-caption-size)',
+          color: 'var(--color-text-tertiary)',
+          marginBottom: 'var(--space-xs)',
+          fontWeight: 600,
+          letterSpacing: '0.05em',
+          textTransform: 'uppercase',
+        }}
+      >
+        Route Trend
+      </span>
+      {items.map((item) => (
+        <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
+          <div
+            style={{
+              width: 28,
+              height: 3,
+              background: item.color,
+              borderRadius: 2,
+              opacity: 0.85,
+            }}
+          />
+          <span style={{ fontSize: 'var(--text-caption-size)', color: 'var(--color-text-secondary)' }}>
+            {item.label}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ─── Route Sidebar ────────────────────────────────────────────────────────────
+
+interface RouteSidebarProps {
+  corridors: Corridor[]
+  selectedId: string | null
+  onSelect: (id: string) => void
+}
+
+function RouteSidebar({ corridors, selectedId, onSelect }: RouteSidebarProps) {
+  return (
+    <div
+      style={{
+        width: 280,
+        height: '100%',
+        background: 'var(--color-surface-bg)',
+        borderLeft: '1px solid var(--color-border-primary)',
+        overflowY: 'auto',
+        display: 'flex',
+        flexDirection: 'column',
+        fontFamily: 'var(--font-sans)',
+        flexShrink: 0,
+      }}
+    >
+      {/* Header */}
+      <div
+        style={{
+          padding: 'var(--space-xl)',
+          borderBottom: '1px solid var(--color-border-primary)',
+          position: 'sticky',
+          top: 0,
+          background: 'var(--color-surface-bg)',
+          zIndex: 1,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', marginBottom: 'var(--space-xs)' }}>
+          <Radio size={14} style={{ color: 'var(--color-brand-primary)' }} />
+          <span
+            style={{
+              fontSize: 'var(--text-label-size)',
+              fontWeight: 600,
+              color: 'var(--color-text-primary)',
+            }}
+          >
+            Route Index
+          </span>
+        </div>
+        <span style={{ fontSize: 'var(--text-caption-size)', color: 'var(--color-text-tertiary)' }}>
+          {corridors.length} corridors shown
+        </span>
       </div>
 
-      <div className="flex flex-wrap" style={{ gap: 'var(--space-xl)', alignItems: 'flex-start' }}>
-        {/* Map */}
-        <div className="flex-1" style={{ ...card, minWidth: 340 }}>
-          {/* Controls */}
-          <div className="flex items-center justify-between flex-wrap" style={{ gap: 'var(--space-md)', marginBottom: 'var(--space-lg)' }}>
-            <div className="flex" style={{ gap: 'var(--space-xs)' }}>
-              {(['all','up','down','stable'] as const).map(f => (
-                <button key={f} onClick={() => setFilter(f)}
-                  className="text-caption focus-visible:outline-2 focus-visible:outline-[var(--color-brand-primary)] focus-visible:outline-offset-2"
-                  style={{
-                    padding: 'var(--space-xs) var(--space-md)',
-                    borderRadius: 'var(--radius-md)',
-                    background: filter === f ? 'var(--color-brand-primary)' : 'transparent',
-                    color: filter === f ? 'white' : 'var(--color-text-secondary)',
-                    transition: 'var(--transition-base)',
-                    border: 'none',
-                    cursor: 'pointer',
-                  }}>
-                  {f === 'all' ? 'All' : f === 'up' ? '↑ Rising' : f === 'down' ? '↓ Falling' : '→ Stable'}
-                </button>
-              ))}
-            </div>
-            <div className="flex" style={{ gap: 'var(--space-xs)' }}>
-              {[
-                { label: 'Zoom in', icon: <ZoomIn size={14} />, fn: () => setZoom(z => Math.min(z + 0.25, 2)) },
-                { label: 'Zoom out', icon: <ZoomOut size={14} />, fn: () => setZoom(z => Math.max(z - 0.25, 0.75)) },
-                { label: 'Reset', icon: <RotateCcw size={14} />, fn: () => setZoom(1) },
-              ].map(b => (
-                <button key={b.label} onClick={b.fn} title={b.label}
-                  className="focus-visible:outline-2 focus-visible:outline-[var(--color-brand-primary)] focus-visible:outline-offset-2"
-                  style={{ padding: 'var(--space-xs)', borderRadius: 'var(--radius-md)', border: 'none', background: 'transparent', color: 'var(--color-text-tertiary)', cursor: 'pointer', transition: 'var(--transition-fast)' }}>
-                  {b.icon}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* SVG */}
-          <div className="relative overflow-hidden" style={{ height: 360, borderRadius: 'var(--radius-lg)', background: 'var(--color-surface-secondary)' }}>
-            <svg width="100%" height="100%" viewBox="80 25 230 315"
-              style={{ transform: `scale(${zoom})`, transformOrigin: 'center', transition: 'transform 0.3s ease' }}
-              aria-label="India airfare movement map">
-              <path d={INDIA_PATH} fill="var(--color-surface-hover)" stroke="var(--color-border-primary)" strokeWidth={1} />
-              {filtered.map((c, i) => {
-                const a1 = airports[c.from], a2 = airports[c.to]
-                if (!a1 || !a2) return null
-                const isHov = hovered?.id === c.id
-                return (
-                  <path key={c.id} d={arc(a1.x, a1.y, a2.x, a2.y)} fill="none"
-                    stroke={trendColor(c.trend)} strokeWidth={isHov ? 2.5 : 1.5}
-                    strokeLinecap="round" opacity={isHov ? 1 : 0.7}
-                    className="animate-draw-arc cursor-pointer"
-                    style={{ animationDelay: `${i * 100}ms`, transition: 'stroke-width 0.15s, opacity 0.15s' }}
-                    onMouseEnter={e => {
-                      setHovered(c)
-                      const rect = (e.currentTarget.closest('svg')?.parentElement as HTMLElement)?.getBoundingClientRect()
-                      if (rect) setTooltipPos({ x: e.clientX - rect.left, y: e.clientY - rect.top })
-                    }}
-                    onMouseLeave={() => setHovered(null)}
-                    onClick={() => onNavigate('routes')}
-                    aria-label={`${c.from} to ${c.to}`}
-                  />
-                )
-              })}
-              {Object.entries(airports).map(([code, pos]) => (
-                <g key={code}>
-                  <circle cx={pos.x} cy={pos.y} r={3.5} fill="var(--color-surface-bg)" stroke="var(--color-text-secondary)" strokeWidth={1.5} />
-                  <text x={pos.x + 5} y={pos.y + 4} fontSize={7} fill="var(--color-text-secondary)" fontFamily="var(--font-sans)">{code}</text>
-                </g>
-              ))}
-            </svg>
-
-            {hovered && (
-              <div className="pointer-events-none" style={{
-                position: 'absolute', left: tooltipPos.x + 12, top: tooltipPos.y - 10, zIndex: 10,
-                background: 'var(--color-surface-dark)', color: 'var(--color-text-on-dark)',
-                borderRadius: 'var(--radius-md)', padding: 'var(--space-md)', boxShadow: 'var(--shadow-lg)',
-                minWidth: 140,
-              }}>
-                <div className="text-label" style={{ fontWeight: 500, marginBottom: 'var(--space-xs)' }}>{hovered.from} → {hovered.to}</div>
-                <div className="text-caption" style={{ opacity: 0.8 }}>₹{hovered.currentFare.toLocaleString('en-IN')}</div>
-                <div className="text-caption" style={{ opacity: 0.8 }}>
-                  7D: {hovered.change7d > 0 ? '+' : ''}{hovered.change7d.toFixed(1)}%
-                </div>
-                <div className="text-caption" style={{ opacity: 0.55 }}>{hovered.freshness} min ago</div>
-              </div>
-            )}
-          </div>
-
-          {/* Legend */}
-          <div className="flex flex-wrap" style={{ gap: 'var(--space-xl)', marginTop: 'var(--space-lg)' }}>
-            {[
-              { color: 'var(--color-success)', label: 'Falling' },
-              { color: 'var(--color-danger)',  label: 'Rising' },
-              { color: 'var(--color-warning)', label: 'Stable / Uncertain' },
-            ].map(({ color, label }) => (
-              <div key={label} className="flex items-center" style={{ gap: 'var(--space-xs)' }}>
-                <div style={{ width: 20, height: 2, background: color, borderRadius: 2 }} />
-                <span className="text-caption text-secondary">{label}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Corridor list */}
-        <div style={{ ...card, width: 240, flexShrink: 0 }}>
-          <h3 className="text-label text-primary" style={{ fontWeight: 500, marginBottom: 'var(--space-md)' }}>Corridors</h3>
-          <div className="flex flex-col" style={{ gap: 'var(--space-xs)', maxHeight: 340, overflowY: 'auto' }}>
-            {filtered.map(c => (
-              <button key={c.id} onClick={() => onNavigate('routes')}
-                onMouseEnter={() => setHovered(c)} onMouseLeave={() => setHovered(null)}
-                className="flex items-center justify-between text-left focus-visible:outline-2 focus-visible:outline-[var(--color-brand-primary)] focus-visible:outline-offset-2"
+      {/* Route list */}
+      <div style={{ flex: 1 }}>
+        {corridors.map((corridor) => {
+          const isSelected = selectedId === corridor.id
+          return (
+            <button
+              key={corridor.id}
+              onClick={() => onSelect(corridor.id)}
+              style={{
+                display: 'block',
+                width: '100%',
+                textAlign: 'left',
+                padding: 'var(--space-lg) var(--space-xl)',
+                border: 'none',
+                borderBottom: '1px solid var(--color-border-primary)',
+                cursor: 'pointer',
+                background: isSelected ? 'var(--color-brand-muted)' : 'transparent',
+                transition: 'background 0.15s',
+                fontFamily: 'var(--font-sans)',
+              }}
+            >
+              {/* Route code + fare */}
+              <div
                 style={{
-                  padding: 'var(--space-md) var(--space-sm)',
-                  borderRadius: 'var(--radius-md)',
-                  background: hovered?.id === c.id ? 'var(--color-surface-hover)' : 'transparent',
-                  transition: 'var(--transition-fast)',
-                  border: 'none',
-                  cursor: 'pointer',
-                  width: '100%',
-                }}>
-                <div>
-                  <div className="text-body text-primary">{c.from} → {c.to}</div>
-                  <DataFreshness minutesAgo={c.freshness} />
-                </div>
-                <TrendIndicator direction={c.trend} value={Math.abs(c.change7d)} size="sm" />
-              </button>
-            ))}
-          </div>
-          <div style={{ marginTop: 'var(--space-lg)' }}>
-            <Button variant="neutral" onClick={() => onNavigate('routes')} className="w-full">
-              Open Route Explorer
-            </Button>
-          </div>
-        </div>
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: 'var(--space-xs)',
+                }}
+              >
+                <span
+                  style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 'var(--text-label-size)',
+                    fontWeight: 600,
+                    color: isSelected ? 'var(--color-brand-primary)' : 'var(--color-text-primary)',
+                  }}
+                >
+                  {corridor.from} → {corridor.to}
+                </span>
+                <span
+                  style={{
+                    fontSize: 'var(--text-label-size)',
+                    fontWeight: 600,
+                    color: 'var(--color-text-primary)',
+                  }}
+                >
+                  ₹{corridor.currentFare.toLocaleString('en-IN')}
+                </span>
+              </div>
+
+              {/* Trend + freshness */}
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                }}
+              >
+                <TrendIndicator direction={corridor.trend} value={corridor.change7d} period="7d" size="sm" />
+                <span style={{ fontSize: 'var(--text-caption-size)', color: 'var(--color-text-tertiary)' }}>
+                  {corridor.freshness} min ago
+                </span>
+              </div>
+            </button>
+          )
+        })}
       </div>
+    </div>
+  )
+}
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
+
+export default function AirfareMap() {
+  const { corridors, liveFlights, connectionStatus } = useLiveData()
+  const [filter, setFilter] = useState<FilterMode>('ALL')
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+
+  // Filter corridors based on selected mode
+  const filteredCorridors = corridors.filter((c) => {
+    if (filter === 'RISING') return c.trend === 'up'
+    if (filter === 'FALLING') return c.trend === 'down'
+    if (filter === 'STABLE') return c.trend === 'stable'
+    return true
+  })
+
+  const handleRouteSelect = (id: string) => {
+    setSelectedId((prev) => (prev === id ? null : id))
+  }
+
+  return (
+    <div
+      style={{
+        /* Bust out of AppShell's <main> padding (var(--space-2xl) = 24px on each side) */
+        margin: 'calc(-1 * var(--space-2xl))',
+        /* header = 48px, progress bar ≈ 6px, so ~54px total chrome above main */
+        height: 'calc(100vh - 54px)',
+        display: 'flex',
+        gap: 0,
+        fontFamily: 'var(--font-sans)',
+        overflow: 'hidden',
+      }}
+    >
+      {/* ── Map area ── */}
+      <div style={{ flex: 1, height: '100%', position: 'relative' }}>
+        <MapContainer
+          center={[20.5937, 78.9629]}
+          zoom={5}
+          minZoom={4}
+          maxZoom={10}
+          style={{ flex: 1, height: '100%', width: '100%' }}
+          zoomControl={true}
+        >
+          {/* Basemap — CartoDB Positron */}
+          <TileLayer
+            attribution='&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+            url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+            subdomains="abcd"
+            maxZoom={19}
+          />
+
+          {/* India state boundaries */}
+          <IndiaGeoJSON />
+
+          {/* Animated route polylines */}
+          {filteredCorridors.map((corridor) => (
+            <AnimatedPolyline
+              key={corridor.id}
+              from={[corridor.fromLat, corridor.fromLng]}
+              to={[corridor.toLat, corridor.toLng]}
+              color={TREND_COLORS[corridor.trend]}
+              weight={Math.max(1.5, corridor.weight * 4)}
+              highlighted={selectedId === corridor.id}
+            />
+          ))}
+
+          {/* Airport markers */}
+          {Object.values(AIRPORTS).map((airport) => (
+            <CircleMarker
+              key={airport.iata}
+              center={[airport.lat, airport.lng]}
+              radius={TIER_RADIUS[airport.tier] ?? 5}
+              pathOptions={{
+                color: '#2563eb',      // var(--color-brand-primary)
+                fillColor: '#2563eb',
+                fillOpacity: 0.85,
+                weight: 1.5,
+              }}
+            >
+              <Tooltip sticky={false} opacity={0.95}>
+                <div style={{ fontFamily: 'var(--font-sans)', lineHeight: 1.4 }}>
+                  <strong style={{ fontFamily: 'var(--font-mono)' }}>{airport.iata}</strong>{' '}
+                  {airport.name}
+                  <br />
+                  <span style={{ color: '#64748b', fontSize: 12 }}>{airport.city}</span>
+                </div>
+              </Tooltip>
+            </CircleMarker>
+          ))}
+
+          {/* Live flight markers */}
+          {liveFlights.map((flight) => (
+            <CircleMarker
+              key={flight.icao24}
+              center={[flight.lat, flight.lng]}
+              radius={3}
+              pathOptions={{
+                color: '#64748b',
+                fillColor: '#94a3b8',
+                fillOpacity: 0.7,
+                weight: 1,
+              }}
+            >
+              <Tooltip sticky={false} opacity={0.9}>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                  {flight.callsign}
+                  {flight.altitude > 0 && (
+                    <span style={{ color: '#64748b' }}> · {Math.round(flight.altitude)}m</span>
+                  )}
+                </div>
+              </Tooltip>
+            </CircleMarker>
+          ))}
+        </MapContainer>
+
+        {/* Overlays (rendered outside MapContainer but inside relative wrapper) */}
+        <MapControls filter={filter} onChange={setFilter} />
+        <FlightsBadge count={liveFlights.length} connectionStatus={connectionStatus} />
+        <Legend />
+      </div>
+
+      {/* ── Route sidebar ── */}
+      <RouteSidebar
+        corridors={filteredCorridors}
+        selectedId={selectedId}
+        onSelect={handleRouteSelect}
+      />
     </div>
   )
 }

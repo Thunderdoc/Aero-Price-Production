@@ -103,7 +103,37 @@
   --transition-slow:   300ms ease;
 
   /* ── Sidebar ───────────────────────────────────────────── */
-  --sidebar-width:     56px;
+  --sidebar-width:     220px;
+
+  /* ── Glassmorphism ─────────────────────────────────────── */
+  --glass-bg:          rgba(255, 255, 255, 0.82);
+  --glass-border:      rgba(255, 255, 255, 0.45);
+  --glass-blur:        blur(18px);
+  --glass-shadow:      0 8px 32px rgba(15, 23, 42, 0.12);
+
+  /* ── Brand Gradients ───────────────────────────────────── */
+  --gradient-brand:    linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  --gradient-hero:     linear-gradient(135deg, #0f172a 0%, #1e3a8a 60%, #312e81 100%);
+  --gradient-success:  linear-gradient(135deg, #16a34a 0%, #15803d 100%);
+  --gradient-danger:   linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+  --gradient-warm:     linear-gradient(135deg, #d97706 0%, #b45309 100%);
+  --gradient-subtle:   linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  --gradient-card:     linear-gradient(145deg, #ffffff 0%, #f8fafc 100%);
+
+  /* ── Status Glow ───────────────────────────────────────── */
+  --glow-brand:   0 0 20px rgba(37, 99, 235, 0.25);
+  --glow-success: 0 0 20px rgba(22, 163, 74, 0.25);
+  --glow-danger:  0 0 20px rgba(220, 38, 38, 0.25);
+  --glow-warning: 0 0 20px rgba(217, 119, 6, 0.25);
+
+  /* ── Extra Colors ──────────────────────────────────────── */
+  --color-brand-light:   #60a5fa;
+  --color-brand-dark:    #1e40af;
+  --color-surface-glass: rgba(255, 255, 255, 0.82);
+  --color-indigo:        #6366f1;
+  --color-purple:        #8b5cf6;
+  --color-teal:          #0d9488;
+  --color-rose:          #e11d48;
 }
 
 /* ── Dark mode ───────────────────────────────────────────── */

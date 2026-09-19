@@ -133,9 +133,9 @@ export default function GovernmentIntelligence() {
                 <div className="w-20">
                   <span className="text-label font-medium text-text-primary">{r.region}</span>
                 </div>
-                <div className="text-heading font-semibold text-text-primary w-20">{r.index.toFixed(1)}</div>
+                <div className="text-heading font-semibold text-text-primary w-20">₹{r.avgFare.toLocaleString('en-IN')}</div>
                 <TrendIndicator direction={r.change7d > 0.5 ? 'up' : r.change7d < -0.5 ? 'down' : 'stable'} value={Math.abs(r.change7d)} size="sm" />
-                <span className="text-video-title text-text-tertiary ml-auto">{r.coverage}% coverage · {r.corridors.length} corridors</span>
+                <span className="text-video-title text-text-tertiary ml-auto">{r.routeCount} routes · {r.observations.toLocaleString('en-IN')} obs</span>
                 <ChevronRight size={14} className="text-text-tertiary" />
               </div>
             ))}
