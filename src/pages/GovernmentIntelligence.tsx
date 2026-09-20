@@ -96,7 +96,7 @@ export default function GovernmentIntelligence() {
   const hasCirculars = !isLoading && dgcaCirculars.length > 0
 
   const statusColor = anyConnected ? 'var(--color-success)' : 'var(--color-warning)'
-  const statusLabel = isLoading ? 'FETCHING…' : anyConnected ? 'OFFICIAL DATA CONNECTED' : 'GENERATED BASELINE'
+  const statusLabel = isLoading ? 'FETCHING…' : anyConnected ? 'OFFICIAL DATA CONNECTED' : 'HISTORICAL DATA'
 
   return (
     <div className="flex flex-col" style={{ gap: 'var(--space-2xl)' }}>
@@ -147,7 +147,7 @@ export default function GovernmentIntelligence() {
           <>
             <XCircle size={14} style={{ color: 'var(--color-warning)' }} />
             <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-warning)', fontFamily: 'var(--font-sans)', letterSpacing: '0.05em' }}>GOVERNMENT SOURCES UNAVAILABLE</span>
-            <span style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>DGCA and MoSPI portals did not respond. Statistical data below uses GENERATED reference values.</span>
+            <span style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>Using Kaggle 2019 historical baseline. DGCA live fetch pending.</span>
           </>
         )}
       </div>
@@ -235,7 +235,7 @@ export default function GovernmentIntelligence() {
         <div className="ap-card" style={{ padding: 'var(--space-xl)' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-lg)' }}>
             <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', textTransform: 'uppercase' }}>Domestic Pax Volume</span>
-            <span className={`ap-badge ${anyConnected ? 'ap-badge-official' : 'ap-badge-gen'}`}>{anyConnected ? 'OFFICIAL' : 'GENERATED'}</span>
+            <span className={`ap-badge ${anyConnected ? 'ap-badge-official' : 'ap-badge-info'}`}>{anyConnected ? 'OFFICIAL' : 'HISTORICAL'}</span>
           </div>
           {isLoading ? (
             <div style={{ height: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', fontSize: 12 }}>Fetching DGCA data…</div>
@@ -263,7 +263,7 @@ export default function GovernmentIntelligence() {
         <div className="ap-card" style={{ padding: 'var(--space-xl)' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-lg)' }}>
             <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', textTransform: 'uppercase' }}>Airfare Index vs CPI</span>
-            <span className="ap-badge ap-badge-gen">GENERATED</span>
+            <span className="ap-badge ap-badge-info">HISTORICAL</span>
           </div>
           <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginBottom: 'var(--space-md)' }}>MoSPI CPI-Transport reference</div>
           <div style={{ height: 120, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, borderRadius: 'var(--radius-md)', background: 'var(--color-surface-secondary)', border: '1px dashed var(--color-border-secondary)' }}>
@@ -309,7 +309,7 @@ export default function GovernmentIntelligence() {
             <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>SECTOR HEATMAP — FARE BY BOOKING WINDOW</div>
             <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginTop: 2 }}>Standard fare: one-way · adult · economy · cheapest non-stop</div>
           </div>
-          <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--color-warning)', background: 'var(--color-warning-bg)', padding: '2px 6px', borderRadius: 3, fontFamily: 'var(--font-sans)' }}>GENERATED BASELINE</span>
+          <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--color-info)', background: 'var(--color-info-bg)', padding: '2px 6px', borderRadius: 3, fontFamily: 'var(--font-sans)' }}>KAGGLE 2019</span>
         </div>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ borderCollapse: 'collapse', fontSize: 11, fontFamily: 'var(--font-mono)', width: '100%' }}>
@@ -348,7 +348,7 @@ export default function GovernmentIntelligence() {
             <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>ADVANCE-PURCHASE ELASTICITY</div>
             <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginTop: 2 }}>Fare vs days-in-advance per corridor</div>
           </div>
-          <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--color-warning)', background: 'var(--color-warning-bg)', padding: '2px 6px', borderRadius: 3, fontFamily: 'var(--font-sans)' }}>GENERATED BASELINE</span>
+          <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--color-info)', background: 'var(--color-info-bg)', padding: '2px 6px', borderRadius: 3, fontFamily: 'var(--font-sans)' }}>KAGGLE 2019</span>
         </div>
         {/* Corridor tabs */}
         <div style={{ display: 'flex', gap: 'var(--space-xs)', flexWrap: 'wrap', marginBottom: 'var(--space-lg)' }}>

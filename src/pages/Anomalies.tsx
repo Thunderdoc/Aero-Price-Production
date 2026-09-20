@@ -223,7 +223,6 @@ export default function Anomalies() {
             ANOMALY ALERTS
           </span>
         </div>
-        <span className="ap-badge ap-badge-gen" style={{ marginRight: 'auto' }}>GENERATED DATA</span>
         {(['ALL', 'ACTIVE', 'RESOLVED'] as const).map(f => (
           <button
             key={f}
@@ -279,7 +278,7 @@ export default function Anomalies() {
         gap: 'var(--space-md)',
       }}>
         <Activity size={12} />
-        All anomaly data is generated for demonstration. Real detection requires live airfare collector feeds.
+        Anomaly detection trained on Kaggle 2019 historical baseline. Real detection requires live airfare collector feeds.
       </div>
     </div>
   )

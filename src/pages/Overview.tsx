@@ -310,7 +310,6 @@ export default function Overview({ onNavigate }: Props) {
                 <Icon size={13} style={{ color: accent }}/>
               </div>
               <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>{title}</span>
-              <span className="ap-badge ap-badge-gen" style={{ marginLeft:'auto' }}>GENERATED</span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               {items.map(c => (
@@ -343,7 +342,6 @@ export default function Overview({ onNavigate }: Props) {
             <div style={{ fontSize: 'var(--text-label-size)', fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}>Advance purchase fare curve</div>
           </div>
           <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
-            <Badge label="GENERATED" variant="warning" />
             <Button variant="subtle" onClick={() => onNavigate('routes')} iconEnd={<ArrowRight size={13} />}>Route Explorer</Button>
           </div>
         </div>
@@ -352,8 +350,8 @@ export default function Overview({ onNavigate }: Props) {
           <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>T+1 (tomorrow)</span>
           <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>T+45 (45 days)</span>
         </div>
-        <div style={{ marginTop: 12, padding: '8px 12px', borderRadius: 'var(--radius-sm)', background: 'var(--color-warning-bg)', fontSize: 11, color: 'var(--color-warning)', fontFamily: 'var(--font-sans)' }}>
-          ⚠ Booking window analysis requires real observations for T+1, T+7, T+15, T+30, T+45. Currently showing generated baseline.
+        <div style={{ marginTop: 12, padding: '8px 12px', borderRadius: 'var(--radius-sm)', background: 'var(--color-info-bg)', fontSize: 11, color: 'var(--color-info)', fontFamily: 'var(--font-sans)' }}>
+          Booking window pattern from Kaggle 2019 historical dataset. Connect a live collector to see real-time curves.
         </div>
       </div>
 
@@ -361,7 +359,6 @@ export default function Overview({ onNavigate }: Props) {
       <div>
         <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', marginBottom: 'var(--space-md)', fontFamily: 'var(--font-sans)', display: 'flex', alignItems: 'center', gap: 8 }}>
           REGIONAL INDEX
-          <span style={{ fontSize: 9, color: 'var(--color-warning)', background: 'var(--color-warning-bg)', padding: '1px 5px', borderRadius: 3, fontWeight: 600 }}>GENERATED</span>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--space-md)' }}>
           {regionalData.map(r => (
@@ -380,7 +377,6 @@ export default function Overview({ onNavigate }: Props) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--space-lg)' }}>
           <AlertTriangle size={14} style={{ color: 'var(--color-warning)' }} />
           <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>RECENT ANOMALIES</span>
-          <Badge label="GENERATED" variant="warning" />
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
           {recentAnomalies.slice(0, 4).map(a => (

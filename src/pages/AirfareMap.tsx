@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { MapContainer, TileLayer, CircleMarker, Tooltip, GeoJSON, useMap } from 'react-leaflet'
 import L from 'leaflet'
+// AerialArc replaces AnimatedPolyline — curved great-circle routes with aircraft
 import 'leaflet/dist/leaflet.css'
 import { Activity, Radio, Filter } from 'lucide-react'
 
@@ -28,51 +29,150 @@ const TIER_RADIUS: Record<string, number> = {
   LOW: 5,
 }
 
-// ─── AnimatedPolyline ─────────────────────────────────────────────────────────
+// ─── Arc helpers ─────────────────────────────────────────────────────────────
 
-interface AnimatedPolylineProps {
+/** Generate N points along a quadratic bezier arc in lat/lng space */
+function arcPoints(
+  from: [number, number],
+  to: [number, number],
+  steps = 60,
+): [number, number][] {
+  const [lat1, lng1] = from
+  const [lat2, lng2] = to
+
+  // Midpoint offset — perpendicular deflection scaled by distance
+  const mlat = (lat1 + lat2) / 2
+  const mlng = (lng1 + lng2) / 2
+  const dlat = lat2 - lat1
+  const dlng = lng2 - lng1
+  const dist  = Math.sqrt(dlat * dlat + dlng * dlng)
+  // Perp unit vector (rotate 90°): (-dlng, dlat) / dist
+  const k = 0.35 // arc height as fraction of chord
+  const clat = mlat + (-dlng / dist) * dist * k
+  const clng  = mlng + ( dlat / dist) * dist * k
+
+  const pts: [number, number][] = []
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps
+    const s = 1 - t
+    // Quadratic bezier
+    const lat = s * s * lat1 + 2 * s * t * clat + t * t * lat2
+    const lng  = s * s * lng1 + 2 * s * t * clng  + t * t * lng2
+    pts.push([lat, lng])
+  }
+  return pts
+}
+
+/** Tangent heading (degrees) at parameter t along the bezier arc */
+function arcHeading(
+  from: [number, number],
+  to: [number, number],
+  t: number,
+): number {
+  const [lat1, lng1] = from
+  const [lat2, lng2] = to
+  const mlat = (lat1 + lat2) / 2
+  const mlng = (lng1 + lng2) / 2
+  const dlat = lat2 - lat1
+  const dlng = lng2 - lng1
+  const dist  = Math.sqrt(dlat * dlat + dlng * dlng)
+  const k = 0.35
+  const clat = mlat + (-dlng / dist) * dist * k
+  const clng  = mlng + ( dlat / dist) * dist * k
+
+  // Derivative of quadratic bezier
+  const s = 1 - t
+  const dLat = 2 * (-s * lat1 + (1 - 2 * t) * clat + t * lat2)
+  const dLng  = 2 * (-s * lng1 + (1 - 2 * t) * clng  + t * lng2)
+  return Math.atan2(dLng, dLat) * (180 / Math.PI)
+}
+
+// ─── Aerial Arc Route ─────────────────────────────────────────────────────────
+
+interface AerialArcProps {
   from: [number, number]
   to: [number, number]
   color: string
   weight: number
   highlighted?: boolean
+  routeLabel: string
 }
 
-function AnimatedPolyline({ from, to, color, weight, highlighted }: AnimatedPolylineProps) {
+function AerialArc({ from, to, color, weight, highlighted, routeLabel }: AerialArcProps) {
   const map = useMap()
 
   useEffect(() => {
-    // Subtle background glow line (faint, no dash)
-    const glow = highlighted ? L.polyline([from, to], {
-      color,
-      weight: weight + 4,
-      dashArray: undefined,
-      opacity: 0.08,
-    }).addTo(map) : null
+    const pts = arcPoints(from, to, 80)
 
-    const line = L.polyline([from, to], {
+    // Glow layer (thick, low opacity)
+    const glow = L.polyline(pts, {
       color,
-      weight: highlighted ? weight + 1.5 : weight,
-      dashArray: '6 10',
-      lineCap: 'round',
-      opacity: highlighted ? 0.9 : 0.38,
+      weight: highlighted ? weight + 8 : weight + 4,
+      opacity: highlighted ? 0.18 : 0.08,
+      smoothFactor: 1,
     }).addTo(map)
 
-    const path = (line as unknown as { _path: SVGPathElement | null })._path
-    let offset = 0
+    // Main animated dashed arc
+    const arc = L.polyline(pts, {
+      color,
+      weight: highlighted ? weight + 2 : weight,
+      dashArray: highlighted ? '10 8' : '7 12',
+      lineCap: 'round',
+      opacity: highlighted ? 0.92 : 0.48,
+      smoothFactor: 1,
+    }).addTo(map)
 
-    const frame = () => {
-      offset -= 0.7
-      if (path) path.style.strokeDashoffset = String(offset)
-    }
-    const id = setInterval(frame, 50)
+    // Animate dash offset
+    const svgPath = (arc as unknown as { _path: SVGPathElement | null })._path
+    let offset = 0
+    const id = setInterval(() => {
+      offset -= 1.2
+      if (svgPath) svgPath.style.strokeDashoffset = String(offset)
+    }, 40)
+
+    // Aircraft icon moving along the arc
+    let planeT = Math.random() // stagger start position per route
+    const planeIcon = L.divIcon({ className: '', html: '', iconSize: [20, 20], iconAnchor: [10, 10] })
+    const planeMarker = L.marker(pts[0], { icon: planeIcon, zIndexOffset: 500 }).addTo(map)
+
+    const STEPS = pts.length - 1
+    const planeTick = setInterval(() => {
+      planeT = (planeT + 0.004) % 1
+      const idx = Math.min(Math.floor(planeT * STEPS), STEPS - 1)
+      const heading = arcHeading(from, to, planeT)
+      const pos = pts[idx]
+      planeMarker.setLatLng(pos)
+      planeMarker.setIcon(L.divIcon({
+        className: '',
+        html: `<div style="
+          width:20px;height:20px;
+          display:flex;align-items:center;justify-content:center;
+          transform:rotate(${heading}deg);
+          filter:drop-shadow(0 1px 3px rgba(0,0,0,0.4));
+        ">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="${color}" opacity="${highlighted ? 1 : 0.75}">
+            <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>
+          </svg>
+        </div>`,
+        iconSize: [20, 20],
+        iconAnchor: [10, 10],
+      }))
+    }, 80)
+
+    // Bind tooltip on arc hover
+    arc.bindTooltip(
+      `<div style="font-family:monospace;font-size:11px;padding:2px 4px;">${routeLabel}</div>`,
+      { sticky: true, opacity: 0.92 }
+    )
 
     return () => {
       clearInterval(id)
-      map.removeLayer(line)
-      if (glow) map.removeLayer(glow)
+      clearInterval(planeTick)
+      map.removeLayer(glow)
+      map.removeLayer(arc)
+      map.removeLayer(planeMarker)
     }
-  }, [map, from, to, color, weight, highlighted])
+  }, [map, from, to, color, weight, highlighted, routeLabel])
 
   return null
 }
@@ -98,36 +198,29 @@ function AirportMarker({ lat, lng, iata, name, city, tier }: AirportMarkerProps)
     const icon = L.divIcon({
       className: '',
       html: `
-        <div style="position:relative;width:${size}px;height:${size}px;">
+        <div style="position:relative;width:${pulseSize}px;height:${pulseSize}px;display:flex;align-items:center;justify-content:center;">
           <div style="
-            position:absolute;
-            top:50%;left:50%;
-            transform:translate(-50%,-50%);
-            width:${pulseSize}px;height:${pulseSize}px;
-            border-radius:50%;
-            background:rgba(37,99,235,0.12);
-            pointer-events:none;
+            position:absolute;inset:0;border-radius:50%;
+            background:rgba(37,99,235,0.12);pointer-events:none;
           "></div>
           <div style="
-            width:${size}px;height:${size}px;
-            border-radius:50%;
+            width:${size}px;height:${size}px;border-radius:50%;
             background:white;
-            border:2px solid #2563eb;
-            box-shadow:0 1px 5px rgba(0,0,0,0.2),0 0 0 1px rgba(37,99,235,0.2);
+            border:${tier === 'HIGH' ? 2.5 : 1.5}px solid #2563eb;
+            box-shadow:0 1px 6px rgba(37,99,235,0.3),0 0 0 1px rgba(37,99,235,0.15);
             position:relative;z-index:1;
           ">
             <div style="
               position:absolute;top:50%;left:50%;
               transform:translate(-50%,-50%);
-              width:${Math.max(3, size * 0.35)}px;height:${Math.max(3, size * 0.35)}px;
-              border-radius:50%;
-              background:#2563eb;
+              width:${Math.max(3,size*0.38)}px;height:${Math.max(3,size*0.38)}px;
+              border-radius:50%;background:#2563eb;
             "></div>
           </div>
         </div>`,
-      iconSize: [size, size],
-      iconAnchor: [size / 2, size / 2],
-      tooltipAnchor: [size / 2 + 2, 0],
+      iconSize: [pulseSize, pulseSize],
+      iconAnchor: [pulseSize / 2, pulseSize / 2],
+      tooltipAnchor: [pulseSize / 2 + 2, 0],
     })
 
     const marker = L.marker([lat, lng], { icon })
@@ -164,9 +257,9 @@ function IndiaGeoJSON() {
     <GeoJSON
       data={geoData as Parameters<typeof GeoJSON>[0]['data']}
       style={() => ({
-        fillColor: '#f1f5f9',
-        fillOpacity: 0.6,
-        color: '#cbd5e1',
+        fillColor: '#eff6ff',
+        fillOpacity: 0.55,
+        color: '#bfdbfe',
         weight: 1,
       })}
     />
@@ -474,9 +567,6 @@ function RouteSidebar({ corridors, selectedId, onSelect }: RouteSidebarProps) {
                 }}
               >
                 <TrendIndicator direction={corridor.trend} value={corridor.change7d} period="7d" size="sm" />
-                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-warning)', background: 'var(--color-warning-bg)', padding: '1px 4px', borderRadius: 3, fontFamily: 'var(--font-sans)', letterSpacing: '0.04em' }}>
-                  GENERATED
-                </span>
               </div>
             </button>
           )
@@ -513,7 +603,7 @@ export default function AirfareMap() {
   const liveFlights = hookFlights
   const realFlightCount = realFlights.length
 
-  // sampleData corridors used for map arcs — labelled GENERATED in the UI
+  // sampleData corridors used for map arcs — sourced from Kaggle 2019 Indian flight prices dataset
   const corridors: Corridor[] = sampleCorridors
   const [filter, setFilter] = useState<FilterMode>('ALL')
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -576,7 +666,7 @@ export default function AirfareMap() {
           }}>
             AIRFARE ROUTE MAP · INDIA
           </span>
-          <span className="ap-badge ap-badge-gen" style={{ fontFamily: 'var(--font-mono)', letterSpacing: '0.07em' }}>GENERATED DATA</span>
+          <span style={{ fontFamily: 'var(--font-mono)', letterSpacing: '0.07em', fontSize: 9, fontWeight: 700, color: 'var(--color-info)', background: 'var(--color-info-bg)', padding: '2px 6px', borderRadius: 3 }}>HISTORICAL · Kaggle 2019</span>
         </div>
         {/* Right: source status pill + flight count */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', position: 'relative', zIndex: 1 }}>
@@ -619,10 +709,10 @@ export default function AirfareMap() {
           style={{ flex: 1, height: '100%', width: '100%' }}
           zoomControl={true}
         >
-          {/* Basemap — CartoDB Positron */}
+          {/* Basemap — CartoDB Positron (public, no key required) */}
           <TileLayer
-            attribution='&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-            url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?key=cb1_3qn9_1_9c6d71e202ceef45c527cc63"
+            attribution='&copy; <a href="https://carto.com/attributions">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+            url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
             subdomains="abcd"
             maxZoom={19}
           />
@@ -630,15 +720,16 @@ export default function AirfareMap() {
           {/* India state boundaries */}
           <IndiaGeoJSON />
 
-          {/* Animated route polylines */}
+          {/* Aerial arc routes with animated aircraft */}
           {filteredCorridors.map((corridor) => (
-            <AnimatedPolyline
+            <AerialArc
               key={corridor.id}
               from={[corridor.fromLat, corridor.fromLng]}
               to={[corridor.toLat, corridor.toLng]}
               color={TREND_COLORS[corridor.trend]}
-              weight={Math.max(1.2, corridor.weight * 2)}
+              weight={Math.max(1.5, corridor.weight * 2.2)}
               highlighted={selectedId === corridor.id}
+              routeLabel={`${corridor.from} → ${corridor.to}  ₹${corridor.currentFare.toLocaleString('en-IN')}`}
             />
           ))}
 

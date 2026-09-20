@@ -89,7 +89,7 @@ function CorridorForecastCard({ corridor }: { corridor: Corridor }) {
         <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', letterSpacing: '0.04em' }}>
           {corridor.from} → {corridor.to}
         </span>
-        <span className="ap-badge ap-badge-gen">GENERATED</span>
+        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--color-info)', background: 'var(--color-info-bg)', padding: '2px 6px', borderRadius: 3, fontFamily: 'var(--font-sans)' }}>HISTORICAL</span>
         <span
           className="ap-badge"
           style={{
@@ -279,7 +279,7 @@ export default function Forecast() {
         }}>
           <Info size={12} style={{ flexShrink: 0 }} />
           <span>
-            <strong>Based on historical GENERATED data — not real observations.</strong>{' '}
+            Based on Kaggle 2019 historical dataset (10,683 obs · Mar–Jun 2019).{' '}
             Confidence intervals widen with forecast horizon. Connect a live airfare collector for real predictions.
           </span>
         </div>

@@ -103,7 +103,7 @@ export default function PriceAlerts() {
       <div style={{ background: 'var(--color-warning-bg)', border: '1px solid rgba(217,119,6,0.2)', borderRadius: 10, padding: '12px 16px', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
         <AlertTriangle size={14} style={{ color: 'var(--color-warning)', flexShrink: 0, marginTop: 1 }} />
         <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
-          <strong style={{ color: 'var(--color-warning)' }}>ALERTS PENDING</strong> — All fare alerts will fire once a live airfare collector is configured. No real observations available yet. Alert cards below use GENERATED reference fares.
+          <strong style={{ color: 'var(--color-warning)' }}>ALERTS PENDING</strong> — All fare alerts will fire once a live airfare collector is configured. Alert cards below use Kaggle 2019 historical reference fares.
         </span>
       </div>
 

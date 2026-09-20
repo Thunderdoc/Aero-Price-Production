@@ -2,7 +2,8 @@ import { useState, type ReactNode } from 'react'
 import {
   Home, Map, Plane, Building2, Database,
   Settings, Shield, Bell, BarChart2, BookOpen,
-  Download, Activity, LogOut, ChevronDown, Table2, Search, X, TrendingUp, History
+  Download, Activity, LogOut, ChevronDown, Table2, Search, X, TrendingUp, History,
+  LineChart, CalendarDays, AlertCircle, Landmark, Users, Globe
 } from 'lucide-react'
 import DataStatusBanner from './DataStatusBanner'
 import { useAuth, canAccess, type UserRole, type UserPlan } from '../contexts/AuthContext'
@@ -12,32 +13,48 @@ export type Page =
   | 'overview' | 'map' | 'routes' | 'government' | 'insights'
   | 'alerts' | 'sources' | 'collection' | 'methodology' | 'exports'
   | 'admin' | 'livefares' | 'anomalies' | 'forecast' | 'historicalfares'
+  | 'airfareindex' | 'airlineexplorer' | 'bookingwindow'
+  | 'aviationlive' | 'aviationflights' | 'aviationairports'
+
+// ── Portal definitions ─────────────────────────────────────────────────────
+export type Portal = 'gov' | 'admin' | 'aviation'
 
 interface NavItem { page: Page; icon: typeof Home; label: string; badge?: string; minRole?: 'ANALYST' | 'ADMIN' | 'SUBSCRIBER' }
 
-const publicNav: NavItem[] = [
-  { page: 'overview',   icon: Home,      label: 'Overview' },
-  { page: 'map',        icon: Map,       label: 'India Map' },
-  { page: 'routes',     icon: Plane,     label: 'Route Explorer' },
-  { page: 'insights',   icon: BarChart2, label: 'Market Insights' },
-  { page: 'livefares',  icon: Table2,    label: 'Live Fares' },
-  { page: 'alerts',     icon: Bell,      label: 'Price Alerts' },
-  { page: 'anomalies',  icon: Activity,  label: 'Anomalies' },
-  { page: 'forecast',   icon: TrendingUp, label: 'Forecast' },
-  { page: 'historicalfares', icon: History, label: 'Historical Fares' },
+// Government Portal
+const govNav: NavItem[] = [
+  { page: 'overview',        icon: Home,         label: 'Dashboard' },
+  { page: 'airfareindex',    icon: BarChart2,    label: 'Airfare Index',    minRole: 'ANALYST' },
+  { page: 'livefares',       icon: Table2,       label: 'Live Fares' },
+  { page: 'routes',          icon: Plane,        label: 'Route Explorer' },
+  { page: 'airlineexplorer', icon: Globe,        label: 'Airline Explorer', minRole: 'ANALYST' },
+  { page: 'insights',        icon: TrendingUp,   label: 'Market Insights' },
+  { page: 'map',             icon: Map,          label: 'GIS / India Map' },
+  { page: 'bookingwindow',   icon: CalendarDays, label: 'Booking Windows',  minRole: 'ANALYST' },
+  { page: 'forecast',        icon: LineChart,    label: 'Forecast' },
+  { page: 'anomalies',       icon: AlertCircle,  label: 'Anomalies' },
+  { page: 'historicalfares', icon: History,      label: 'Historical Fares' },
+  { page: 'government',      icon: Landmark,     label: 'Gov Intelligence', minRole: 'ANALYST' },
+  { page: 'alerts',          icon: Bell,         label: 'Price Alerts' },
+  { page: 'exports',         icon: Download,     label: 'Reports & Exports', minRole: 'ANALYST' },
+  { page: 'methodology',     icon: BookOpen,     label: 'Methodology',       minRole: 'ANALYST' },
 ]
 
-const analyticsNav: NavItem[] = [
-  { page: 'government',  icon: Building2, label: 'Gov Intelligence', minRole: 'ANALYST' },
-  { page: 'methodology', icon: BookOpen,  label: 'Methodology',      minRole: 'ANALYST' },
-  { page: 'exports',     icon: Download,  label: 'Exports',          minRole: 'ANALYST' },
+// Admin Control Center
+const adminNav: NavItem[] = [
+  { page: 'admin',      icon: Shield,    label: 'Overview',        minRole: 'ADMIN' },
+  { page: 'sources',    icon: Database,  label: 'Data Sources',    minRole: 'ANALYST' },
+  { page: 'collection', icon: Activity,  label: 'Collection Jobs', minRole: 'ADMIN' },
+  { page: 'sources',    icon: Settings,  label: 'System Config',   minRole: 'ADMIN' },
 ]
 
-const systemNav: NavItem[] = [
-  { page: 'sources',    icon: Database,  label: 'Data Sources', minRole: 'ANALYST' },
-  { page: 'collection', icon: Activity,  label: 'Collection',   minRole: 'ADMIN' },
-  { page: 'admin',      icon: Shield,    label: 'Admin Console',minRole: 'ADMIN' },
+// Aviation Intelligence
+const aviationNav: NavItem[] = [
+  { page: 'aviationlive',     icon: Map,       label: 'Live Flight Map' },
+  { page: 'aviationflights',  icon: Plane,     label: 'Flights' },
+  { page: 'aviationairports', icon: Building2, label: 'Airports' },
 ]
+
 
 const ROLE_BADGE: Record<string, { label: string; bg: string; color: string; border: string }> = {
   ADMIN:      { label: 'ADMIN',    bg: 'var(--color-danger-bg)',        color: 'var(--color-danger)',       border: 'rgba(220,38,38,0.3)' },
@@ -101,11 +118,24 @@ interface AppShellProps {
 }
 
 const PAGE_TITLES: Record<Page, string> = {
-  overview: 'Overview', map: 'India Map', routes: 'Route Explorer',
+  overview: 'Dashboard', map: 'GIS / India Map', routes: 'Route Explorer',
   government: 'Gov Intelligence', insights: 'Market Insights',
-  alerts: 'Price Alerts', sources: 'Data Sources', collection: 'Collection',
-  methodology: 'Methodology', exports: 'Exports', admin: 'Admin Console',
-  livefares: 'Live Fares', anomalies: 'Anomalies', forecast: 'Forecast', historicalfares: 'Historical Fares',
+  alerts: 'Price Alerts', sources: 'Data Sources', collection: 'Collection Jobs',
+  methodology: 'Methodology', exports: 'Reports & Exports', admin: 'Admin Control Center',
+  livefares: 'Live Fares', anomalies: 'Anomaly Detection', forecast: 'Forecast',
+  historicalfares: 'Historical Fares', airfareindex: 'Airfare Index',
+  airlineexplorer: 'Airline Explorer', bookingwindow: 'Booking Window Analysis',
+  aviationlive: 'Live Flight Map', aviationflights: 'Flights', aviationairports: 'Airports',
+}
+
+// Which portal a page belongs to (for auto-switching portal tab)
+const PAGE_PORTAL: Partial<Record<Page, Portal>> = {
+  overview:'gov', airfareindex:'gov', livefares:'gov', routes:'gov',
+  airlineexplorer:'gov', insights:'gov', map:'gov', bookingwindow:'gov',
+  forecast:'gov', anomalies:'gov', historicalfares:'gov', government:'gov',
+  alerts:'gov', exports:'gov', methodology:'gov',
+  admin:'admin', sources:'admin', collection:'admin',
+  aviationlive:'aviation', aviationflights:'aviation', aviationairports:'aviation',
 }
 
 export default function AppShell({ currentPage, onNavigate, children }: AppShellProps) {
@@ -114,11 +144,27 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
   const [avatarOpen, setAvatarOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchFocused, setSearchFocused] = useState(false)
+  const [portal, setPortal] = useState<Portal>(() => PAGE_PORTAL[currentPage] ?? 'gov')
+
+  // Sync portal when page changes externally
+  const derivedPortal = PAGE_PORTAL[currentPage] ?? portal
 
   const role = user?.role ?? 'PUBLIC'
   const plan = user?.plan ?? 'FREE'
   const planKey = roleFromPlan(role, plan)
   const roleBadge = ROLE_BADGE[planKey]
+
+  // Nav items based on active portal
+  const activeNav = derivedPortal === 'admin' ? adminNav
+    : derivedPortal === 'aviation' ? aviationNav
+    : govNav
+
+  function switchPortal(p: Portal) {
+    setPortal(p)
+    const first = (p === 'admin' ? adminNav : p === 'aviation' ? aviationNav : govNav)
+      .find(item => isVisible(item))
+    if (first) navClick(first.page)
+  }
 
   function isVisible(item: NavItem): boolean {
     if (!item.minRole) return true
@@ -181,40 +227,40 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
           </div>
         </div>
 
+        {/* ── Portal tabs ── */}
+        <div style={{ borderBottom: '1px solid var(--color-border-primary)', padding: '6px 8px' }}>
+          {[
+            { id:'gov',      label:'GOV',      title:'Government Portal' },
+            { id:'admin',    label:'ADMIN',     title:'Admin Control Center', minRole:'ADMIN' as const },
+            { id:'aviation', label:'AVIATION',  title:'Aviation Intelligence' },
+          ].filter(p => !p.minRole || role === 'ADMIN').map(p => (
+            <button key={p.id} title={p.title}
+              onClick={() => switchPortal(p.id as Portal)}
+              style={{
+                padding:'4px 8px', marginRight:4, borderRadius:6, border:'none',
+                fontSize:9, fontWeight:700, letterSpacing:'0.1em', cursor:'pointer',
+                background: derivedPortal===p.id ? 'var(--color-brand-primary)' : 'var(--color-surface-secondary)',
+                color: derivedPortal===p.id ? 'white' : 'var(--color-text-tertiary)',
+                transition:'all 150ms',
+              }}>
+              {p.label}
+            </button>
+          ))}
+        </div>
+
         {/* Nav */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '10px 0 10px 0' }}>
-          {/* Section: Navigation */}
-          <div style={{ padding: '4px 14px 6px', marginTop: 4 }}>
-            <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-text-tertiary)', letterSpacing: '0.12em' }}>NAVIGATION</span>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
+          <div style={{ padding: '4px 14px 4px', marginTop: 4 }}>
+            <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-text-tertiary)', letterSpacing: '0.12em' }}>
+              {derivedPortal === 'gov' ? 'GOVERNMENT PORTAL'
+                : derivedPortal === 'admin' ? 'ADMIN CONTROL CENTER'
+                : 'AVIATION INTELLIGENCE'}
+            </span>
           </div>
-          {publicNav.filter(isVisible).map(({ page, icon: Icon, label, badge }) => (
-            <NavButton key={page} icon={<Icon size={15} />} label={label} badge={badge}
+          {activeNav.filter(isVisible).map(({ page, icon: Icon, label, badge }) => (
+            <NavButton key={page + label} icon={<Icon size={15} />} label={label} badge={badge}
               active={currentPage === page} onClick={() => navClick(page)} />
           ))}
-
-          {(role === 'ANALYST' || role === 'ADMIN') && (
-            <>
-              <div style={{ margin: '12px 0 6px', padding: '4px 14px' }}>
-                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-text-tertiary)', letterSpacing: '0.12em' }}>ANALYTICS</span>
-              </div>
-              {analyticsNav.filter(isVisible).map(({ page, icon: Icon, label }) => (
-                <NavButton key={page} icon={<Icon size={15} />} label={label}
-                  active={currentPage === page} onClick={() => navClick(page)} />
-              ))}
-            </>
-          )}
-
-          {role === 'ADMIN' && (
-            <>
-              <div style={{ margin: '12px 0 6px', padding: '4px 14px' }}>
-                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-text-tertiary)', letterSpacing: '0.12em' }}>SYSTEM</span>
-              </div>
-              {systemNav.filter(isVisible).map(({ page, icon: Icon, label }) => (
-                <NavButton key={page} icon={<Icon size={15} />} label={label}
-                  active={currentPage === page} onClick={() => navClick(page)} />
-              ))}
-            </>
-          )}
         </div>
 
         {/* Footer avatar */}

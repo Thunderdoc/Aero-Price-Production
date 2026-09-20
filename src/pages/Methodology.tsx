@@ -130,10 +130,13 @@ export default function Methodology({ onNavigate }: { onNavigate?: (page: Page) 
           const isOpen = expanded.has(step.step)
           return (
             <div key={step.step} style={{ position: 'relative', zIndex: 1 }}>
-              <button
+              <div
+                role="button"
+                tabIndex={0}
                 onClick={() => toggle(step.step)}
+                onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && toggle(step.step)}
                 style={{
-                  width: '100%', textAlign: 'left', border: 'none', cursor: 'pointer',
+                  width: '100%', textAlign: 'left', cursor: 'pointer',
                   background: 'transparent', padding: 0,
                   display: 'flex', alignItems: 'flex-start', gap: 'var(--space-md)',
                 }}
@@ -144,7 +147,7 @@ export default function Methodology({ onNavigate }: { onNavigate?: (page: Page) 
                 </div>
 
                 {/* Step content */}
-                <div style={{ flex: 1, background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: `1px solid ${isOpen ? 'var(--color-brand-primary)' : 'var(--color-border-primary)'}`, borderLeft: `3px solid ${ns.color}`, padding: 'var(--space-lg)', transition: 'border-color 150ms' }}>
+                <div style={{ flex: 1, background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', borderTop: `1px solid ${isOpen ? 'var(--color-brand-primary)' : 'var(--color-border-primary)'}`, borderRight: `1px solid ${isOpen ? 'var(--color-brand-primary)' : 'var(--color-border-primary)'}`, borderBottom: `1px solid ${isOpen ? 'var(--color-brand-primary)' : 'var(--color-border-primary)'}`, borderLeft: `3px solid ${ns.color}`, padding: 'var(--space-lg)', transition: 'border-color 150ms' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
                       <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>{String(step.step).padStart(2, '0')}</span>
@@ -172,7 +175,7 @@ export default function Methodology({ onNavigate }: { onNavigate?: (page: Page) 
                     </div>
                   )}
                 </div>
-              </button>
+              </div>
             </div>
           )
         })}

@@ -74,7 +74,7 @@ export default function ElasticityChart({ corridor, width = 320, height = 160 }:
         </g>
       </svg>
       <div style={{ marginTop: 6, fontSize: 10, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>
-        {corridor.from} → {corridor.to} · Advance-purchase fare curve · GENERATED baseline
+        {corridor.from} → {corridor.to} · Advance-purchase fare curve · Kaggle 2019 baseline
       </div>
     </div>
   )

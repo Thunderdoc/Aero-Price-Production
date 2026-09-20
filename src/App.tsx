@@ -18,6 +18,12 @@ import LiveFares from './pages/LiveFares'
 import Anomalies from './pages/Anomalies'
 import Forecast from './pages/Forecast'
 import HistoricalFares from './pages/HistoricalFares'
+import AirfareIndex from './pages/AirfareIndex'
+import AirlineExplorer from './pages/AirlineExplorer'
+import BookingWindow from './pages/BookingWindow'
+import AviationLive from './pages/AviationLive'
+import AviationFlights from './pages/AviationFlights'
+import AviationAirports from './pages/AviationAirports'
 
 function AppContent() {
   const { user } = useAuth()
@@ -30,7 +36,9 @@ function AppContent() {
       alerts: 'Price Alerts', sources: 'Data Sources', collection: 'Collection',
       methodology: 'Methodology', exports: 'Exports', admin: 'Admin Console',
       livefares: 'Live Fares', anomalies: 'Anomalies', forecast: 'Forecast',
-      historicalfares: 'Historical Fares',
+      historicalfares: 'Historical Fares', airfareindex: 'Airfare Index',
+      airlineexplorer: 'Airline Explorer', bookingwindow: 'Booking Windows',
+      aviationlive: 'Live Flight Map', aviationflights: 'Flights', aviationairports: 'Airports',
     }
     document.title = `AeroPrice · ${titles[currentPage] ?? 'India'}`
   }, [currentPage])
@@ -55,7 +63,13 @@ function AppContent() {
       case 'livefares':   return <LiveFares />
       case 'anomalies':   return <Anomalies />
       case 'forecast':        return <Forecast />
-      case 'historicalfares': return <HistoricalFares />
+      case 'historicalfares':   return <HistoricalFares />
+      case 'airfareindex':      return <AirfareIndex />
+      case 'airlineexplorer':   return <AirlineExplorer />
+      case 'bookingwindow':     return <BookingWindow />
+      case 'aviationlive':      return <AviationLive />
+      case 'aviationflights':   return <AviationFlights />
+      case 'aviationairports':  return <AviationAirports />
     }
   }
 
