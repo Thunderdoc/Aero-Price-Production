@@ -53,6 +53,7 @@ export default function Exports() {
   const { token } = useAuth()
   const [backendUp, setBackendUp] = useState(false)
   const [statuses, setStatuses] = useState<Record<string, ExportStatus>>({})
+  const [inlineError, setInlineError] = useState<string | null>(null)
 
   useEffect(() => {
     isBackendAvailable().then(setBackendUp)
@@ -60,7 +61,8 @@ export default function Exports() {
 
   async function handleDownload(entry: ExportEntry) {
     if (!entry.endpoint) {
-      alert('Export not available for this format.')
+      setInlineError('Export endpoint not configured for this format.')
+      setTimeout(() => setInlineError(null), 4000)
       return
     }
     setStatuses(s => ({ ...s, [entry.id]: 'downloading' }))
@@ -87,19 +89,55 @@ export default function Exports() {
   }
 
   return (
-    <div className="flex flex-col" style={{ gap: 'var(--space-xl)', maxWidth: 860 }}>
-      <div>
-        <h1 style={{ fontSize: 'var(--text-title-size)', fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}>
-          Export Center
-        </h1>
-        <p style={{ fontSize: 'var(--text-body-size)', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginTop: 'var(--space-xs)' }}>
-          Download fare observations, index history, and government statistics. All exports carry provenance metadata.
-        </p>
+    <div className="flex flex-col page-enter" style={{ gap: 'var(--space-xl)', maxWidth: 860 }}>
+
+      {/* Dark hero header */}
+      <div style={{
+        background: 'var(--gradient-hero-dark)', borderRadius: 'var(--radius-xl)',
+        overflow: 'hidden', position: 'relative', padding: '24px 28px',
+        boxShadow: '0 16px 40px rgba(8,14,26,0.3)', border: '1px solid rgba(255,255,255,0.05)',
+      }}>
+        <div style={{ position: 'absolute', inset: 0, backgroundImage: 'linear-gradient(rgba(255,255,255,0.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.025) 1px,transparent 1px)', backgroundSize: '32px 32px', pointerEvents: 'none' }} />
+        <div style={{ position: 'absolute', top: -40, right: -30, width: 180, height: 180, borderRadius: '50%', background: 'rgba(37,99,235,0.15)', filter: 'blur(50px)', pointerEvents: 'none' }} />
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <div style={{ width: 28, height: 28, borderRadius: 7, background: 'var(--gradient-brand)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Download size={13} color="white" />
+              </div>
+              <span style={{ fontSize: 9, fontWeight: 700, color: 'rgba(147,197,253,0.7)', letterSpacing: '0.14em', fontFamily: 'var(--font-mono)' }}>EXPORT CENTER · ANALYST+ ACCESS</span>
+            </div>
+            <h1 style={{ fontSize: 22, fontWeight: 800, color: 'rgba(255,255,255,0.92)', fontFamily: 'var(--font-sans)', letterSpacing: '-0.025em', margin: 0, marginBottom: 4 }}>
+              Data Export
+            </h1>
+            <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', fontFamily: 'var(--font-sans)', margin: 0 }}>
+              Fare observations, index history &amp; government statistics with full provenance metadata
+            </p>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', background: backendUp ? 'rgba(22,163,74,0.15)' : 'rgba(217,119,6,0.15)', borderRadius: 99, border: `1px solid ${backendUp ? 'rgba(22,163,74,0.3)' : 'rgba(217,119,6,0.3)'}` }}>
+            <div style={{ width: 6, height: 6, borderRadius: '50%', background: backendUp ? 'var(--color-success)' : 'var(--color-warning)', animation: 'pulse-dot 2s ease-in-out infinite' }} />
+            <span style={{ fontSize: 10, fontWeight: 700, color: backendUp ? 'var(--color-success)' : 'var(--color-warning)', letterSpacing: '0.08em', fontFamily: 'var(--font-mono)' }}>
+              {backendUp ? 'BACKEND CONNECTED' : 'BACKEND OFFLINE'}
+            </span>
+          </div>
+        </div>
       </div>
 
+      {inlineError && (
+        <div style={{ padding: '10px 14px', borderRadius: 'var(--radius-md)', background: 'var(--color-danger-bg)', border: '1px solid rgba(220,38,38,0.25)', fontSize: 12, color: 'var(--color-danger)', fontFamily: 'var(--font-sans)' }}>
+          {inlineError}
+        </div>
+      )}
+
       {!backendUp && (
-        <div style={{ background: 'var(--color-warning-bg)', border: '1px solid rgba(217,119,6,0.25)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-md) var(--space-lg)', fontSize: 13, color: 'var(--color-warning)', fontFamily: 'var(--font-sans)' }}>
-          Backend not reachable — exports unavailable. Start the FastAPI backend and configure VITE_API_URL.
+        <div style={{ background: 'var(--color-warning-bg)', border: '1px solid rgba(217,119,6,0.25)', borderRadius: 'var(--radius-lg)', padding: '14px 18px', display: 'flex', alignItems: 'flex-start', gap: 12, fontFamily: 'var(--font-sans)' }}>
+          <span style={{ fontSize: 18, flexShrink: 0, lineHeight: 1.2 }}>⚠</span>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-warning)', marginBottom: 4 }}>Backend not reachable</div>
+            <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+              Start the FastAPI backend and set <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>VITE_API_URL</code> to enable exports. Download buttons are disabled until the backend is reachable.
+            </div>
+          </div>
         </div>
       )}
 
@@ -108,7 +146,10 @@ export default function Exports() {
           const Icon = entry.icon
           const st = statuses[entry.id] ?? 'idle'
           return (
-            <div key={entry.id} style={{ background: 'var(--color-surface-bg)', border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-xl)' }}>
+            <div key={entry.id} style={{ background: 'var(--color-surface-bg)', border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-lg)', padding: '20px', boxShadow: 'var(--shadow-sm)', transition: 'box-shadow 200ms ease, border-color 200ms ease' }}
+              onMouseOver={e => { (e.currentTarget as HTMLElement).style.boxShadow = 'var(--shadow-md)'; (e.currentTarget as HTMLElement).style.borderColor = 'var(--color-border-secondary)' }}
+              onMouseOut={e => { (e.currentTarget as HTMLElement).style.boxShadow = 'var(--shadow-sm)'; (e.currentTarget as HTMLElement).style.borderColor = 'var(--color-border-primary)' }}
+            >
               <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 'var(--space-xl)', flexWrap: 'wrap' }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-lg)' }}>
                   <div style={{ width: 40, height: 40, borderRadius: 'var(--radius-md)', background: 'var(--color-brand-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>

@@ -51,6 +51,14 @@ class Settings(BaseSettings):
     # CORS
     ALLOWED_ORIGINS: str = "http://localhost:5173,http://localhost:8443"
 
+    # Duffel Air — authorized REST API aggregator
+    # Register at https://app.duffel.com/join
+    # Generate token: Developers > Access Tokens
+    #   test token  ("duffel_test_*")  → SANDBOX_TEST provenance — safe for development
+    #   live token  ("duffel_live_*")  → REAL provenance when live_mode=true in response
+    # Never commit this value — set in backend/.env only.
+    DUFFEL_API_TOKEN: str = ""
+
     # Data mode
     # live = only real collected/official data returned
     # demo = generated fixtures allowed (tagged GENERATED_TEST)

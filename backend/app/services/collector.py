@@ -31,6 +31,7 @@ from app.collectors.challenge import (
     SpiceJetAdapter, AirIndiaExpressAdapter,
 )
 from app.collectors.aggregators.amadeus import AmadeusAdapter
+from app.collectors.duffel import DuffelAdapter, SOURCE_ID as DUFFEL_SOURCE_ID
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +174,24 @@ AMADEUS_SOURCE = {
 
 AIRFARE_SOURCE_REGISTRY.append(AMADEUS_SOURCE)
 
+DUFFEL_SOURCE = {
+    "id": DUFFEL_SOURCE_ID,
+    "name": "Duffel Air (duffel.com)",
+    "type": "AGGREGATOR",
+    "status": "CONFIGURED" if settings.DUFFEL_API_TOKEN else "NOT_CONFIGURED",
+    "robots_txt": "ALLOWED",
+    "captcha_detected": False,
+    "api_available": True,
+    "note": (
+        "Authorized Duffel REST API. live_mode=true → data_origin=REAL. "
+        "live_mode=false (test token) → data_origin=SANDBOX_TEST. "
+        "Set DUFFEL_API_TOKEN in .env. Register at https://duffel.com/"
+    ),
+    "registration_url": "https://app.duffel.com/join",
+    "credential_vars": ["DUFFEL_API_TOKEN"],
+}
+AIRFARE_SOURCE_REGISTRY.append(DUFFEL_SOURCE)
+
 
 def _make_adapters() -> list[FareSourceAdapter]:
     amadeus_cfg = {
@@ -193,9 +212,12 @@ def _make_adapters() -> list[FareSourceAdapter]:
         "AMADEUS_API_SECRET": settings.AMADEUS_API_SECRET,
         "AMADEUS_BASE_URL": settings.AMADEUS_BASE_URL,
     }
+    duffel_cfg = {"DUFFEL_API_TOKEN": settings.DUFFEL_API_TOKEN}
+
     adapters: list[FareSourceAdapter] = [
-        AmadeusAdapter(cfg),         # aggregator — first; produces real data when configured
-        IndiGoAdapter(cfg),          # CHALLENGE_DETECTED until NDC credentials provided
+        DuffelAdapter(duffel_cfg),     # authorized Duffel REST API — REAL or SANDBOX_TEST
+        AmadeusAdapter(cfg),           # authorized Amadeus — REAL (production) or SANDBOX_TEST
+        IndiGoAdapter(cfg),            # CHALLENGE_DETECTED until NDC credentials provided
         AirIndiaAdapter(cfg),
         AirIndiaExpressAdapter(cfg),
         AkasaAdapter(cfg),

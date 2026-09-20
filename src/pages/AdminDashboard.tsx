@@ -3,15 +3,20 @@ import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
 import { useGovData } from '../hooks/useGovData'
 import { useAuth } from '../contexts/AuthContext'
-import { apiAuditLog, apiSystemMetrics, apiAdminUsers, isBackendAvailable } from '../services/api'
+import { apiAuditLog, apiSystemMetrics, isBackendAvailable } from '../services/api'
 import { AlertTriangle, CheckCircle, XCircle, Shield, Users, Activity, FileText, Settings, ToggleLeft, RefreshCw } from 'lucide-react'
+import { getApiHealth } from '../services/flightData'
+
+const _h = getApiHealth()
 
 const AIRFARE_SOURCES_ADMIN = [
-  { id: 'indigo', name: 'IndiGo', status: 'CHALLENGE_DETECTED', enabled: false },
-  { id: 'airindia', name: 'Air India', status: 'CHALLENGE_DETECTED', enabled: false },
-  { id: 'aiex', name: 'Air India Express', status: 'CHALLENGE_DETECTED', enabled: false },
-  { id: 'akasa', name: 'Akasa Air', status: 'CHALLENGE_DETECTED', enabled: false },
-  { id: 'spicejet', name: 'SpiceJet', status: 'CHALLENGE_DETECTED', enabled: false },
+  { id: 'aviationstack', name: 'AviationStack', status: _h.aviationstack.configured ? 'CONNECTED' : 'NOT_CONFIGURED', enabled: _h.aviationstack.configured },
+  { id: 'ef-api', name: 'EF Live Fares API', status: _h.ef.configured ? 'CONNECTED' : 'NOT_CONFIGURED', enabled: _h.ef.configured },
+  { id: 'ignav', name: 'Ignav Aviation Data', status: _h.ignav.configured ? 'CONNECTED' : 'NOT_CONFIGURED', enabled: _h.ignav.configured },
+  { id: 'indigo', name: 'IndiGo (direct)', status: 'CHALLENGE_DETECTED', enabled: false },
+  { id: 'airindia', name: 'Air India (direct)', status: 'CHALLENGE_DETECTED', enabled: false },
+  { id: 'akasa', name: 'Akasa Air (direct)', status: 'CHALLENGE_DETECTED', enabled: false },
+  { id: 'spicejet', name: 'SpiceJet (direct)', status: 'CHALLENGE_DETECTED', enabled: false },
 ]
 
 const GOV_SOURCES_ADMIN = [
@@ -67,16 +72,6 @@ const AIRFARE_PIPELINE = [
   { name: 'SpiceJet (spicejet.com)', status: 'CHALLENGE_DETECTED', reason: 'Cloudflare Enterprise' },
 ]
 
-const AUDIT_LOG = [
-  { ts: new Date().toISOString(), level: 'INFO' as const, message: 'Admin dashboard opened · admin@aeroprice.in' },
-  { ts: new Date(Date.now() - 60000).toISOString(), level: 'WARN' as const, message: 'Gov fetch attempted: dgca.gov.in — awaiting AllOrigins proxy response' },
-  { ts: new Date(Date.now() - 120000).toISOString(), level: 'INFO' as const, message: 'Auth: dgca@gov.in logged in (ANALYST/GOVERNMENT)' },
-  { ts: new Date(Date.now() - 300000).toISOString(), level: 'INFO' as const, message: 'Auth: user@aeroprice.in logged in (PUBLIC/SUBSCRIBER)' },
-  { ts: new Date(Date.now() - 600000).toISOString(), level: 'WARN' as const, message: 'Airfare collection attempt: IndiGo — CHALLENGE DETECTED. Cloudflare blocked request.' },
-  { ts: new Date(Date.now() - 660000).toISOString(), level: 'WARN' as const, message: 'Airfare collection attempt: Air India — CHALLENGE DETECTED. Imperva middleware blocked.' },
-  { ts: new Date(Date.now() - 720000).toISOString(), level: 'ERROR' as const, message: 'No live airfare observations available — all 5 sources blocked by bot protection' },
-  { ts: new Date(Date.now() - 1800000).toISOString(), level: 'INFO' as const, message: 'System started · SIH26056 AeroPrice India v2.0.0' },
-]
 
 const levelBg: Record<string, string> = {
   INFO: 'transparent',
@@ -158,31 +153,34 @@ export default function AdminDashboard() {
       {/* Metrics strip */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 'var(--space-md)' }}>
         {[
-          { label: 'Total Observations', value: metrics ? String(metrics.db_observations) : '—', color: metrics?.db_observations ? 'var(--color-brand-primary)' : 'var(--color-text-tertiary)', sub: metrics ? 'from database' : 'backend offline' },
-          { label: 'Sources Live', value: metrics ? String(metrics.sources_live) : '—', color: metrics?.sources_live ? 'var(--color-success)' : 'var(--color-text-tertiary)', sub: 'LIVE status' },
-          { label: 'Collections (24h)', value: metrics ? String(metrics.collection_runs_24h) : '—', color: 'var(--color-info)', sub: 'runs today' },
-          { label: 'Anomalies (24h)', value: metrics ? String(metrics.anomalies_24h) : '0', color: 'var(--color-success)', sub: metrics ? 'detected' : 'no data' },
-        ].map(({ label, value, color, sub }) => (
-          <div key={label} style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-lg)', border: '1px solid var(--color-border-primary)' }}>
-            <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginBottom: 4 }}>{label}</div>
-            <div style={{ fontSize: 22, fontWeight: 700, color, fontFamily: 'var(--font-sans)' }}>{value}</div>
-            <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>{sub}</div>
+          { label: 'Total Observations', value: metrics ? String(metrics.db_observations) : '—', color: metrics?.db_observations ? 'var(--color-brand-primary)' : 'var(--color-text-tertiary)', sub: metrics ? 'from database' : 'backend offline', accent: 'var(--color-brand-primary)' },
+          { label: 'Sources Live', value: metrics ? String(metrics.sources_live) : '—', color: metrics?.sources_live ? 'var(--color-success)' : 'var(--color-text-tertiary)', sub: 'LIVE status', accent: 'var(--color-success)' },
+          { label: 'Collections (24h)', value: metrics ? String(metrics.collection_runs_24h) : '—', color: 'var(--color-info)', sub: 'runs today', accent: 'var(--color-info)' },
+          { label: 'Anomalies (24h)', value: metrics ? String(metrics.anomalies_24h) : '0', color: 'var(--color-success)', sub: metrics ? 'detected' : 'no data', accent: 'var(--color-warning)' },
+        ].map(({ label, value, color, sub, accent }) => (
+          <div key={label} className="ap-card" style={{ padding: 'var(--space-lg)', borderLeft: `3px solid ${accent}` }}>
+            <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginBottom: 6 }}>{label}</div>
+            <div className="stat-number" style={{ color, fontFamily: 'var(--font-mono)', fontSize: '2rem' }}>{value}</div>
+            <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginTop: 4 }}>{sub}</div>
           </div>
         ))}
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', borderBottom: '1px solid var(--color-border-primary)', gap: 0 }}>
+      <div style={{ display: 'flex', borderBottom: '1px solid var(--color-border-primary)', gap: 0, background: 'var(--color-surface-bg)' }}>
         {TABS.map(({ id, label, icon: Icon }) => (
           <button key={id} onClick={() => setTab(id)} style={{
             display: 'flex', alignItems: 'center', gap: 6,
-            padding: '10px 16px', border: 'none', background: 'transparent', cursor: 'pointer',
+            padding: '12px 18px', border: 'none',
+            background: tab === id ? 'var(--color-surface-bg)' : 'transparent',
+            cursor: 'pointer',
             fontSize: 12, fontWeight: tab === id ? 600 : 400, fontFamily: 'var(--font-sans)',
             color: tab === id ? 'var(--color-brand-primary)' : 'var(--color-text-secondary)',
             borderBottom: tab === id ? '2px solid var(--color-brand-primary)' : '2px solid transparent',
             marginBottom: -1,
+            transition: 'color 150ms, border-color 150ms',
           }}>
-            <Icon size={13} />
+            <Icon size={13} style={{ color: tab === id ? 'var(--color-brand-primary)' : 'var(--color-text-tertiary)' }} />
             {label}
           </button>
         ))}
@@ -192,28 +190,29 @@ export default function AdminDashboard() {
       {tab === 'users' && (
         <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', overflow: 'hidden' }}>
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: 'var(--font-sans)' }}>
+            <table className="ap-table">
               <thead>
-                <tr style={{ borderBottom: '1px solid var(--color-border-primary)', background: 'var(--color-surface-secondary)' }}>
+                <tr>
                   {['User', 'Email', 'Role', 'Plan', 'Last Login', 'Status'].map(h => (
-                    <th key={h} style={{ textAlign: 'left', padding: '10px 14px', fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)' }}>{h}</th>
+                    <th key={h}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {DEMO_USERS.map(u => {
                   const rb = ROLE_BADGE[u.role as keyof typeof ROLE_BADGE] ?? ROLE_BADGE['PUBLIC']
+                  const roleBadgeCls = u.role === 'ADMIN' ? 'ap-badge ap-badge-offline' : u.role === 'ANALYST' ? 'ap-badge ap-badge-official' : 'ap-badge'
                   return (
-                    <tr key={u.email} style={{ borderBottom: '1px solid var(--color-border-primary)' }}>
-                      <td style={{ padding: '10px 14px', fontWeight: 500, color: 'var(--color-text-primary)' }}>{u.name}</td>
-                      <td style={{ padding: '10px 14px', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{u.email}</td>
-                      <td style={{ padding: '10px 14px' }}>
-                        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.05em', color: rb.color, background: rb.bg, padding: '2px 6px', borderRadius: 3 }}>{u.role}</span>
+                    <tr key={u.email}>
+                      <td style={{ fontWeight: 500 }}>{u.name}</td>
+                      <td style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--color-text-secondary)' }}>{u.email}</td>
+                      <td>
+                        <span className={roleBadgeCls} style={u.role === 'PUBLIC' ? { background: rb.bg, color: rb.color } : undefined}>{u.role}</span>
                       </td>
-                      <td style={{ padding: '10px 14px', color: 'var(--color-text-secondary)' }}>{u.plan}</td>
-                      <td style={{ padding: '10px 14px', color: 'var(--color-text-secondary)', fontSize: 11 }}>{u.lastLogin}</td>
-                      <td style={{ padding: '10px 14px' }}>
-                        <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-success)', background: 'var(--color-success-bg)', padding: '2px 6px', borderRadius: 3 }}>{u.status}</span>
+                      <td style={{ color: 'var(--color-text-secondary)' }}>{u.plan}</td>
+                      <td style={{ color: 'var(--color-text-secondary)', fontSize: 11 }}>{u.lastLogin}</td>
+                      <td>
+                        <span className="ap-badge ap-badge-live">{u.status}</span>
                       </td>
                     </tr>
                   )
@@ -222,7 +221,7 @@ export default function AdminDashboard() {
             </table>
           </div>
           <div style={{ padding: '10px 14px', fontSize: 11, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', borderTop: '1px solid var(--color-border-primary)' }}>
-            Demo environment — 3 users shown. Production would include full user CRUD, invite flows, and SSO.
+            Demo environment — {DEMO_USERS.length} users shown. Production would include full user CRUD, invite flows, and SSO.
           </div>
         </div>
       )}
@@ -290,9 +289,9 @@ export default function AdminDashboard() {
                 { label: 'Active sessions', value: '3', note: 'demo' },
                 { label: 'Index status', value: 'NOT PUB.', note: '<15 corridors' },
               ].map(m => (
-                <div key={m.label} style={{ background: 'var(--color-surface-secondary)', borderRadius: 'var(--radius-md)', padding: '10px 14px', minWidth: 120 }}>
+                <div key={m.label} className="ap-card" style={{ padding: '10px 14px', minWidth: 120 }}>
                   <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginBottom: 4 }}>{m.label}</div>
-                  <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>{m.value}</div>
+                  <div className="stat-number" style={{ fontSize: '1.25rem', fontFamily: 'var(--font-mono)' }}>{m.value}</div>
                   <div style={{ fontSize: 9, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginTop: 2 }}>{m.note}</div>
                 </div>
               ))}
@@ -309,27 +308,27 @@ export default function AdminDashboard() {
             </div>
           )}
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: 'var(--font-sans)' }}>
+            <table className="ap-table">
               <thead>
-                <tr style={{ borderBottom: '1px solid var(--color-border-primary)', background: 'var(--color-surface-secondary)' }}>
+                <tr>
                   {['Timestamp', 'Actor', 'Action', 'Detail'].map(h => (
-                    <th key={h} style={{ textAlign: 'left', padding: '10px 14px', fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{h}</th>
+                    <th key={h} style={{ whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {audit.map((entry, i) => (
-                  <tr key={i} style={{ borderBottom: '1px solid var(--color-border-primary)' }}>
-                    <td style={{ padding: '8px 14px', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)', fontSize: 11, whiteSpace: 'nowrap' }}>
+                  <tr key={i}>
+                    <td style={{ color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)', fontSize: 11, whiteSpace: 'nowrap' }}>
                       {new Date(entry.ts).toLocaleTimeString('en-IN', { hour12: false })}
                     </td>
-                    <td style={{ padding: '8px 14px', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{entry.actor}</td>
-                    <td style={{ padding: '8px 14px' }}>
-                      <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.05em', color: ACTION_COLOR[entry.action] ?? 'var(--color-text-tertiary)', padding: '2px 6px', borderRadius: 3, background: 'var(--color-surface-secondary)' }}>
+                    <td style={{ color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{entry.actor}</td>
+                    <td>
+                      <span className="ap-badge" style={{ color: ACTION_COLOR[entry.action] ?? 'var(--color-text-tertiary)', background: 'var(--color-surface-secondary)' }}>
                         {entry.action}
                       </span>
                     </td>
-                    <td style={{ padding: '8px 14px', color: 'var(--color-text-secondary)', fontSize: 11 }}>{entry.detail}</td>
+                    <td style={{ color: 'var(--color-text-secondary)', fontSize: 11 }}>{entry.detail}</td>
                   </tr>
                 ))}
               </tbody>

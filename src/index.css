@@ -2,6 +2,208 @@
 @import 'leaflet/dist/leaflet.css';
 @import 'tailwindcss';
 
+/* ── Global keyframes ──────────────────────────────────── */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.85); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-in-left {
+  from { opacity: 0; transform: translateX(-16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes draw-arc {
+  from { stroke-dashoffset: 400; }
+  to   { stroke-dashoffset: 0; }
+}
+
+@keyframes particle-move {
+  0%   { offset-distance: 0%;   opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { offset-distance: 100%; opacity: 0; }
+}
+
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 8px 2px rgba(37,99,235,0.4); }
+  50%       { box-shadow: 0 0 18px 6px rgba(37,99,235,0.7); }
+}
+
+@keyframes counter-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes scan-line {
+  0%   { top: 0; }
+  100% { top: 100%; }
+}
+
+/* ── Skeleton loading ──────────────────────────────────── */
+.skeleton {
+  background: linear-gradient(90deg,
+    var(--color-surface-secondary) 25%,
+    var(--color-surface-hover) 50%,
+    var(--color-surface-secondary) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s infinite;
+  border-radius: var(--radius-sm);
+}
+
+/* ── Scrollbar ─────────────────────────────────────────── */
+* { scrollbar-width: thin; scrollbar-color: var(--color-border-secondary) transparent; }
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border-secondary); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-text-tertiary); }
+
+/* ── Focus ring ────────────────────────────────────────── */
+*:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+
+/* ── Page-enter animation ──────────────────────────────── */
+.page-enter {
+  animation: fade-in 220ms ease forwards;
+}
+
+/* ── Premium table styles ──────────────────────────────── */
+.ap-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-sans);
+  font-size: var(--text-body-size);
+}
+.ap-table th {
+  position: sticky;
+  top: 0;
+  background: var(--color-surface-secondary);
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  letter-spacing: 0.07em;
+  border-bottom: 1px solid var(--color-border-primary);
+  white-space: nowrap;
+  z-index: 1;
+}
+.ap-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-border-primary);
+  color: var(--color-text-primary);
+  vertical-align: middle;
+}
+.ap-table tr:hover td {
+  background: var(--color-surface-hover);
+}
+.ap-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* ── Global nav glow ───────────────────────────────────── */
+.nav-item-active {
+  background: linear-gradient(90deg, rgba(37,99,235,0.12) 0%, rgba(37,99,235,0.04) 100%);
+  border-left: 3px solid var(--color-brand-primary);
+  color: var(--color-brand-primary) !important;
+}
+.nav-item-active svg {
+  color: var(--color-brand-primary) !important;
+}
+
+/* ── Input base ────────────────────────────────────────── */
+.ap-input {
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--color-surface-secondary);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-md);
+  font-size: var(--text-body-size);
+  font-family: var(--font-sans);
+  color: var(--color-text-primary);
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  box-sizing: border-box;
+}
+.ap-input:focus {
+  border-color: var(--color-border-focus);
+  box-shadow: 0 0 0 3px rgba(37,99,235,0.12);
+}
+
+/* ── Badge base ────────────────────────────────────────── */
+.ap-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  font-family: var(--font-sans);
+}
+.ap-badge-live    { background: var(--color-success-bg); color: var(--color-success); }
+.ap-badge-gen     { background: var(--color-warning-bg); color: var(--color-warning); }
+.ap-badge-offline { background: var(--color-danger-bg);  color: var(--color-danger); }
+.ap-badge-official{ background: var(--color-info-bg);    color: var(--color-info); }
+.ap-badge-sandbox { background: var(--color-surface-secondary); color: var(--color-text-tertiary); }
+
+/* ── Card base ─────────────────────────────────────────── */
+.ap-card {
+  background: var(--color-surface-bg);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow var(--transition-base), border-color var(--transition-base);
+}
+.ap-card:hover {
+  box-shadow: var(--shadow-md);
+  border-color: var(--color-border-secondary);
+}
+
+/* ── Background dot grid ───────────────────────────────── */
+.bg-dot-grid {
+  background-image: radial-gradient(circle, var(--color-border-primary) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* ── Stat number ───────────────────────────────────────── */
+.stat-number {
+  font-size: 2rem;
+  font-weight: 700;
+  font-family: var(--font-sans);
+  color: var(--color-text-primary);
+  letter-spacing: -0.03em;
+  line-height: 1;
+  animation: counter-up 400ms ease forwards;
+}
+
+/* ── Reduced motion ────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 /* Tailwind v4 custom theme — maps design tokens to Tailwind utilities */
 @theme {
   --color-brand:          var(--color-brand-primary);

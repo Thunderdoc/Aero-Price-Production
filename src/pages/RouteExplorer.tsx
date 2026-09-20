@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react'
-import { Info, AlertTriangle } from 'lucide-react'
+import { Info, AlertTriangle, ArrowLeftRight } from 'lucide-react'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
-import { SelectField } from '../components/ui/Field'
 import { Modal } from '../components/ui/Modal'
 import StatusBadge from '../components/StatusBadge'
 import TrendIndicator from '../components/TrendIndicator'
@@ -32,6 +31,37 @@ export default function RouteExplorer() {
   const routeOptions = corridors.map(c => ({ value: c.id, label: `${c.from} → ${c.to}` }))
   const bookingData  = bookingWindowData.map(d => ({ label: d.label, value: d.avgFare }))
 
+  const origins = [...new Set(corridors.map(c => c.from))]
+  const destinations = [...new Set(corridors.map(c => c.to))]
+  const [fromCity, toCity] = route.split('-')
+
+  function handleFromChange(newFrom: string) {
+    if (newFrom === toCity) {
+      // Swap to avoid same-city route
+      const newRoute = `${toCity}-${fromCity}`
+      if (corridors.find(c => c.id === newRoute)) { setRoute(newRoute); return }
+    }
+    const newRoute = `${newFrom}-${toCity}`
+    if (corridors.find(c => c.id === newRoute)) { setRoute(newRoute); return }
+    const first = corridors.find(c => c.from === newFrom)
+    if (first) setRoute(first.id)
+  }
+  function handleToChange(newTo: string) {
+    if (newTo === fromCity) {
+      // Swap to avoid same-city route
+      const newRoute = `${toCity}-${fromCity}`
+      if (corridors.find(c => c.id === newRoute)) { setRoute(newRoute); return }
+    }
+    const newRoute = `${fromCity}-${newTo}`
+    if (corridors.find(c => c.id === newRoute)) { setRoute(newRoute); return }
+    const first = corridors.find(c => c.to === newTo)
+    if (first) setRoute(first.id)
+  }
+  function handleSwap() {
+    const reversed = `${toCity}-${fromCity}`
+    if (corridors.find(c => c.id === reversed)) setRoute(reversed)
+  }
+
   useEffect(() => {
     setRealFares([])
     isBackendAvailable().then(up => {
@@ -47,8 +77,65 @@ export default function RouteExplorer() {
           <h1 className="text-title text-primary">Route Explorer</h1>
           <p className="text-body text-secondary" style={{ marginTop: 'var(--space-xs)' }}>Deep-dive corridor intelligence.</p>
         </div>
-        <div style={{ width: 220 }}>
-          <SelectField label="Route" options={routeOptions} value={route} onChange={setRoute} />
+        {/* Premium FROM/TO selector */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 'var(--space-sm)' }}>
+            {/* FROM */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <label style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>FROM</label>
+              <select
+                value={fromCity}
+                onChange={e => handleFromChange(e.target.value)}
+                style={{ padding: '10px 14px', fontSize: 15, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--color-text-primary)', background: 'var(--color-surface-bg)', border: '1.5px solid var(--color-border-primary)', borderRadius: 'var(--radius-md)', cursor: 'pointer', outline: 'none', minWidth: 90 }}
+              >
+                {origins.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </div>
+            {/* Swap button */}
+            <button
+              onClick={handleSwap}
+              title="Swap route"
+              style={{ padding: '10px', background: 'var(--color-surface-secondary)', border: '1.5px solid var(--color-border-primary)', borderRadius: 'var(--radius-md)', cursor: 'pointer', color: 'var(--color-text-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 150ms, color 150ms', marginBottom: 0 }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--color-brand-muted)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--color-brand-primary)' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--color-surface-secondary)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--color-text-secondary)' }}
+            >
+              <ArrowLeftRight size={16} />
+            </button>
+            {/* TO */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <label style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>TO</label>
+              <select
+                value={toCity}
+                onChange={e => handleToChange(e.target.value)}
+                style={{ padding: '10px 14px', fontSize: 15, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--color-text-primary)', background: 'var(--color-surface-bg)', border: '1.5px solid var(--color-border-primary)', borderRadius: 'var(--radius-md)', cursor: 'pointer', outline: 'none', minWidth: 90 }}
+              >
+                {destinations.map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+          </div>
+          {/* Quick route chips */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-xs)' }}>
+            {corridors.slice(0, 6).map(c => (
+              <button
+                key={c.id}
+                onClick={() => setRoute(c.id)}
+                style={{
+                  border: `1px solid ${route === c.id ? 'var(--color-brand-primary)' : 'var(--color-border-primary)'}`,
+                  borderRadius: 'var(--radius-full)',
+                  padding: '4px 12px',
+                  background: route === c.id ? 'var(--color-brand-muted)' : 'transparent',
+                  color: route === c.id ? 'var(--color-brand-primary)' : 'var(--color-text-secondary)',
+                  fontSize: 11,
+                  fontFamily: 'var(--font-sans)',
+                  fontWeight: route === c.id ? 600 : 400,
+                  cursor: 'pointer',
+                  transition: 'border-color 150ms, color 150ms, background 150ms',
+                }}
+              >
+                {c.from}→{c.to}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

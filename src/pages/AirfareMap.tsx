@@ -8,6 +8,7 @@ import { corridors as sampleCorridors, type Corridor } from '../data/sampleData'
 import { AIRPORTS } from '../data/airports'
 import { useLiveData } from '../hooks/useLiveData'
 import TrendIndicator from '../components/TrendIndicator'
+import { fetchAllCorridorFlights, type LiveFlight } from '../services/flightData'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -41,27 +42,106 @@ function AnimatedPolyline({ from, to, color, weight, highlighted }: AnimatedPoly
   const map = useMap()
 
   useEffect(() => {
+    // Subtle background glow line (faint, no dash)
+    const glow = highlighted ? L.polyline([from, to], {
+      color,
+      weight: weight + 4,
+      dashArray: undefined,
+      opacity: 0.08,
+    }).addTo(map) : null
+
     const line = L.polyline([from, to], {
       color,
-      weight: highlighted ? weight + 2 : weight,
-      dashArray: '12 8',
-      opacity: highlighted ? 1 : 0.75,
+      weight: highlighted ? weight + 1.5 : weight,
+      dashArray: '6 10',
+      lineCap: 'round',
+      opacity: highlighted ? 0.9 : 0.38,
     }).addTo(map)
 
     const path = (line as unknown as { _path: SVGPathElement | null })._path
     let offset = 0
 
     const frame = () => {
-      offset -= 1
+      offset -= 0.7
       if (path) path.style.strokeDashoffset = String(offset)
     }
-    const id = setInterval(frame, 40)
+    const id = setInterval(frame, 50)
 
     return () => {
       clearInterval(id)
       map.removeLayer(line)
+      if (glow) map.removeLayer(glow)
     }
   }, [map, from, to, color, weight, highlighted])
+
+  return null
+}
+
+// ─── Custom airport marker ────────────────────────────────────────────────────
+
+interface AirportMarkerProps {
+  lat: number
+  lng: number
+  iata: string
+  name: string
+  city: string
+  tier: string
+}
+
+function AirportMarker({ lat, lng, iata, name, city, tier }: AirportMarkerProps) {
+  const map = useMap()
+
+  useEffect(() => {
+    const size = tier === 'HIGH' ? 13 : tier === 'MEDIUM' ? 10 : 8
+    const pulseSize = size + 8
+
+    const icon = L.divIcon({
+      className: '',
+      html: `
+        <div style="position:relative;width:${size}px;height:${size}px;">
+          <div style="
+            position:absolute;
+            top:50%;left:50%;
+            transform:translate(-50%,-50%);
+            width:${pulseSize}px;height:${pulseSize}px;
+            border-radius:50%;
+            background:rgba(37,99,235,0.12);
+            pointer-events:none;
+          "></div>
+          <div style="
+            width:${size}px;height:${size}px;
+            border-radius:50%;
+            background:white;
+            border:2px solid #2563eb;
+            box-shadow:0 1px 5px rgba(0,0,0,0.2),0 0 0 1px rgba(37,99,235,0.2);
+            position:relative;z-index:1;
+          ">
+            <div style="
+              position:absolute;top:50%;left:50%;
+              transform:translate(-50%,-50%);
+              width:${Math.max(3, size * 0.35)}px;height:${Math.max(3, size * 0.35)}px;
+              border-radius:50%;
+              background:#2563eb;
+            "></div>
+          </div>
+        </div>`,
+      iconSize: [size, size],
+      iconAnchor: [size / 2, size / 2],
+      tooltipAnchor: [size / 2 + 2, 0],
+    })
+
+    const marker = L.marker([lat, lng], { icon })
+      .bindTooltip(
+        `<div style="font-family:monospace;font-size:11px;line-height:1.5;">
+          <strong style="font-size:12px;">${iata}</strong> &nbsp;${name}<br/>
+          <span style="color:#64748b;">${city}</span>
+        </div>`,
+        { sticky: false, opacity: 0.95 }
+      )
+      .addTo(map)
+
+    return () => { map.removeLayer(marker) }
+  }, [map, lat, lng, iata, name, city, tier])
 
   return null
 }
@@ -150,15 +230,16 @@ function MapControls({ filter, onChange }: MapControlsProps) {
           style={{
             padding: 'var(--space-xs) var(--space-md)',
             borderRadius: 'var(--radius-sm)',
-            border: 'none',
+            border: filter === f ? '1px solid var(--color-brand-primary)' : '1px solid transparent',
             cursor: 'pointer',
-            fontFamily: 'var(--font-sans)',
-            fontSize: 'var(--text-caption-size)',
-            fontWeight: filter === f ? 600 : 400,
-            background: filter === f ? 'var(--color-brand-muted)' : 'transparent',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 10,
+            fontWeight: filter === f ? 700 : 500,
+            background: filter === f ? 'var(--color-brand-muted)' : 'var(--color-surface-secondary)',
             color: filter === f ? 'var(--color-brand-primary)' : 'var(--color-text-secondary)',
             textAlign: 'left',
-            transition: 'background 0.15s',
+            transition: 'background 0.18s, border-color 0.18s, color 0.18s',
+            letterSpacing: '0.05em',
           }}
         >
           {labelFor(f)}
@@ -347,9 +428,10 @@ function RouteSidebar({ corridors, selectedId, onSelect }: RouteSidebarProps) {
                 padding: 'var(--space-lg) var(--space-xl)',
                 border: 'none',
                 borderBottom: '1px solid var(--color-border-primary)',
+                borderLeft: isSelected ? '3px solid var(--color-brand-primary)' : '3px solid transparent',
                 cursor: 'pointer',
                 background: isSelected ? 'var(--color-brand-muted)' : 'transparent',
-                transition: 'background 0.15s',
+                transition: 'background 0.18s, border-left-color 0.18s',
                 fontFamily: 'var(--font-sans)',
               }}
             >
@@ -407,7 +489,30 @@ function RouteSidebar({ corridors, selectedId, onSelect }: RouteSidebarProps) {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function AirfareMap() {
-  const { liveFlights, connectionStatus } = useLiveData()
+  const { liveFlights: hookFlights, connectionStatus } = useLiveData()
+  const [realFlights, setRealFlights] = useState<LiveFlight[]>([])
+  const [apiStatus, setApiStatus] = useState<'loading' | 'REAL' | 'UNAVAILABLE'>('loading')
+
+  // Fetch real flights from AviationStack on mount
+  useEffect(() => {
+    let cancelled = false
+    fetchAllCorridorFlights().then(results => {
+      if (cancelled) return
+      const allFlights = results.flatMap(r => r.flights)
+      if (allFlights.length > 0) {
+        setRealFlights(allFlights)
+        setApiStatus('REAL')
+      } else {
+        setApiStatus('UNAVAILABLE')
+      }
+    }).catch(() => { if (!cancelled) setApiStatus('UNAVAILABLE') })
+    return () => { cancelled = true }
+  }, [])
+
+  // Real flights provide schedule/count; hook provides sample geo positions for markers
+  const liveFlights = hookFlights
+  const realFlightCount = realFlights.length
+
   // sampleData corridors used for map arcs — labelled GENERATED in the UI
   const corridors: Corridor[] = sampleCorridors
   const [filter, setFilter] = useState<FilterMode>('ALL')
@@ -433,11 +538,77 @@ export default function AirfareMap() {
         /* header = 48px, progress bar ≈ 6px, so ~54px total chrome above main */
         height: 'calc(100vh - 54px)',
         display: 'flex',
+        flexDirection: 'column',
         gap: 0,
         fontFamily: 'var(--font-sans)',
         overflow: 'hidden',
       }}
     >
+      {/* ── Premium header bar ── */}
+      <div style={{
+        background: 'var(--color-surface-dark)',
+        borderBottom: '1px solid rgba(255,255,255,0.08)',
+        padding: '0 var(--space-2xl)',
+        height: 52,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 'var(--space-xl)',
+        flexShrink: 0,
+        position: 'relative',
+        overflow: 'hidden',
+      }}>
+        {/* Subtle grid background */}
+        <div style={{
+          position: 'absolute', inset: 0, pointerEvents: 'none',
+          backgroundImage: 'linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px)',
+          backgroundSize: '24px 24px',
+        }} />
+        {/* Left: title + badge */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-lg)', position: 'relative', zIndex: 1 }}>
+          <Activity size={15} style={{ color: 'var(--color-brand-primary)', flexShrink: 0 }} />
+          <span style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 13,
+            fontWeight: 700,
+            color: 'var(--color-text-on-dark)',
+            letterSpacing: '0.09em',
+          }}>
+            AIRFARE ROUTE MAP · INDIA
+          </span>
+          <span className="ap-badge ap-badge-gen" style={{ fontFamily: 'var(--font-mono)', letterSpacing: '0.07em' }}>GENERATED DATA</span>
+        </div>
+        {/* Right: source status pill + flight count */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', position: 'relative', zIndex: 1 }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 'var(--space-xs)',
+            background: connectionStatus === 'live' ? 'rgba(22,163,74,0.15)' : 'rgba(217,119,6,0.15)',
+            border: `1px solid ${connectionStatus === 'live' ? 'rgba(22,163,74,0.35)' : 'rgba(217,119,6,0.35)'}`,
+            borderRadius: 'var(--radius-full)',
+            padding: '3px 10px',
+          }}>
+            <div style={{
+              width: 6, height: 6, borderRadius: '50%',
+              background: connectionStatus === 'live' ? 'var(--color-success)' : connectionStatus === 'delayed' ? 'var(--color-warning)' : 'var(--color-danger)',
+              boxShadow: connectionStatus === 'live' ? '0 0 6px var(--color-success)' : 'none',
+            }} />
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, color: connectionStatus === 'live' ? 'var(--color-success)' : 'var(--color-warning)', letterSpacing: '0.08em' }}>
+              {connectionStatus.toUpperCase()}
+            </span>
+          </div>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'rgba(255,255,255,0.45)', letterSpacing: '0.04em' }}>
+            {apiStatus === 'REAL'
+              ? `${realFlightCount} REAL flights (AviationStack)`
+              : apiStatus === 'loading'
+              ? 'Connecting to AviationStack…'
+              : `${liveFlights.length} flights tracked`}
+          </span>
+        </div>
+      </div>
+
+      {/* ── Map + sidebar row ── */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+
       {/* ── Map area ── */}
       <div style={{ flex: 1, height: '100%', position: 'relative' }}>
         <MapContainer
@@ -451,7 +622,7 @@ export default function AirfareMap() {
           {/* Basemap — CartoDB Positron */}
           <TileLayer
             attribution='&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-            url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+            url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?key=cb1_3qn9_1_9c6d71e202ceef45c527cc63"
             subdomains="abcd"
             maxZoom={19}
           />
@@ -466,33 +637,22 @@ export default function AirfareMap() {
               from={[corridor.fromLat, corridor.fromLng]}
               to={[corridor.toLat, corridor.toLng]}
               color={TREND_COLORS[corridor.trend]}
-              weight={Math.max(1.5, corridor.weight * 4)}
+              weight={Math.max(1.2, corridor.weight * 2)}
               highlighted={selectedId === corridor.id}
             />
           ))}
 
-          {/* Airport markers */}
+          {/* Airport markers — custom precision dots */}
           {Object.values(AIRPORTS).map((airport) => (
-            <CircleMarker
+            <AirportMarker
               key={airport.iata}
-              center={[airport.lat, airport.lng]}
-              radius={TIER_RADIUS[airport.tier] ?? 5}
-              pathOptions={{
-                color: '#2563eb',      // var(--color-brand-primary)
-                fillColor: '#2563eb',
-                fillOpacity: 0.85,
-                weight: 1.5,
-              }}
-            >
-              <Tooltip sticky={false} opacity={0.95}>
-                <div style={{ fontFamily: 'var(--font-sans)', lineHeight: 1.4 }}>
-                  <strong style={{ fontFamily: 'var(--font-mono)' }}>{airport.iata}</strong>{' '}
-                  {airport.name}
-                  <br />
-                  <span style={{ color: '#64748b', fontSize: 12 }}>{airport.city}</span>
-                </div>
-              </Tooltip>
-            </CircleMarker>
+              lat={airport.lat}
+              lng={airport.lng}
+              iata={airport.iata}
+              name={airport.name}
+              city={airport.city}
+              tier={airport.tier}
+            />
           ))}
 
           {/* Live flight markers */}
@@ -522,7 +682,7 @@ export default function AirfareMap() {
 
         {/* Overlays (rendered outside MapContainer but inside relative wrapper) */}
         <MapControls filter={filter} onChange={setFilter} />
-        <FlightsBadge count={liveFlights.length} connectionStatus={connectionStatus} />
+        <FlightsBadge count={apiStatus === 'REAL' ? realFlightCount : liveFlights.length} connectionStatus={apiStatus === 'REAL' ? 'live' : connectionStatus} />
         <Legend />
       </div>
 
@@ -532,6 +692,7 @@ export default function AirfareMap() {
         selectedId={selectedId}
         onSelect={handleRouteSelect}
       />
+      </div>{/* end map+sidebar row */}
     </div>
   )
 }

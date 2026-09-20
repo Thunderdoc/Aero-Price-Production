@@ -134,88 +134,150 @@ export default function Overview({ onNavigate }: Props) {
         )}
       </div>
 
-      {/* Hero: Index status */}
-      <div style={{ ...card, background: 'var(--gradient-hero)', border: 'none', overflow: 'hidden', position: 'relative', padding: 'var(--space-2xl)' }}>
-        <div style={{ position: 'absolute', top: -40, right: -40, width: 200, height: 200, borderRadius: '50%', background: 'rgba(37,99,235,0.2)', filter: 'blur(40px)', pointerEvents: 'none' }} />
-        <div style={{ position: 'absolute', bottom: -20, left: 100, width: 150, height: 150, borderRadius: '50%', background: 'rgba(99,102,241,0.15)', filter: 'blur(30px)', pointerEvents: 'none' }} />
-        <div style={{ position: 'relative' }}>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', color: '#60a5fa', marginBottom: 8, fontFamily: 'var(--font-sans)' }}>ALL-INDIA AIRFARE INDEX · SIH26056</div>
+      {/* Hero: AIRFARE MARKET PULSE ─────────────────────── */}
+      <div style={{
+        background: 'var(--gradient-hero-dark)',
+        borderRadius: 16, overflow: 'hidden', position: 'relative',
+        padding: '28px 32px', boxShadow: '0 20px 50px rgba(8,14,26,0.35)',
+        border: '1px solid rgba(255,255,255,0.05)',
+      }}>
+        {/* Background layers */}
+        <div style={{ position:'absolute',inset:0,backgroundImage:'linear-gradient(rgba(255,255,255,0.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.025) 1px,transparent 1px)',backgroundSize:'32px 32px',pointerEvents:'none' }}/>
+        <div style={{ position:'absolute',top:-60,right:-60,width:280,height:280,borderRadius:'50%',background:'rgba(37,99,235,0.18)',filter:'blur(70px)',pointerEvents:'none' }}/>
+        <div style={{ position:'absolute',bottom:-40,left:80,width:200,height:200,borderRadius:'50%',background:'rgba(99,102,241,0.14)',filter:'blur(50px)',pointerEvents:'none' }}/>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 24, flexWrap: 'wrap' }}>
-              <div>
-                <div style={{ fontSize: '2.5rem', fontWeight: 800, color: 'rgba(255,255,255,0.3)', fontFamily: 'var(--font-sans)', letterSpacing: '-0.03em', marginBottom: 4 }}>
-                  — —
-                </div>
-                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--color-warning)', background: 'rgba(217,119,6,0.2)', padding: '4px 10px', borderRadius: 4, display: 'inline-block', fontFamily: 'var(--font-sans)' }}>
-                  {indexStatus ?? 'INDEX NOT PUBLISHED'}
-                </div>
-                {realObs !== null && (
-                  <div style={{ marginTop: 8, fontSize: 11, color: 'rgba(255,255,255,0.5)', fontFamily: 'var(--font-sans)' }}>
-                    {realObs} real observations in database
-                  </div>
-                )}
+        <div style={{ position:'relative' }}>
+          {/* Eyebrow */}
+          <div style={{ display:'flex',alignItems:'center',gap:8,marginBottom:20 }}>
+            <div style={{ display:'flex',alignItems:'center',gap:6 }}>
+              <div style={{ width:6,height:6,borderRadius:'50%',background:'rgba(147,197,253,0.7)',animation:'pulse-dot 2s ease-in-out infinite' }}/>
+              <span style={{ fontSize:9,fontWeight:700,color:'rgba(147,197,253,0.7)',letterSpacing:'0.15em',fontFamily:'var(--font-mono)' }}>AIRFARE MARKET PULSE · SIH26056</span>
+            </div>
+            <div style={{ flex:1,height:'1px',background:'rgba(255,255,255,0.07)' }}/>
+            <span style={{ fontSize:9,fontWeight:700,color:'rgba(255,255,255,0.25)',letterSpacing:'0.1em',fontFamily:'var(--font-mono)' }}>ALL-INDIA INDEX</span>
+          </div>
+
+          {/* Metric grid */}
+          <div style={{ display:'grid',gridTemplateColumns:'auto 1fr auto auto',gap:'0 32px',alignItems:'start',marginBottom:22 }}>
+            {/* Main metric */}
+            <div>
+              <div style={{ fontSize:9,fontWeight:700,color:'rgba(255,255,255,0.35)',letterSpacing:'0.12em',fontFamily:'var(--font-mono)',marginBottom:8 }}>PRICE INDEX</div>
+              <div style={{ fontSize:'2.8rem',fontWeight:800,color:'rgba(255,255,255,0.2)',fontFamily:'var(--font-mono)',letterSpacing:'-0.04em',lineHeight:1,marginBottom:10 }}>
+                —·—
               </div>
-              <div style={{ flex: 1, maxWidth: 400 }}>
-                <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)', fontFamily: 'var(--font-sans)', lineHeight: 1.6, marginBottom: 12 }}>
-                  No real airfare observations available. All airline sources are showing <strong style={{ color: '#fcd34d' }}>CHALLENGE DETECTED</strong> — configure a backend collector to activate the index.
+              <div style={{ display:'flex',alignItems:'center',gap:8,padding:'6px 12px',borderRadius:8,background:'rgba(217,119,6,0.2)',border:'1px solid rgba(217,119,6,0.35)',width:'fit-content' }}>
+                <div style={{ width:5,height:5,borderRadius:'50%',background:'var(--color-warning)',animation:'pulse-dot 2s ease-in-out infinite',flexShrink:0 }}/>
+                <span style={{ fontSize:10,fontWeight:800,letterSpacing:'0.1em',color:'var(--color-warning)',fontFamily:'var(--font-mono)' }}>
+                  {indexStatus ?? 'INDEX NOT PUBLISHED'}
+                </span>
+              </div>
+              {realObs !== null && realObs > 0 && (
+                <div style={{ marginTop:8,fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'var(--font-mono)' }}>
+                  {realObs.toLocaleString('en-IN')} observations
                 </div>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  {['IndiGo', 'Air India', 'Akasa', 'SpiceJet', 'AIX'].map(a => (
-                    <span key={a} style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-warning)', background: 'rgba(217,119,6,0.2)', padding: '2px 7px', borderRadius: 3, fontFamily: 'var(--font-sans)', letterSpacing: '0.04em' }}>
-                      {a} · BLOCKED
-                    </span>
-                  ))}
-                </div>
+              )}
+            </div>
+
+            {/* Explanation */}
+            <div style={{ paddingTop:28 }}>
+              <div style={{ fontSize:13,color:'rgba(255,255,255,0.6)',fontFamily:'var(--font-sans)',lineHeight:1.65,marginBottom:12 }}>
+                No real airfare observations available. All airline sources show{' '}
+                <strong style={{ color:'var(--color-warning)' }}>CHALLENGE DETECTED</strong>
+                {' '}— configure a backend collector to activate the index.
+              </div>
+              <div style={{ display:'flex',flexWrap:'wrap',gap:6 }}>
+                {['IndiGo','Air India','Akasa Air','SpiceJet','AIX'].map(a=>(
+                  <span key={a} style={{ fontSize:9,fontWeight:700,color:'var(--color-warning)',background:'rgba(217,119,6,0.15)',padding:'3px 8px',borderRadius:99,fontFamily:'var(--font-mono)',letterSpacing:'0.04em',border:'1px solid rgba(217,119,6,0.25)' }}>
+                    {a}
+                  </span>
+                ))}
               </div>
             </div>
 
-            {govData.dgcaMonthly.length > 0 && (
-              <div style={{ padding: '12px 16px', borderRadius: 'var(--radius-md)', background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)' }}>
-                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: '#60a5fa', marginBottom: 8, fontFamily: 'var(--font-sans)' }}>
-                  OFFICIAL REFERENCE DATA — DGCA
-                </div>
-                <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
-                  {govData.dgcaMonthly.slice(0, 3).map(m => (
-                    <div key={m.month}>
-                      <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--font-mono)' }}>{m.month}</div>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: 'rgba(255,255,255,0.85)', fontFamily: 'var(--font-sans)' }}>
-                        {(m.domestic_passengers / 1_000_000).toFixed(1)}M pax
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+            {/* Mini stat: corridors */}
+            <div style={{ paddingTop:28,textAlign:'right' }}>
+              <div style={{ fontSize:9,fontWeight:700,color:'rgba(255,255,255,0.3)',letterSpacing:'0.12em',fontFamily:'var(--font-mono)',marginBottom:6 }}>CORRIDORS</div>
+              <div style={{ fontSize:28,fontWeight:800,color:'rgba(255,255,255,0.75)',fontFamily:'var(--font-mono)',lineHeight:1 }}>12</div>
+            </div>
+
+            {/* Mini stat: sources */}
+            <div style={{ paddingTop:28,textAlign:'right' }}>
+              <div style={{ fontSize:9,fontWeight:700,color:'rgba(255,255,255,0.3)',letterSpacing:'0.12em',fontFamily:'var(--font-mono)',marginBottom:6 }}>SOURCES</div>
+              <div style={{ fontSize:28,fontWeight:800,color:'rgba(255,255,255,0.75)',fontFamily:'var(--font-mono)',lineHeight:1 }}>9</div>
+            </div>
           </div>
 
-          <div style={{ display: 'flex', gap: 12, marginTop: 24, flexWrap: 'wrap' }}>
-            <Button variant="primary" onClick={() => onNavigate('map')} iconEnd={<MapIcon size={14} />}>Explore Airfare Map</Button>
-            <Button variant="ghost" onClick={() => onNavigate('routes')} iconEnd={<ArrowRight size={14} />} style={{ color: 'rgba(255,255,255,0.7)', borderColor: 'rgba(255,255,255,0.2)' }}>Check a Route</Button>
+          {/* DGCA official ref strip */}
+          {govData.dgcaMonthly.length > 0 && (
+            <div style={{ padding:'12px 16px',borderRadius:9,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.09)',marginBottom:20,display:'flex',alignItems:'center',gap:20,flexWrap:'wrap' }}>
+              <div style={{ fontSize:9,fontWeight:700,color:'rgba(147,197,253,0.7)',letterSpacing:'0.1em',fontFamily:'var(--font-mono)',flexShrink:0 }}>OFFICIAL · DGCA</div>
+              {govData.dgcaMonthly.slice(0,3).map(m=>(
+                <div key={m.month} style={{ display:'flex',alignItems:'center',gap:8 }}>
+                  <span style={{ fontSize:9,color:'rgba(255,255,255,0.35)',fontFamily:'var(--font-mono)' }}>{m.month}</span>
+                  <span style={{ fontSize:12,fontWeight:700,color:'rgba(255,255,255,0.8)',fontFamily:'var(--font-sans)' }}>{(m.domestic_passengers/1_000_000).toFixed(1)}M pax</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Action buttons */}
+          <div style={{ display:'flex',gap:10,flexWrap:'wrap' }}>
+            <button
+              onClick={()=>onNavigate('map')}
+              style={{ display:'flex',alignItems:'center',gap:8,padding:'10px 18px',background:'rgba(37,99,235,0.9)',border:'1px solid rgba(37,99,235,0.5)',borderRadius:10,color:'white',fontSize:12,fontWeight:700,fontFamily:'var(--font-sans)',cursor:'pointer',letterSpacing:'0.05em',transition:'all 180ms ease' }}
+              onMouseOver={e=>{(e.currentTarget as HTMLElement).style.background='rgba(37,99,235,1)';(e.currentTarget as HTMLElement).style.boxShadow='0 4px 16px rgba(37,99,235,0.4)'}}
+              onMouseOut={e=>{(e.currentTarget as HTMLElement).style.background='rgba(37,99,235,0.9)';(e.currentTarget as HTMLElement).style.boxShadow='none'}}
+            >
+              <MapIcon size={14}/> EXPLORE MAP
+            </button>
+            <button
+              onClick={()=>onNavigate('routes')}
+              style={{ display:'flex',alignItems:'center',gap:8,padding:'10px 18px',background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.12)',borderRadius:10,color:'rgba(255,255,255,0.75)',fontSize:12,fontWeight:700,fontFamily:'var(--font-sans)',cursor:'pointer',letterSpacing:'0.05em',transition:'all 180ms ease' }}
+              onMouseOver={e=>{(e.currentTarget as HTMLElement).style.background='rgba(255,255,255,0.1)';(e.currentTarget as HTMLElement).style.borderColor='rgba(255,255,255,0.2)'}}
+              onMouseOut={e=>{(e.currentTarget as HTMLElement).style.background='rgba(255,255,255,0.06)';(e.currentTarget as HTMLElement).style.borderColor='rgba(255,255,255,0.12)'}}
+            >
+              <Plane size={14}/> CHECK ROUTE
+            </button>
           </div>
         </div>
       </div>
 
       {/* Route search */}
-      <div style={card}>
-        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', marginBottom: 'var(--space-md)', fontFamily: 'var(--font-sans)' }}>
-          CHECK AIRFARE INTELLIGENCE
+      <div className="ap-card" style={{ padding: 'var(--space-2xl)', background: 'var(--color-surface-bg)', overflow: 'hidden', position: 'relative' }}>
+        <div style={{ position:'absolute',top:-30,right:-30,width:120,height:120,borderRadius:'50%',background:'rgba(37,99,235,0.05)',filter:'blur(30px)',pointerEvents:'none' }}/>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 'var(--space-xl)' }}>
+          <div style={{ width:32,height:32,borderRadius:8,background:'var(--gradient-brand)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0 }}>
+            <Plane size={15} color="white"/>
+          </div>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', letterSpacing:'-0.01em' }}>
+              Route Intelligence
+            </div>
+            <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.09em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)', marginTop:1 }}>
+              CHECK AIRFARE DATA · ALL CORRIDORS
+            </div>
+          </div>
         </div>
-        <form onSubmit={handleSearch} style={{ display: 'flex', gap: 'var(--space-md)', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--color-text-tertiary)', letterSpacing: '0.05em', fontFamily: 'var(--font-sans)' }}>FROM</label>
-            <select value={fromCity} onChange={e => { setFromCity(e.target.value); setSearchResult(null) }} style={selectStyle}>
+        <form onSubmit={handleSearch} style={{ display: 'flex', gap: 'var(--space-lg)', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex:1, minWidth:140 }}>
+            <label style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-text-tertiary)', letterSpacing: '0.12em', fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}>FROM</label>
+            <select value={fromCity} onChange={e => { setFromCity(e.target.value); setSearchResult(null) }} className="ap-input" style={{ ...selectStyle, padding: '10px 36px 10px 14px', fontSize: 13, fontWeight: 600 }}>
               {cityOptions.map(c => <option key={c.value} value={c.value}>{c.label} ({c.value})</option>)}
             </select>
           </div>
-          <div style={{ paddingBottom: 10, color: 'var(--color-text-tertiary)', fontSize: 18 }}>→</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--color-text-tertiary)', letterSpacing: '0.05em', fontFamily: 'var(--font-sans)' }}>TO</label>
-            <select value={toCity} onChange={e => { setToCity(e.target.value); setSearchResult(null) }} style={selectStyle}>
+          <div style={{ paddingBottom:14,color:'var(--color-brand-primary)',fontSize:18,fontWeight:700,userSelect:'none' }}>⇄</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex:1, minWidth:140 }}>
+            <label style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-text-tertiary)', letterSpacing: '0.12em', fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}>TO</label>
+            <select value={toCity} onChange={e => { setToCity(e.target.value); setSearchResult(null) }} className="ap-input" style={{ ...selectStyle, padding: '10px 36px 10px 14px', fontSize: 13, fontWeight: 600 }}>
               {cityOptions.map(c => <option key={c.value} value={c.value}>{c.label} ({c.value})</option>)}
             </select>
           </div>
-          <Button type="submit" variant="primary" iconEnd={<ArrowRight size={14} />}>CHECK ROUTE</Button>
+          <button type="submit" style={{ display:'flex',alignItems:'center',gap:8,padding:'10px 20px',background:'var(--gradient-brand)',border:'none',borderRadius:10,color:'white',fontSize:12,fontWeight:700,fontFamily:'var(--font-sans)',cursor:'pointer',letterSpacing:'0.06em',transition:'all 180ms ease',boxShadow:'var(--shadow-brand)',whiteSpace:'nowrap' }}
+            onMouseOver={e=>{(e.currentTarget as HTMLElement).style.transform='translateY(-1px)'}}
+            onMouseOut={e=>{(e.currentTarget as HTMLElement).style.transform='none'}}
+          >
+            <ArrowRight size={14}/> CHECK ROUTE
+          </button>
         </form>
 
         {searchResult && (
@@ -238,26 +300,32 @@ export default function Overview({ onNavigate }: Props) {
       {/* Rising / Falling corridors */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-lg)' }}>
         {[
-          { title: 'RISING FARES', items: rising, color: 'var(--color-danger)', icon: TrendingUp },
-          { title: 'FALLING FARES', items: falling, color: 'var(--color-success)', icon: TrendingDown },
-        ].map(({ title, items, color, icon: Icon }) => (
-          <div key={title} style={card}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--space-lg)' }}>
-              <Icon size={14} style={{ color }} />
-              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>{title}</span>
-              <span style={{ fontSize: 9, color: 'var(--color-warning)', background: 'var(--color-warning-bg)', padding: '1px 5px', borderRadius: 3, fontFamily: 'var(--font-sans)', fontWeight: 600 }}>GENERATED</span>
+          { title: 'RISING FARES', items: rising, accent: 'var(--color-danger)', accentBg: 'var(--color-danger-bg)', icon: TrendingUp },
+          { title: 'FALLING FARES', items: falling, accent: 'var(--color-success)', accentBg: 'var(--color-success-bg)', icon: TrendingDown },
+        ].map(({ title, items, accent, accentBg, icon: Icon }) => (
+          <div key={title} style={{ background: 'var(--color-surface-bg)', borderRadius: 14, border: '1px solid var(--color-border-primary)', padding: 'var(--space-xl)', overflow:'hidden', position:'relative' }}>
+            <div style={{ position:'absolute',top:0,left:0,right:0,height:3,background:accent,opacity:0.6,borderRadius:'14px 14px 0 0' }}/>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--space-lg)', paddingTop:4 }}>
+              <div style={{ width:26,height:26,borderRadius:7,background:accentBg,display:'flex',alignItems:'center',justifyContent:'center' }}>
+                <Icon size={13} style={{ color: accent }}/>
+              </div>
+              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>{title}</span>
+              <span className="ap-badge ap-badge-gen" style={{ marginLeft:'auto' }}>GENERATED</span>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               {items.map(c => (
-                <div key={c.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderRadius: 'var(--radius-md)', background: 'var(--color-surface-secondary)', cursor: 'pointer' }}
+                <div key={c.id}
                   onClick={() => onNavigate('routes')}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 12px', cursor: 'pointer', borderRadius: 9, border: '1px solid transparent', transition: 'all 160ms ease' }}
+                  onMouseOver={e=>{const el=e.currentTarget as HTMLElement; el.style.background='var(--color-surface-hover)'; el.style.borderColor='var(--color-border-primary)'}}
+                  onMouseOut={e=>{const el=e.currentTarget as HTMLElement; el.style.background='transparent'; el.style.borderColor='transparent'}}
                 >
-                  <div>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}>{c.from} → {c.to}</span>
-                    <span className="ml-sm" style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-warning)', background: 'var(--color-warning-bg)', padding: '1px 5px', borderRadius: 3, fontFamily: 'var(--font-sans)', letterSpacing: '0.04em' }}>GENERATED</span>
+                  <div style={{ display:'flex',flexDirection:'column',gap:2 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', letterSpacing:'-0.01em' }}>{c.from} → {c.to}</span>
+                    <span style={{ fontSize: 9, color:'var(--color-text-tertiary)', fontFamily:'var(--font-mono)' }}>Economy · Direct</span>
                   </div>
                   <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>₹{c.currentFare.toLocaleString('en-IN')}</div>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)', letterSpacing:'-0.02em' }}>₹{c.currentFare.toLocaleString('en-IN')}</div>
                     <TrendIndicator direction={c.trend} value={Math.abs(c.change7d)} size="sm" />
                   </div>
                 </div>

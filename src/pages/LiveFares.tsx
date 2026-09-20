@@ -113,42 +113,129 @@ export default function LiveFares() {
   const pipelineStatus = hasRealData ? 'LIVE' : hasSandboxData ? 'SANDBOX_ACTIVE' : 'BLOCKED'
 
   return (
-    <div className="flex flex-col" style={{ gap: 'var(--space-xl)' }}>
-      {/* Header */}
-      <div className="flex items-start justify-between flex-wrap" style={{ gap: 'var(--space-lg)' }}>
-        <div>
-          <h1 style={{ fontSize: 'var(--text-title-size)', fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', letterSpacing: '-0.01em' }}>
-            Live Fares
-          </h1>
-          <p style={{ fontSize: 'var(--text-body-size)', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginTop: 'var(--space-xs)' }}>
-            Real-time airfare observations — ONE-WAY · ADULT · ECONOMY · CHEAPEST AVAILABLE
-          </p>
-        </div>
-        <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center' }}>
-          {lastFetched && (
-            <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>
-              Updated {lastFetched}
-            </span>
-          )}
-          <Button variant="neutral" iconStart={<Download size={14} />} onClick={() => {}}>Export CSV</Button>
-          <Button variant="neutral" iconStart={<RefreshCw size={14} />} loading={loading} onClick={() => fetchFares()}>Refresh</Button>
+    <div className="flex flex-col page-enter" style={{ gap: 'var(--space-xl)' }}>
+
+      {/* ── Dramatic dark-panel header ───────────────────────────────────────── */}
+      <div style={{
+        position: 'relative',
+        overflow: 'hidden',
+        borderRadius: 'var(--radius-xl)',
+        background: 'linear-gradient(135deg, var(--color-surface-dark) 0%, #0f172a 55%, #1e3a5f 100%)',
+        padding: 'var(--space-3xl) var(--space-3xl)',
+        marginBottom: 'var(--space-xs)',
+      }}>
+        {/* Grid overlay */}
+        <div style={{
+          position: 'absolute', inset: 0, pointerEvents: 'none',
+          backgroundImage: 'linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px)',
+          backgroundSize: '32px 32px',
+        }} />
+        {/* Glow blob — top right */}
+        <div style={{
+          position: 'absolute', top: -60, right: -60,
+          width: 280, height: 280,
+          background: 'var(--color-brand-primary)',
+          borderRadius: '50%',
+          opacity: 0.12,
+          filter: 'blur(72px)',
+          pointerEvents: 'none',
+        }} />
+        {/* Glow blob — bottom left */}
+        <div style={{
+          position: 'absolute', bottom: -80, left: -40,
+          width: 220, height: 220,
+          background: 'var(--color-info)',
+          borderRadius: '50%',
+          opacity: 0.10,
+          filter: 'blur(64px)',
+          pointerEvents: 'none',
+        }} />
+
+        {/* Content */}
+        <div style={{ position: 'relative', zIndex: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 'var(--space-xl)' }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
+              <span className="ap-badge ap-badge-live" style={{ fontFamily: 'var(--font-mono)', letterSpacing: '0.09em' }}>LIVE FEED</span>
+              <span className="ap-badge ap-badge-sandbox">JEVONS MATCHED-SAMPLE</span>
+            </div>
+            <h1 style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-display-size)', fontWeight: 700, color: 'var(--color-text-on-dark)', letterSpacing: '-0.01em', lineHeight: 1.15, margin: 0 }}>
+              LIVE FARES
+            </h1>
+            <p style={{ fontFamily: 'var(--font-sans)', fontSize: 13, color: 'rgba(255,255,255,0.52)', marginTop: 'var(--space-sm)', letterSpacing: '0.05em' }}>
+              ONE-WAY · ADULT · ECONOMY · CHEAPEST AVAILABLE
+            </p>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 'var(--space-sm)' }}>
+            {lastFetched && (
+              <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--font-mono)' }}>
+                Updated {lastFetched}
+              </span>
+            )}
+            <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+              <Button variant="neutral" iconStart={<Download size={14} />} onClick={() => {}}>Export CSV</Button>
+              <Button variant="neutral" iconStart={<RefreshCw size={14} />} loading={loading} onClick={() => fetchFares()}>Refresh</Button>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Pipeline banner */}
-      <div style={{ background: 'var(--color-surface-bg)', border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-md) var(--space-xl)', display: 'flex', alignItems: 'center', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
-        {PIPELINE_STAGES.map((stage, i) => (
-          <div key={stage} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)', background: 'var(--color-surface-secondary)', border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-sm)', padding: '4px 10px' }}>
-              <div style={{ width: 6, height: 6, borderRadius: '50%', background: i === 0 && pipelineStatus === 'LIVE' ? 'var(--color-success)' : i === 0 && pipelineStatus === 'SANDBOX_ACTIVE' ? 'var(--color-info)' : i === 0 ? 'var(--color-warning)' : 'var(--color-text-tertiary)' }} />
-              <span style={{ fontSize: 11, fontWeight: 600, color: i === 0 && pipelineStatus !== 'BLOCKED' ? (pipelineStatus === 'LIVE' ? 'var(--color-success)' : 'var(--color-info)') : i === 0 ? 'var(--color-warning)' : 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', letterSpacing: '0.04em' }}>{stage}</span>
+      {/* ── Pipeline banner ──────────────────────────────────────────────────── */}
+      <div style={{
+        background: 'var(--color-surface-bg)',
+        border: '1px solid var(--color-border-primary)',
+        borderRadius: 'var(--radius-lg)',
+        padding: 'var(--space-lg) var(--space-xl)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 0,
+        flexWrap: 'wrap',
+        overflow: 'hidden',
+      }}>
+        {PIPELINE_STAGES.map((stage, i) => {
+          const STAGE_ICONS = ['⬇', '⚙', '∑', '📈']
+          const isActive = i === 0
+          const stageColor = isActive
+            ? pipelineStatus === 'LIVE' ? 'var(--color-success)'
+            : pipelineStatus === 'SANDBOX_ACTIVE' ? 'var(--color-info)'
+            : 'var(--color-warning)'
+            : 'var(--color-text-tertiary)'
+          const stageBg = isActive
+            ? pipelineStatus === 'LIVE' ? 'var(--color-success-bg)'
+            : pipelineStatus === 'SANDBOX_ACTIVE' ? 'var(--color-info-bg)'
+            : 'var(--color-warning-bg)'
+            : 'var(--color-surface-secondary)'
+          return (
+            <div key={stage} style={{ display: 'flex', alignItems: 'center', flex: '1 1 auto' }}>
+              <div style={{
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: 'var(--space-xs)',
+                padding: 'var(--space-md) var(--space-lg)',
+                background: stageBg,
+                borderRadius: i === 0 ? 'var(--radius-md) 0 0 var(--radius-md)' : i === PIPELINE_STAGES.length - 1 ? '0 var(--radius-md) var(--radius-md) 0' : 0,
+                borderRight: i < PIPELINE_STAGES.length - 1 ? '1px solid var(--color-border-primary)' : 'none',
+              }}>
+                <span style={{ fontSize: 14 }}>{STAGE_ICONS[i]}</span>
+                <span style={{ fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-mono)', color: stageColor, letterSpacing: '0.07em', textAlign: 'center' }}>
+                  {stage.toUpperCase()}
+                </span>
+                <span style={{ fontSize: 9, fontFamily: 'var(--font-sans)', color: isActive ? stageColor : 'var(--color-text-tertiary)', fontWeight: isActive ? 700 : 400, letterSpacing: '0.05em' }}>
+                  {isActive
+                    ? pipelineStatus === 'LIVE' ? '● ACTIVE'
+                    : pipelineStatus === 'SANDBOX_ACTIVE' ? '● SANDBOX'
+                    : '⚠ BLOCKED'
+                    : '○ READY'
+                  }
+                </span>
+              </div>
+              {i < PIPELINE_STAGES.length - 1 && (
+                <span style={{ color: 'var(--color-text-tertiary)', fontSize: 16, padding: '0 2px', zIndex: 1 }}>→</span>
+              )}
             </div>
-            {i < PIPELINE_STAGES.length - 1 && <span style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>→</span>}
-          </div>
-        ))}
-        <div style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', fontFamily: 'var(--font-sans)', color: pipelineStatus === 'LIVE' ? 'var(--color-success)' : pipelineStatus === 'SANDBOX_ACTIVE' ? 'var(--color-info)' : 'var(--color-warning)' }}>
-          {pipelineStatus === 'LIVE' ? 'LIVE — REAL DATA' : pipelineStatus === 'SANDBOX_ACTIVE' ? 'SANDBOX TEST DATA' : 'ACQUISITION BLOCKED'}
-        </div>
+          )
+        })}
       </div>
 
       {/* Backend status */}
@@ -215,11 +302,11 @@ export default function LiveFares() {
       {/* Table */}
       <div style={{ background: 'var(--color-surface-bg)', border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-sans)' }}>
+          <table className="ap-table">
             <thead>
-              <tr style={{ background: 'var(--color-surface-secondary)', borderBottom: '1px solid var(--color-border-primary)' }}>
+              <tr>
                 {TABLE_COLS.map(col => (
-                  <th key={col} style={{ padding: 'var(--space-sm) var(--space-lg)', textAlign: 'left', fontSize: 10, fontWeight: 600, color: 'var(--color-text-tertiary)', letterSpacing: '0.08em', whiteSpace: 'nowrap' }}>{col}</th>
+                  <th key={col}>{col}</th>
                 ))}
               </tr>
             </thead>
@@ -237,22 +324,36 @@ export default function LiveFares() {
               {!loading && observations.length === 0 && (
                 <tr>
                   <td colSpan={TABLE_COLS.length} style={{ padding: 'var(--space-4xl) var(--space-xl)', textAlign: 'center' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--space-md)' }}>
-                      <AlertTriangle size={32} style={{ color: 'var(--color-warning)' }} />
-                      <div style={{ fontSize: 'var(--text-label-size)', fontWeight: 600, color: 'var(--color-text-primary)' }}>
-                        {backendUp === false ? 'BACKEND UNAVAILABLE' : 'NO OBSERVATIONS'}
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--space-lg)' }}>
+                      {/* Large icon block */}
+                      <div style={{
+                        width: 80, height: 80, borderRadius: 'var(--radius-xl)',
+                        background: 'var(--color-warning-bg)',
+                        border: '2px solid var(--color-warning)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        boxShadow: '0 0 32px rgba(217,119,6,0.15)',
+                      }}>
+                        <AlertTriangle size={36} style={{ color: 'var(--color-warning)' }} />
                       </div>
-                      <div style={{ fontSize: 'var(--text-body-size)', color: 'var(--color-text-secondary)', maxWidth: 480, lineHeight: 1.65, textAlign: 'center' }}>
-                        {backendUp === false
-                          ? 'Connect the FastAPI backend (VITE_API_URL) to view real fare observations.'
-                          : error
-                            ? `API error: ${error}`
-                            : 'No observations in the database. Set AMADEUS_API_KEY + AMADEUS_API_SECRET and trigger a collection run from the Admin → Collection page.'
-                        }
+                      <div>
+                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: '1.25rem', fontWeight: 700, color: 'var(--color-text-primary)', letterSpacing: '0.06em', marginBottom: 'var(--space-sm)' }}>
+                          {backendUp === false ? 'BACKEND UNAVAILABLE' : 'NO LIVE OBSERVATIONS'}
+                        </div>
+                        <div style={{ fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--color-warning)', letterSpacing: '0.1em', marginBottom: 'var(--space-md)' }}>
+                          {backendUp === false ? 'CONNECTION_FAILED' : error ? 'API_ERROR' : 'CHALLENGE DETECTED — ACQUISITION BLOCKED'}
+                        </div>
+                        <div style={{ fontSize: 13, color: 'var(--color-text-secondary)', maxWidth: 480, lineHeight: 1.65, textAlign: 'center', fontFamily: 'var(--font-sans)' }}>
+                          {backendUp === false
+                            ? 'Connect the FastAPI backend (VITE_API_URL) to view real fare observations.'
+                            : error
+                              ? `API error: ${error}`
+                              : 'All direct airline scrapers are blocked by Cloudflare and anti-bot middleware. Configure AMADEUS_API_KEY + AMADEUS_API_SECRET and trigger a collection run from Admin → Collection.'
+                          }
+                        </div>
                       </div>
                       <div style={{ display: 'flex', gap: 'var(--space-md)', flexWrap: 'wrap', justifyContent: 'center' }}>
-                        <div style={{ padding: '6px 14px', background: 'var(--color-warning-bg)', borderRadius: 'var(--radius-full)', fontSize: 11, fontWeight: 600, color: 'var(--color-warning)', letterSpacing: '0.06em' }}>0 REAL observations</div>
-                        <div style={{ padding: '6px 14px', background: 'var(--color-surface-secondary)', borderRadius: 'var(--radius-full)', fontSize: 11, color: 'var(--color-text-tertiary)' }}>Amadeus: configuration required</div>
+                        <span className="ap-badge ap-badge-gen">0 REAL OBSERVATIONS</span>
+                        <span className="ap-badge ap-badge-sandbox">AMADEUS: CONFIG REQUIRED</span>
                       </div>
                     </div>
                   </td>
@@ -261,24 +362,24 @@ export default function LiveFares() {
               {!loading && observations.map((o, idx) => (
                 <tr
                   key={o.observation_id}
-                  style={{ borderBottom: '1px solid var(--color-border-primary)', background: idx % 2 === 0 ? 'var(--color-surface-bg)' : 'var(--color-surface-secondary)', opacity: o.data_origin === 'SANDBOX_TEST' ? 0.85 : 1 }}
+                  style={{ opacity: o.data_origin === 'SANDBOX_TEST' ? 0.82 : 1, background: idx % 2 === 1 ? 'var(--color-surface-secondary)' : undefined }}
                 >
-                  <td style={{ padding: '8px var(--space-lg)', fontSize: 11, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>
+                  <td style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>
                     {o.collected_at ? new Date(o.collected_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) : '—'}
                   </td>
-                  <td style={{ padding: '8px var(--space-lg)', fontSize: 12, fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', whiteSpace: 'nowrap' }}>{o.route}</td>
-                  <td style={{ padding: '8px var(--space-lg)', fontSize: 12, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}>{o.airline}</td>
-                  <td style={{ padding: '8px var(--space-lg)', fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>{o.travel_date}</td>
-                  <td style={{ padding: '8px var(--space-lg)', fontSize: 11, fontWeight: 600, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)' }}>T+{o.advance_days}</td>
-                  <td style={{ padding: '8px var(--space-lg)', fontSize: 12, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)', textAlign: 'right' }}>₹{o.base_fare?.toLocaleString('en-IN')}</td>
-                  <td style={{ padding: '8px var(--space-lg)', fontSize: 12, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)', textAlign: 'right' }}>₹{o.taxes?.toLocaleString('en-IN')}</td>
-                  <td style={{ padding: '8px var(--space-lg)', fontSize: 13, fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)', textAlign: 'right' }}>₹{o.total_fare?.toLocaleString('en-IN')}</td>
-                  <td style={{ padding: '8px var(--space-lg)', fontSize: 11, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>{o.source}</td>
-                  <td style={{ padding: '8px var(--space-lg)' }}>{provenanceBadge(o.data_origin)}</td>
-                  <td style={{ padding: '8px var(--space-lg)', fontSize: 10, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>
+                  <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, whiteSpace: 'nowrap' }}>{o.route}</td>
+                  <td>{o.airline}</td>
+                  <td style={{ fontFamily: 'var(--font-mono)', fontSize: 11, whiteSpace: 'nowrap' }}>{o.travel_date}</td>
+                  <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>T+{o.advance_days}</td>
+                  <td style={{ fontFamily: 'var(--font-mono)', textAlign: 'right' }}>₹{o.base_fare?.toLocaleString('en-IN')}</td>
+                  <td style={{ fontFamily: 'var(--font-mono)', textAlign: 'right' }}>₹{o.taxes?.toLocaleString('en-IN')}</td>
+                  <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, textAlign: 'right', color: 'var(--color-text-primary)' }}>₹{o.total_fare?.toLocaleString('en-IN')}</td>
+                  <td style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{o.source}</td>
+                  <td>{provenanceBadge(o.data_origin)}</td>
+                  <td style={{ fontFamily: 'var(--font-mono)', fontSize: 10 }}>
                     {Array.isArray(o.quality_flags) && o.quality_flags.length > 0
                       ? o.quality_flags.join(', ')
-                      : <span style={{ color: 'var(--color-success)', fontWeight: 600 }}>OK</span>
+                      : <span style={{ color: 'var(--color-success)', fontWeight: 700 }}>OK</span>
                     }
                   </td>
                 </tr>

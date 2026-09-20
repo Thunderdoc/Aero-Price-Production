@@ -126,6 +126,27 @@
   --glow-danger:  0 0 20px rgba(220, 38, 38, 0.25);
   --glow-warning: 0 0 20px rgba(217, 119, 6, 0.25);
 
+  /* ── Premium shadows ───────────────────────────────────── */
+  --shadow-xl:    0 20px 40px -8px rgb(0 0 0 / 0.14), 0 8px 16px -4px rgb(0 0 0 / 0.08);
+  --shadow-brand: 0 4px 20px rgba(37, 99, 235, 0.3), 0 2px 6px rgba(37, 99, 235, 0.2);
+  --shadow-card-hover: 0 8px 30px -4px rgb(0 0 0 / 0.12), 0 2px 8px -2px rgb(0 0 0 / 0.06);
+  --shadow-inset: inset 0 1px 0 rgba(255,255,255,0.1), inset 0 -1px 0 rgba(0,0,0,0.05);
+
+  /* ── Premium gradients ─────────────────────────────────── */
+  --gradient-hero-vivid:   linear-gradient(135deg, #0a0f1e 0%, #0f2560 50%, #1a1060 100%);
+  --gradient-brand-glow:   linear-gradient(135deg, #2563eb 0%, #4f46e5 100%);
+  --gradient-surface-lift: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  --gradient-mesh:         radial-gradient(ellipse at 20% 50%, rgba(37,99,235,0.08) 0%, transparent 50%), radial-gradient(ellipse at 80% 20%, rgba(99,102,241,0.07) 0%, transparent 50%);
+
+  /* ── Glass dark (for dark panels) ─────────────────────── */
+  --glass-dark-bg:     rgba(15, 23, 42, 0.85);
+  --glass-dark-border: rgba(255, 255, 255, 0.08);
+  --glass-dark-blur:   blur(20px);
+
+  /* ── Extra Colors ──────────────────────────────────────── */
+  /* ── Dark hero gradient (shared across all page headers) ── */
+  --gradient-hero-dark:  linear-gradient(145deg, #080e1a 0%, #0d1b3e 55%, #0f1a40 100%);
+
   /* ── Extra Colors ──────────────────────────────────────── */
   --color-brand-light:   #60a5fa;
   --color-brand-dark:    #1e40af;

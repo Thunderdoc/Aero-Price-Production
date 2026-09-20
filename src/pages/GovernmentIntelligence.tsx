@@ -30,7 +30,7 @@ where p_it is the fare for corridor i at time t, p_i0 is the base-period fare, a
 
 DGCA corridor weights are derived from the Monthly Traffic Statistics (domestic pax, scheduled services). Weights are recomputed quarterly.`
 
-function DgcaBarChart({ records }: { records: { month: number; year: number; domestic_passengers: number }[] }) {
+function DgcaBarChart({ records }: { records: { month: string; year: number; domestic_passengers: number }[] }) {
   if (!records.length) return null
   const maxPax = Math.max(...records.map(r => r.domestic_passengers))
   const barH = 120
@@ -40,11 +40,13 @@ function DgcaBarChart({ records }: { records: { month: number; year: number; dom
       {records.map((r, i) => {
         const h = Math.max(4, (r.domestic_passengers / maxPax) * barH)
         const x = i * 44 + 2
+        const monthNum = parseInt(r.month.split('-')[1] ?? '1', 10)
+        const label = MONTHS[monthNum - 10 < 0 ? monthNum - 10 + 12 : monthNum - 10] ?? r.month
         return (
           <g key={i}>
             <rect x={x} y={barH - h} width={36} height={h} rx={3} fill="var(--color-brand-primary)" opacity={0.75} />
             <text x={x + 18} y={barH + 14} textAnchor="middle" fontSize={9} fill="var(--color-text-tertiary)" fontFamily="var(--font-sans)">
-              {MONTHS[r.month - 10 < 0 ? r.month - 10 + 12 : r.month - 10] ?? r.month}
+              {label}
             </text>
             <title>{(r.domestic_passengers / 1_000_000).toFixed(1)}M pax</title>
           </g>
@@ -98,27 +100,30 @@ export default function GovernmentIntelligence() {
 
   return (
     <div className="flex flex-col" style={{ gap: 'var(--space-2xl)' }}>
-      {/* Header bar */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 'var(--space-lg)' }}>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', marginBottom: 'var(--space-xs)' }}>
-            <Building2 size={16} style={{ color: 'var(--color-brand-primary)' }} />
-            <h1 style={{ fontSize: 'var(--text-title-size)', fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', letterSpacing: '-0.01em' }}>
-              Government Airfare Intelligence
-            </h1>
+      {/* Premium page header */}
+      <div style={{ background: 'var(--color-surface-bg)', borderBottom: '1px solid var(--color-border-primary)', padding: '20px 0 16px' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 'var(--space-lg)' }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', marginBottom: 'var(--space-xs)' }}>
+              <Building2 size={22} style={{ color: 'var(--color-brand-primary)' }} />
+              <h1 style={{ fontSize: 'var(--text-title-size)', fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', letterSpacing: '-0.01em', textTransform: 'uppercase', margin: 0 }}>
+                Government Airfare Intelligence
+              </h1>
+            </div>
+            <p style={{ fontSize: 'var(--text-body-size)', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', margin: 0 }}>
+              Official statistics from DGCA, MoSPI, and data.gov.in
+            </p>
           </div>
-          <p style={{ fontSize: 'var(--text-body-size)', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>
-            MoSPI · DGCA · DIID — official reference data for the AeroPrice India Index.
-          </p>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 'var(--radius-full)', background: anyConnected ? 'var(--color-success-bg)' : 'var(--color-warning-bg)', border: `1px solid ${statusColor}40` }}>
-            <div style={{ width: 6, height: 6, borderRadius: '50%', background: statusColor }} />
-            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', color: statusColor, fontFamily: 'var(--font-sans)' }}>{statusLabel}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
+            <span className="ap-badge ap-badge-official">{datasets.length} SOURCES</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 'var(--radius-full)', background: anyConnected ? 'var(--color-success-bg)' : 'var(--color-warning-bg)', border: `1px solid ${statusColor}40` }}>
+              <div style={{ width: 6, height: 6, borderRadius: '50%', background: statusColor }} className="animate-pulse-dot" />
+              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', color: statusColor, fontFamily: 'var(--font-sans)' }}>{statusLabel}</span>
+            </div>
+            <button style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border-primary)', background: 'var(--color-surface-bg)', fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', cursor: 'pointer' }}>
+              <RefreshCw size={11} /> Refresh
+            </button>
           </div>
-          <button style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border-primary)', background: 'var(--color-surface-bg)', fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', cursor: 'pointer' }}>
-            <RefreshCw size={11} /> Refresh
-          </button>
         </div>
       </div>
 
@@ -200,8 +205,8 @@ export default function GovernmentIntelligence() {
         )}
       </div>
 
-      {/* KPI header */}
-      <div className="bg-surface-bg rounded-corner-lg p-xl">
+      {/* KPI strip */}
+      <div className="ap-card" style={{ padding: 'var(--space-xl)' }}>
         <div className="grid gap-lg flex-wrap" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))' }}>
           {[
             { label: 'ALL-INDIA INDEX', value: indexValue.toFixed(2), sub: 'Base: 100' },
@@ -221,17 +226,31 @@ export default function GovernmentIntelligence() {
               }
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* Three-column stats row */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 'var(--space-lg)' }}>
+        {/* Card 1: PAX VOLUME */}
+        <div className="ap-card" style={{ padding: 'var(--space-xl)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-lg)' }}>
+            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', textTransform: 'uppercase' }}>Domestic Pax Volume</span>
+            <span className={`ap-badge ${anyConnected ? 'ap-badge-official' : 'ap-badge-gen'}`}>{anyConnected ? 'OFFICIAL' : 'GENERATED'}</span>
+          </div>
           {isLoading ? (
-            <div style={{ height: 152, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', fontSize: 12 }}>Fetching DGCA data…</div>
+            <div style={{ height: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', fontSize: 12 }}>Fetching DGCA data…</div>
           ) : dgcaMonthly.length > 0 ? (
-            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', padding: '12px 0' }}>
-              {dgcaMonthly.slice(0, 6).map(m => (
-                <div key={m.month} style={{ textAlign: 'center' }}>
-                  <div style={{ fontSize: 9, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)', marginBottom: 2 }}>{m.month}</div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}>{(m.domestic_passengers / 1_000_000).toFixed(1)}M</div>
-                </div>
-              ))}
-            </div>
+            <>
+              <DgcaBarChart records={dgcaMonthly} />
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', paddingTop: 12 }}>
+                {dgcaMonthly.slice(0, 4).map(m => (
+                  <div key={m.month} style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: 9, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)', marginBottom: 2 }}>{m.month}</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>{(m.domestic_passengers / 1_000_000).toFixed(1)}M</div>
+                  </div>
+                ))}
+              </div>
+            </>
           ) : (
             <div style={{ height: 100, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
               <AlertTriangle size={20} style={{ color: 'var(--color-warning)' }} />
@@ -240,22 +259,18 @@ export default function GovernmentIntelligence() {
           )}
         </div>
 
-        {/* Fare Index vs MoSPI */}
-        <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', padding: 'var(--space-xl)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-lg)' }}>
-            <div>
-              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>AIRFARE INDEX vs CPI TRANSPORT</div>
-              <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginTop: 2 }}>MoSPI CPI-Transport reference</div>
-            </div>
-            <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--color-warning)', background: 'var(--color-warning-bg)', padding: '2px 6px', borderRadius: 3, fontFamily: 'var(--font-sans)' }}>
-              INDEX NOT PUBLISHED
-            </span>
+        {/* Card 2: FARE INDEX */}
+        <div className="ap-card" style={{ padding: 'var(--space-xl)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-lg)' }}>
+            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', textTransform: 'uppercase' }}>Airfare Index vs CPI</span>
+            <span className="ap-badge ap-badge-gen">GENERATED</span>
           </div>
+          <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginBottom: 'var(--space-md)' }}>MoSPI CPI-Transport reference</div>
           <div style={{ height: 120, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, borderRadius: 'var(--radius-md)', background: 'var(--color-surface-secondary)', border: '1px dashed var(--color-border-secondary)' }}>
             <AlertTriangle size={20} style={{ color: 'var(--color-warning)' }} />
             <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}>BENCHMARK NOT PUBLISHED</div>
             <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', textAlign: 'center', maxWidth: 220 }}>
-              Insufficient real airfare observations to compute index. Requires ≥15 matched corridors.
+              Insufficient real observations. Requires ≥15 matched corridors.
             </div>
           </div>
           {mospiCpi.length > 0 && (
@@ -265,9 +280,12 @@ export default function GovernmentIntelligence() {
           )}
         </div>
 
-        {/* Carrier share donut */}
-        <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', padding: 'var(--space-xl)', minWidth: 220 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginBottom: 'var(--space-md)' }}>CARRIER MARKET SHARE</div>
+        {/* Card 3: CARRIER SHARE */}
+        <div className="ap-card" style={{ padding: 'var(--space-xl)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-lg)' }}>
+            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', textTransform: 'uppercase' }}>Carrier Market Share</span>
+            <span className="ap-badge ap-badge-official">OFFICIAL</span>
+          </div>
           <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
             <DonutChart segments={CARRIER_SHARE} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -373,46 +391,15 @@ export default function GovernmentIntelligence() {
         })()}
       </div>
 
-      {/* DGCA Circular Feed */}
-      <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', padding: 'var(--space-xl)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-lg)' }}>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>DGCA CIRCULARS & PRESS RELEASES</div>
-          <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.06em', color: hasCirculars ? 'var(--color-success)' : 'var(--color-warning)', background: hasCirculars ? 'var(--color-success-bg)' : 'var(--color-warning-bg)', padding: '2px 6px', borderRadius: 3, fontFamily: 'var(--font-sans)' }}>
-            {isLoading ? 'FETCHING…' : hasCirculars ? 'OFFICIAL' : 'GENERATED'}
-          </span>
-        </div>
-
-        {isLoading ? (
-          <div style={{ padding: 24, textAlign: 'center', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', fontSize: 13 }}>Fetching DGCA circulars…</div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
-            {dgcaCirculars.map(c => (
-              <div key={c.id} style={{ display: 'flex', gap: 'var(--space-md)', alignItems: 'flex-start', padding: '10px 12px', borderRadius: 'var(--radius-md)', background: 'var(--color-surface-secondary)' }}>
-                <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.05em', color: 'var(--color-info)', background: 'var(--color-info-bg)', padding: '2px 5px', borderRadius: 3, flexShrink: 0, marginTop: 2, fontFamily: 'var(--font-sans)' }}>{c.category}</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', marginBottom: 2 }}>{c.title}</div>
-                  <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>{c.date}</div>
-                </div>
-                {c.url && (
-                  <a href={c.url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-text-tertiary)', flexShrink: 0 }}>
-                    <ExternalLink size={12} />
-                  </a>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
       {/* Government Data Source Center */}
       <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', padding: 'var(--space-xl)' }}>
         <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginBottom: 'var(--space-lg)' }}>GOVERNMENT DATA SOURCE CENTER</div>
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: 'var(--font-sans)' }}>
+          <table className="ap-table">
             <thead>
-              <tr style={{ borderBottom: '1px solid var(--color-border-primary)' }}>
+              <tr>
                 {['Source', 'Org', 'Status', 'Format', 'Last Retrieved', 'Records', 'Reference Period'].map(h => (
-                  <th key={h} style={{ textAlign: 'left', padding: '6px 10px', fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{h}</th>
+                  <th key={h}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -420,18 +407,16 @@ export default function GovernmentIntelligence() {
               {datasets.map(ds => {
                 const isOk = ds.status === 'CONNECTED' || ds.status === 'HEALTHY'
                 return (
-                  <tr key={ds.id} style={{ borderBottom: '1px solid var(--color-border-primary)' }}>
-                    <td style={{ padding: '8px 10px', fontWeight: 500, color: 'var(--color-text-primary)' }}>{ds.source}</td>
-                    <td style={{ padding: '8px 10px', color: 'var(--color-text-secondary)', fontSize: 11 }}>{ds.organization}</td>
-                    <td style={{ padding: '8px 10px' }}>
-                      <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.05em', color: isOk ? 'var(--color-success)' : 'var(--color-warning)', background: isOk ? 'var(--color-success-bg)' : 'var(--color-warning-bg)', padding: '2px 5px', borderRadius: 3 }}>
-                        {ds.status}
-                      </span>
+                  <tr key={ds.id}>
+                    <td style={{ fontWeight: 500 }}>{ds.source}</td>
+                    <td style={{ color: 'var(--color-text-secondary)', fontSize: 11 }}>{ds.organization}</td>
+                    <td>
+                      <span className={`ap-badge ${isOk ? 'ap-badge-official' : 'ap-badge-gen'}`}>{ds.status}</span>
                     </td>
-                    <td style={{ padding: '8px 10px', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{ds.format}</td>
-                    <td style={{ padding: '8px 10px', color: 'var(--color-text-secondary)', fontSize: 11 }}>{ds.last_retrieved ? new Date(ds.last_retrieved).toLocaleDateString('en-IN') : '—'}</td>
-                    <td style={{ padding: '8px 10px', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{ds.record_count ?? '—'}</td>
-                    <td style={{ padding: '8px 10px', color: 'var(--color-text-secondary)', fontSize: 11 }}>{ds.reference_period ?? '—'}</td>
+                    <td style={{ color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{ds.format}</td>
+                    <td style={{ color: 'var(--color-text-secondary)', fontSize: 11 }}>{ds.last_retrieved ? new Date(ds.last_retrieved).toLocaleDateString('en-IN') : '—'}</td>
+                    <td style={{ color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{ds.record_count ?? '—'}</td>
+                    <td style={{ color: 'var(--color-text-secondary)', fontSize: 11 }}>{ds.reference_period ?? '—'}</td>
                   </tr>
                 )
               })}

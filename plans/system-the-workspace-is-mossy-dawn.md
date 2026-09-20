@@ -1,3 +1,127 @@
+# AeroPrice India — Site-Wide Fix & Polish Pass
+
+## Context
+A full-codebase audit identified bugs, design inconsistencies, and UX gaps across all 15 pages and shared components. The user asked to plan all fixable issues. This pass addresses them in three tiers: critical bugs (breakage), design consistency (token/pattern unification), and UX polish (page-level improvements).
+
+---
+
+## Tier 1 — Critical Bugs (breakage/errors)
+
+### 1. `useState` inside `.map()` in DataSources.tsx — Rules of Hooks violation
+**File:** `src/pages/DataSources.tsx`
+The hover state for source cards is created with `useState(false)` inside a `.map()` callback — illegal in React. Replace with a single `hoveredId: string | null` state at the component level.
+
+### 2. `getSeverity` thresholds wrong scale in Anomalies.tsx
+**File:** `src/pages/Anomalies.tsx`
+`deviation` values are decimals (e.g. `0.45`), but thresholds compare `>= 60` and `>= 30`. Fix: compare `deviation * 100 >= 60` etc, or store deviation as a percent integer.
+
+### 3. Admin user count stale
+**File:** `src/pages/AdminDashboard.tsx`
+Footer reads "3 users shown" but `DEMO_USERS` has 4 entries. Fix: derive the count from `DEMO_USERS.length`.
+
+### 4. `msg2` timeout leak in LoginPage.tsx
+**File:** `src/pages/LoginPage.tsx`
+Second `setTimeout` is stored in a plain `const` not a `ref`, so cleanup on unmount only clears `msgRef.current`. Fix: use a `msg2Ref = useRef<ReturnType<typeof setTimeout>>(null)` and clear it in cleanup.
+
+### 5. `spin` keyframe not globally defined
+**File:** `src/index.css`
+`animation: 'spin 1s linear infinite'` is applied to icons in LiveFares, Collection, and GovernmentIntelligence, but `@keyframes spin` only exists inside a `<style>` tag in LoginPage (leaking into global scope unreliably). Add it to `src/index.css`:
+```css
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+```
+
+---
+
+## Tier 2 — Design Consistency (tokens + shared patterns)
+
+### 6. Extract dark hero gradient into a CSS token
+**File:** `src/styles/global.css` + 6 pages
+`linear-gradient(145deg, #080e1a 0%, #0d1b3e 55%, #0f1a40 100%)` is copy-pasted in Overview, LiveFares, Anomalies, Forecast, HistoricalFares, LoginPage. Add to global.css:
+```css
+--gradient-hero-dark: linear-gradient(145deg, #080e1a 0%, #0d1b3e 55%, #0f1a40 100%);
+```
+Then replace all 6 occurrences with `background: var(--gradient-hero-dark)`.
+
+### 7. Fix hardcoded hex colors that duplicate CSS vars
+**Files:** Multiple pages
+- `var(--color-teal, #0d9488)` → `var(--color-teal)` (remove fallback since token is defined)
+- `rgba(37,99,235,0.12)` → use `var(--color-brand-primary)` with opacity wrapper in AppShell NavButton
+- Leaflet `TREND_COLORS` can stay hex (Leaflet API requirement — not fixable)
+
+### 8. Replace `onMouseOver`/`onMouseOut` with CSS hover
+**Files:** AppShell.tsx, Overview.tsx, MarketInsights.tsx, Forecast.tsx
+Inline JS hover handlers cause flicker (fires on child elements). Convert to a CSS utility class:
+```css
+.hover-lift:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); }
+```
+And use `onMouseEnter`/`onMouseLeave` where a JS state change is truly needed.
+
+### 9. Fix `BarChart2` duplicate icon in nav
+**File:** `src/components/AppShell.tsx`
+Both `insights` and `historicalfares` nav items use `BarChart2`. Change `historicalfares` to use `Clock` or `History` icon (already imported set includes many options from lucide-react).
+
+### 10. Sidebar width token mismatch
+**File:** `src/components/AppShell.tsx`
+Sidebar width is hardcoded as `224` (px number) but `--sidebar-width: 220px` exists in tokens. Align to `220` or update the token to `224`.
+
+---
+
+## Tier 3 — UX Polish (per-page improvements)
+
+### 11. Methodology page — hero header + clickable "See Data Sources" link
+**File:** `src/pages/Methodology.tsx`
+- Add the dark gradient hero panel (same pattern as other pages) with title "Methodology" and subtitle
+- Replace plain text "See Data Sources for current source status" with a clickable `<button>` that calls `onNavigate('sources')` (add `onNavigate` prop like Overview.tsx does)
+
+### 12. Exports page — hero header + empty state
+**File:** `src/pages/Exports.tsx`
+- Add hero panel for visual consistency
+- Replace `alert()` call with an inline error message state
+- Show a gentle empty-state notice: "Export data will populate once real airfare observations are collected"
+
+### 13. PriceAlerts — less aggressive modal
+**File:** `src/pages/PriceAlerts.tsx`
+Currently `upgradeOpen` initializes to `isFree` — modal fires instantly on page load for free users. Change: initialize to `false`, show the page with a locked state and a prominent CTA button, open modal only when CTA is clicked.
+
+### 14. Duplicate DGCA Circulars section in GovernmentIntelligence
+**File:** `src/pages/GovernmentIntelligence.tsx`
+Two separate Circular Feed sections exist. Remove the second (lower) duplicate. Keep only the first.
+
+### 15. `isoTimestamp` shared utility
+**Files:** `src/pages/DataSources.tsx`, `src/pages/Collection.tsx`
+Both define `function isoTimestamp(ts: string | null)` identically. Move to `src/utils/format.ts` and import from there.
+
+### 16. RouteExplorer — prevent same-city FROM/TO selection
+**File:** `src/pages/RouteExplorer.tsx`
+In `handleToChange` / `handleFromChange`, if the new value equals the opposite field's value, swap them (not silently allow DEL→DEL).
+
+### 17. Forecast page — fix CI width for +14 day
+**File:** `src/pages/Forecast.tsx`
++14 day forecast card shares the same `ciLow1`/`ciHigh1` as +7 day. The +14 day CI should be wider. Multiply CI radius by 1.5 for the 14-day card.
+
+### 18. Document title per page
+**File:** `src/App.tsx`
+Add `useEffect(() => { document.title = \`AeroPrice · \${PAGE_TITLES[currentPage]}\` }, [currentPage])` so the browser tab updates on navigation.
+
+### 19. Remove dead code
+- `AdminDashboard.tsx`: remove unused `AUDIT_LOG` constant and unused import (`apiAdminUsers`)
+- `RouteExplorer.tsx`: remove unused `SelectField` import
+- Anomalies filter: add empty-state card when filtered results = 0
+- Forecast: fix `slice` happening after filter (should `filter` first, then `slice(0,8)`)
+
+---
+
+## Verification
+
+1. **Bug fixes verified in browser**: Navigate to DataSources page — no React hook error in console. Anomalies page — HIGH severity anomalies appear. Admin user count reads "4 users shown".
+2. **Spin animation**: Collection page "Trigger Collection" → spinner on `RefreshCw` animates correctly.
+3. **Token consistency**: `grep -r '#080e1a\|#0d1b3e\|rgba(37,99,235' src/pages` → 0 results after migration to tokens.
+4. **PriceAlerts**: Log in as free user → navigate to Price Alerts → page renders without instant modal; click "Upgrade" CTA → modal opens.
+5. **Methodology link**: Click "See Data Sources" → navigates to DataSources page.
+6. **TypeScript**: `npx tsc --noEmit` → 0 errors.
+
+---
+
 # AeroPrice India — SIH26056 Master Plan
 
 ---

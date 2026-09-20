@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { ChevronDown, ChevronRight, AlertTriangle, CheckCircle, Clock, XCircle } from 'lucide-react'
+import { ChevronDown, ChevronRight, AlertTriangle, CheckCircle, Clock, XCircle, GitBranch } from 'lucide-react'
 import { methodologySteps } from '../data/sampleData'
+import type { Page } from '../components/AppShell'
 
 type NodeStatus = 'ACTIVE' | 'BLOCKED' | 'PENDING' | 'CONNECTED'
 
@@ -49,7 +50,7 @@ where:
 
 Published only when n ≥ 15.`
 
-export default function Methodology() {
+export default function Methodology({ onNavigate }: { onNavigate?: (page: Page) => void }) {
   const [expanded, setExpanded] = useState<Set<number>>(new Set([1]))
 
   function toggle(step: number) {
@@ -63,12 +64,30 @@ export default function Methodology() {
   const categories = [...new Set(methodologySteps.map(s => s.category))]
 
   return (
-    <div className="flex flex-col" style={{ gap: 'var(--space-2xl)' }}>
-      <div>
-        <h1 style={{ fontSize: 'var(--text-title-size)', fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', letterSpacing: '-0.01em' }}>Methodology</h1>
-        <p style={{ fontSize: 'var(--text-body-size)', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginTop: 'var(--space-xs)', maxWidth: 520 }}>
-          12-stage pipeline from raw fare ingestion to Jevons index publication. Node status reflects current collector state.
-        </p>
+    <div className="flex flex-col page-enter" style={{ gap: 'var(--space-2xl)' }}>
+
+      {/* Dark hero header */}
+      <div style={{
+        background: 'var(--gradient-hero-dark)', borderRadius: 'var(--radius-xl)',
+        overflow: 'hidden', position: 'relative', padding: '24px 28px',
+        boxShadow: '0 16px 40px rgba(8,14,26,0.3)', border: '1px solid rgba(255,255,255,0.05)',
+      }}>
+        <div style={{ position: 'absolute', inset: 0, backgroundImage: 'linear-gradient(rgba(255,255,255,0.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.025) 1px,transparent 1px)', backgroundSize: '32px 32px', pointerEvents: 'none' }} />
+        <div style={{ position: 'absolute', top: -40, right: -30, width: 160, height: 160, borderRadius: '50%', background: 'rgba(37,99,235,0.15)', filter: 'blur(50px)', pointerEvents: 'none' }} />
+        <div style={{ position: 'relative' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <div style={{ width: 28, height: 28, borderRadius: 7, background: 'var(--gradient-brand)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <GitBranch size={13} color="white" />
+            </div>
+            <span style={{ fontSize: 9, fontWeight: 700, color: 'rgba(147,197,253,0.7)', letterSpacing: '0.14em', fontFamily: 'var(--font-mono)' }}>12-STAGE PIPELINE · ANALYST ACCESS</span>
+          </div>
+          <h1 style={{ fontSize: 22, fontWeight: 800, color: 'rgba(255,255,255,0.92)', fontFamily: 'var(--font-sans)', letterSpacing: '-0.025em', margin: 0, marginBottom: 4 }}>
+            Collection &amp; Processing Pipeline
+          </h1>
+          <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', fontFamily: 'var(--font-sans)', margin: 0 }}>
+            Statistical methodology behind the AeroPrice India Airfare Index
+          </p>
+        </div>
       </div>
 
       {/* Pipeline status banner */}
@@ -83,18 +102,19 @@ export default function Methodology() {
       </div>
 
       {/* Category legend */}
-      <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap', alignItems: 'center' }}>
         {categories.map(cat => {
           const cs = CATEGORY_STYLE[cat] ?? { label: cat, color: 'var(--color-text-tertiary)', bg: 'var(--color-surface-secondary)' }
           return (
-            <span key={cat} style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', color: cs.color, background: cs.bg, padding: '3px 8px', borderRadius: 'var(--radius-full)', fontFamily: 'var(--font-sans)' }}>
+            <span key={cat} className="ap-badge" style={{ background: cs.bg, color: cs.color }}>
               {cs.label}
             </span>
           )
         })}
-        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-danger)', background: 'var(--color-danger-bg)', padding: '3px 8px', borderRadius: 'var(--radius-full)', fontFamily: 'var(--font-sans)' }}>BLOCKED</span>
-        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-warning)', background: 'var(--color-warning-bg)', padding: '3px 8px', borderRadius: 'var(--radius-full)', fontFamily: 'var(--font-sans)' }}>PENDING</span>
-        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-info)', background: 'var(--color-info-bg)', padding: '3px 8px', borderRadius: 'var(--radius-full)', fontFamily: 'var(--font-sans)' }}>CONNECTED</span>
+        <span className="ap-badge" style={{ background: 'var(--color-danger-bg)', color: 'var(--color-danger)' }}>BLOCKED</span>
+        <span className="ap-badge" style={{ background: 'var(--color-warning-bg)', color: 'var(--color-warning)' }}>PENDING</span>
+        <span className="ap-badge" style={{ background: 'var(--color-info-bg)', color: 'var(--color-info)' }}>CONNECTED</span>
+        <span className="ap-badge" style={{ background: 'var(--color-success-bg)', color: 'var(--color-success)' }}>ACTIVE</span>
       </div>
 
       {/* Pipeline accordion */}
@@ -124,7 +144,7 @@ export default function Methodology() {
                 </div>
 
                 {/* Step content */}
-                <div style={{ flex: 1, background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: `1px solid ${isOpen ? 'var(--color-brand-primary)' : 'var(--color-border-primary)'}`, padding: 'var(--space-lg)', transition: 'border-color 150ms' }}>
+                <div style={{ flex: 1, background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: `1px solid ${isOpen ? 'var(--color-brand-primary)' : 'var(--color-border-primary)'}`, borderLeft: `3px solid ${ns.color}`, padding: 'var(--space-lg)', transition: 'border-color 150ms' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
                       <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>{String(step.step).padStart(2, '0')}</span>
@@ -142,10 +162,12 @@ export default function Methodology() {
                         <NodeIcon size={12} style={{ flexShrink: 0, marginTop: 1 }} />
                         {meta.statusDetail}
                       </div>
-                      {meta.linkedSource && (
-                        <div style={{ fontSize: 11, color: 'var(--color-brand-primary)', fontFamily: 'var(--font-sans)' }}>
-                          → See Data Sources for current source status
-                        </div>
+                      {meta.linkedSource && onNavigate && (
+                        <button
+                          onClick={() => onNavigate(meta.linkedSource as Page)}
+                          style={{ fontSize: 11, color: 'var(--color-brand-primary)', fontFamily: 'var(--font-sans)', background: 'none', border: 'none', padding: 0, cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 2 }}>
+                          → View {meta.linkedSource === 'sources' ? 'Data Sources' : 'Government Intelligence'}
+                        </button>
                       )}
                     </div>
                   )}
@@ -159,7 +181,7 @@ export default function Methodology() {
       {/* Jevons formula */}
       <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', padding: 'var(--space-xl)' }}>
         <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginBottom: 'var(--space-md)' }}>JEVONS PRICE INDEX FORMULA</div>
-        <div style={{ background: 'var(--color-surface-secondary)', borderRadius: 'var(--radius-md)', padding: 'var(--space-lg)', fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--color-text-primary)', lineHeight: 2, whiteSpace: 'pre-wrap' }}>
+        <div style={{ background: 'var(--color-surface-dark)', color: 'rgba(255,255,255,0.85)', borderRadius: 'var(--radius-md)', padding: 'var(--space-xl)', fontFamily: 'var(--font-mono)', fontSize: 13, lineHeight: 2, whiteSpace: 'pre-wrap' }}>
           {JEVONS}
         </div>
       </div>

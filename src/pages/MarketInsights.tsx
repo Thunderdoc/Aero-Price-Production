@@ -102,9 +102,19 @@ function WindowBars() {
   )
 }
 
+type TabId = 'price' | 'carriers' | 'routes' | 'anomalies'
+
+const TABS: { id: TabId; label: string }[] = [
+  { id: 'price', label: 'Price History' },
+  { id: 'carriers', label: 'Carrier Benchmarks' },
+  { id: 'routes', label: 'Route Analysis' },
+  { id: 'anomalies', label: 'Anomalies' },
+]
+
 export default function MarketInsights() {
   const [selectedCarrier, setSelectedCarrier] = useState<string | null>(null)
   const [chartPeriod, setChartPeriod] = useState<'30' | '60' | '90'>('90')
+  const [activeTab, setActiveTab] = useState<TabId>('price')
 
   const historySlice = chartPeriod === '30' ? priceHistoryData.slice(-30) : chartPeriod === '60' ? priceHistoryData.slice(-60) : priceHistoryData
 
@@ -123,28 +133,59 @@ export default function MarketInsights() {
     <div className="flex flex-col" style={{ gap: 'var(--space-xl)', maxWidth: 1000 }}>
 
       {/* Header */}
-      <div>
-        <div className="flex items-center" style={{ gap: 'var(--space-sm)', marginBottom: 'var(--space-sm)' }}>
-          <BarChart2 size={16} style={{ color: 'var(--color-brand-primary)' }} />
-          <h1 style={{ fontSize: 'var(--text-title-size)', fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)' }}>
-            Market Insights
-          </h1>
+      <div style={{ paddingBottom: 'var(--space-md)', borderBottom: '1px solid var(--color-border-primary)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', marginBottom: 'var(--space-sm)' }}>
+          <div style={{ width: 36, height: 36, borderRadius: 'var(--radius-md)', background: 'var(--gradient-brand)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <BarChart2 size={18} style={{ color: 'white' }} />
+          </div>
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', color: 'var(--color-brand-primary)', fontFamily: 'var(--font-sans)', marginBottom: 2 }}>
+              MARKET INSIGHTS
+            </div>
+            <h1 style={{ fontSize: 'var(--text-title-size)', fontWeight: 700, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)', lineHeight: 1.2, letterSpacing: '-0.01em' }}>
+              Airfare trend analysis across Indian corridors
+            </h1>
+          </div>
         </div>
-        <p style={{ fontSize: 'var(--text-body-size)', fontFamily: 'var(--font-sans)', color: 'var(--color-text-secondary)', maxWidth: 560 }}>
-          Cross-route analysis, carrier benchmarks, booking window optimisation, and anomaly trends.
-        </p>
       </div>
 
       {/* Data provenance notice */}
       <div style={{ background: 'var(--color-warning-bg)', border: '1px solid rgba(217,119,6,0.25)', borderRadius: 'var(--radius-lg)', padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
-        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-warning)', background: 'rgba(217,119,6,0.2)', padding: '2px 6px', borderRadius: 3, fontFamily: 'var(--font-sans)', flexShrink: 0 }}>GENERATED DATA</span>
+        <span className="ap-badge ap-badge-gen">GENERATED DATA</span>
         <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>
-          All charts and analysis below use generated reference data. Real carrier benchmarks and corridor statistics will appear once airfare collectors are configured and real observations are collected.
+          All charts and analysis below use generated reference data. Real carrier benchmarks and corridor statistics will appear once airfare collectors are configured.
         </span>
       </div>
 
+      {/* Tab navigation */}
+      <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid var(--color-border-primary)' }}>
+        {TABS.map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            style={{
+              padding: '10px 20px',
+              background: 'none',
+              border: 'none',
+              borderBottom: activeTab === tab.id ? '2px solid var(--color-brand-primary)' : '2px solid transparent',
+              marginBottom: -2,
+              color: activeTab === tab.id ? 'var(--color-brand-primary)' : 'var(--color-text-secondary)',
+              fontSize: 13,
+              fontWeight: activeTab === tab.id ? 600 : 500,
+              fontFamily: 'var(--font-sans)',
+              cursor: 'pointer',
+              transition: 'color var(--transition-fast), border-color var(--transition-fast)',
+              letterSpacing: '0.01em',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
       {/* Price History Chart */}
-      <div style={card}>
+      {activeTab === 'price' && <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-xl)', boxShadow: 'var(--shadow-sm)', border: '1px solid var(--color-border-primary)' }}>
         <div className="flex items-center justify-between flex-wrap" style={{ gap: 'var(--space-md)', marginBottom: 'var(--space-lg)' }}>
           <div>
             <h2 style={{ fontSize: 'var(--text-heading-size)', fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)' }}>Price History</h2>
@@ -179,16 +220,23 @@ export default function MarketInsights() {
             </div>
           ))}
         </div>
-      </div>
+        <div style={{ marginTop: 'var(--space-lg)', paddingTop: 'var(--space-lg)', borderTop: '1px solid var(--color-border-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span className="ap-badge ap-badge-gen">GENERATED</span>
+          <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>Sample price data — connect live collectors to see real fares</span>
+        </div>
+      </div>}
 
-      {/* Carrier + Booking window row */}
-      <div className="flex flex-wrap" style={{ gap: 'var(--space-xl)' }}>
+      {/* Carriers tab */}
+      {activeTab === 'carriers' && <div className="flex flex-wrap" style={{ gap: 'var(--space-xl)' }}>
 
         {/* Carrier table */}
-        <div style={{ ...card, flex: '3 1 340px' }}>
-          <h2 style={{ fontSize: 'var(--text-heading-size)', fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)', marginBottom: 'var(--space-lg)' }}>
-            Carrier Benchmarks
-          </h2>
+        <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-xl)', boxShadow: 'var(--shadow-sm)', border: '1px solid var(--color-border-primary)', flex: '3 1 340px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-lg)' }}>
+            <h2 style={{ fontSize: 'var(--text-heading-size)', fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)' }}>
+              Carrier Benchmarks
+            </h2>
+            <span className="ap-badge ap-badge-gen">GENERATED</span>
+          </div>
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-sans)' }}>
               <thead>
@@ -243,10 +291,13 @@ export default function MarketInsights() {
         </div>
 
         {/* Booking window */}
-        <div style={{ ...card, flex: '2 1 220px' }}>
-          <h2 style={{ fontSize: 'var(--text-heading-size)', fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)', marginBottom: 4 }}>
-            Booking Window
-          </h2>
+        <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-xl)', boxShadow: 'var(--shadow-sm)', border: '1px solid var(--color-border-primary)', flex: '2 1 220px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <h2 style={{ fontSize: 'var(--text-heading-size)', fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)' }}>
+              Booking Window
+            </h2>
+            <span className="ap-badge ap-badge-gen">GENERATED</span>
+          </div>
           <p style={{ fontSize: 'var(--text-caption-size)', fontFamily: 'var(--font-sans)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-lg)' }}>
             <span style={{ color: 'var(--color-success)', fontWeight: 600 }}>Green</span> = optimal window (T+21–30)
           </p>
@@ -258,16 +309,19 @@ export default function MarketInsights() {
             </p>
           </div>
         </div>
-      </div>
+      </div>}
 
-      {/* Route volume + highest fares */}
-      <div className="flex flex-wrap" style={{ gap: 'var(--space-xl)' }}>
+      {/* Routes tab */}
+      {activeTab === 'routes' && <div className="flex flex-wrap" style={{ gap: 'var(--space-xl)' }}>
 
         {/* Routes by observation count */}
-        <div style={{ ...card, flex: '3 1 320px' }}>
-          <h2 style={{ fontSize: 'var(--text-heading-size)', fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)', marginBottom: 'var(--space-lg)' }}>
-            Routes by Coverage Volume
-          </h2>
+        <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-xl)', boxShadow: 'var(--shadow-sm)', border: '1px solid var(--color-border-primary)', flex: '3 1 320px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-lg)' }}>
+            <h2 style={{ fontSize: 'var(--text-heading-size)', fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)' }}>
+              Routes by Coverage Volume
+            </h2>
+            <span className="ap-badge ap-badge-gen">GENERATED</span>
+          </div>
           <div className="flex flex-col" style={{ gap: 'var(--space-sm)' }}>
             {topRoutesByObs.map((r, i) => {
               const pct = (r.observations / topRoutesByObs[0].observations) * 100
@@ -291,10 +345,13 @@ export default function MarketInsights() {
         </div>
 
         {/* Highest fares */}
-        <div style={{ ...card, flex: '2 1 200px' }}>
-          <h2 style={{ fontSize: 'var(--text-heading-size)', fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)', marginBottom: 'var(--space-lg)' }}>
-            Priciest Routes
-          </h2>
+        <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-xl)', boxShadow: 'var(--shadow-sm)', border: '1px solid var(--color-border-primary)', flex: '2 1 200px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-lg)' }}>
+            <h2 style={{ fontSize: 'var(--text-heading-size)', fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)' }}>
+              Priciest Routes
+            </h2>
+            <span className="ap-badge ap-badge-gen">GENERATED</span>
+          </div>
           <div className="flex flex-col" style={{ gap: 'var(--space-md)' }}>
             {topRoutesByFare.map((r, i) => (
               <div key={r.id} className="flex items-center justify-between" style={{ padding: 'var(--space-sm) var(--space-md)', background: i === 0 ? 'var(--color-danger-bg)' : 'var(--color-surface-secondary)', borderRadius: 'var(--radius-md)' }}>
@@ -311,13 +368,16 @@ export default function MarketInsights() {
             ))}
           </div>
         </div>
-      </div>
+      </div>}
 
-      {/* Anomaly summary */}
-      <div style={card}>
+      {/* Anomalies tab */}
+      {activeTab === 'anomalies' && <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-xl)', boxShadow: 'var(--shadow-sm)', border: '1px solid var(--color-border-primary)' }}>
         <div className="flex items-center justify-between" style={{ marginBottom: 'var(--space-lg)' }}>
           <h2 style={{ fontSize: 'var(--text-heading-size)', fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-text-primary)' }}>Anomaly Detection Log</h2>
-          <Badge label={`${recentAnomalies.filter(a => !a.resolved).length} unresolved`} variant="warning" />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="ap-badge ap-badge-gen">GENERATED</span>
+            <Badge label={`${recentAnomalies.filter(a => !a.resolved).length} unresolved`} variant="warning" />
+          </div>
         </div>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-sans)' }}>
@@ -352,7 +412,7 @@ export default function MarketInsights() {
             </tbody>
           </table>
         </div>
-      </div>
+      </div>}
 
     </div>
   )
