@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useState, useEffect, useRef, type ReactNode } from 'react'
 import {
   Home, Map, Plane, Building2, Database,
   Settings, Shield, Bell, BarChart2, BookOpen,
@@ -8,6 +8,7 @@ import {
 import DataStatusBanner from './DataStatusBanner'
 import { useAuth, canAccess, type UserRole, type UserPlan } from '../contexts/AuthContext'
 import { useGovData } from '../hooks/useGovData'
+import { corridors } from '../data/sampleData'
 
 export type Page =
   | 'overview' | 'map' | 'routes' | 'government' | 'insights'
@@ -145,6 +146,28 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
   const [searchQuery, setSearchQuery] = useState('')
   const [searchFocused, setSearchFocused] = useState(false)
   const [portal, setPortal] = useState<Portal>(() => PAGE_PORTAL[currentPage] ?? 'gov')
+  const [searchOpen, setSearchOpen] = useState(false)
+  const searchRef = useRef<HTMLDivElement>(null)
+
+  const searchMatches = searchQuery.trim().length >= 3
+    ? corridors
+        .filter(c =>
+          `${c.from}-${c.to}`.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          c.from.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          c.to.toLowerCase().includes(searchQuery.toLowerCase())
+        )
+        .slice(0, 5)
+    : []
+
+  useEffect(() => {
+    function onMouseDown(e: MouseEvent) {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setSearchOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [])
 
   // Sync portal when page changes externally
   const derivedPortal = PAGE_PORTAL[currentPage] ?? portal
@@ -348,13 +371,19 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
           </div>
 
           {/* Global search */}
-          <div style={{ flex: 1, maxWidth: 300, position: 'relative' }}>
-            <Search size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-tertiary)', pointerEvents: 'none' }} />
+          <div ref={searchRef} style={{ flex: 1, maxWidth: 300, position: 'relative' }}>
+            <Search size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-tertiary)', pointerEvents: 'none', zIndex: 1 }} />
             <input
               type="text" value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              onFocus={() => setSearchFocused(true)}
+              onChange={e => { setSearchQuery(e.target.value); setSearchOpen(true) }}
+              onFocus={() => { setSearchFocused(true); setSearchOpen(true) }}
               onBlur={() => setSearchFocused(false)}
+              onKeyDown={e => {
+                if (e.key === 'Escape') { setSearchOpen(false); setSearchQuery('') }
+                if (e.key === 'Enter' && searchMatches.length > 0) {
+                  setSearchOpen(false); setSearchQuery(''); navClick('routes')
+                }
+              }}
               placeholder="Search routes, airports…"
               style={{
                 width: '100%', paddingLeft: 30, paddingRight: searchQuery ? 30 : 12,
@@ -369,10 +398,36 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
               }}
             />
             {searchQuery && (
-              <button onClick={() => setSearchQuery('')}
-                style={{ position: 'absolute', right: 9, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', display: 'flex', alignItems: 'center', padding: 0 }}>
+              <button onClick={() => { setSearchQuery(''); setSearchOpen(false) }}
+                style={{ position: 'absolute', right: 9, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', display: 'flex', alignItems: 'center', padding: 0, zIndex: 1 }}>
                 <X size={11} />
               </button>
+            )}
+            {searchOpen && searchMatches.length > 0 && (
+              <div style={{
+                position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0,
+                background: 'var(--color-surface-bg)',
+                border: '1px solid var(--color-border-primary)',
+                borderRadius: 10, boxShadow: 'var(--shadow-floating)',
+                overflow: 'hidden', zIndex: 100,
+              }}>
+                {searchMatches.map(c => (
+                  <button key={c.id}
+                    onMouseDown={e => { e.preventDefault(); setSearchOpen(false); setSearchQuery(''); navClick('routes') }}
+                    style={{
+                      width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      padding: '9px 14px', background: 'none', border: 'none', cursor: 'pointer',
+                      borderBottom: '1px solid var(--color-border-primary)', fontFamily: 'var(--font-sans)',
+                      transition: 'background 100ms',
+                    }}
+                    onMouseOver={e => { (e.currentTarget as HTMLElement).style.background = 'var(--color-surface-secondary)' }}
+                    onMouseOut={e => { (e.currentTarget as HTMLElement).style.background = 'none' }}
+                  >
+                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>{c.from} → {c.to}</span>
+                    <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }}>{c.id}</span>
+                  </button>
+                ))}
+              </div>
             )}
           </div>
 

@@ -709,11 +709,12 @@ export default function AirfareMap() {
           style={{ flex: 1, height: '100%', width: '100%' }}
           zoomControl={true}
         >
-          {/* Basemap — CartoDB Positron (public, no key required) */}
+          {/* Basemap — Mapbox Streets Light */}
           <TileLayer
-            attribution='&copy; <a href="https://carto.com/attributions">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-            url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
-            subdomains="abcd"
+            attribution='&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+            url={`https://api.mapbox.com/styles/v1/mapbox/light-v11/tiles/{z}/{x}/{y}?access_token=${import.meta.env.VITE_MAPBOX_TOKEN}`}
+            tileSize={512}
+            zoomOffset={-1}
             maxZoom={19}
           />
 

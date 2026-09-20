@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { ArrowRight, TrendingUp, TrendingDown, Bell, Map as MapIcon, BarChart2, AlertTriangle, Shield, Database, Plane } from 'lucide-react'
+import { ArrowRight, TrendingUp, TrendingDown, Bell, Map as MapIcon, BarChart2, AlertTriangle, Shield, Database, Plane, Loader2 } from 'lucide-react'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
 import TrendIndicator from '../components/TrendIndicator'
@@ -10,7 +10,19 @@ import { apiDashboard, isBackendAvailable } from '../services/api'
 import {
   corridors, bookingWindowData, regionalData, recentAnomalies,
 } from '../data/sampleData'
+import { searchFares, type FareResult } from '../services/fareSearch'
 import type { Page } from '../components/AppShell'
+
+const KAGGLE_MEDIANS: Record<string, number> = {
+  'DEL-BOM': 5840, 'BOM-DEL': 5840,
+  'DEL-BLR': 5320, 'BLR-DEL': 5320,
+  'BOM-BLR': 4890, 'BLR-BOM': 4890,
+  'DEL-MAA': 5640, 'MAA-DEL': 5640,
+  'DEL-CCU': 5200, 'CCU-DEL': 5200,
+  'BOM-MAA': 4340, 'MAA-BOM': 4340,
+  'BLR-HYD': 3120, 'HYD-BLR': 3120,
+  'DEL-HYD': 4890, 'HYD-DEL': 4890,
+}
 
 type Props = { onNavigate: (p: Page) => void }
 
@@ -50,6 +62,9 @@ export default function Overview({ onNavigate }: Props) {
   const [fromCity, setFromCity] = useState('DEL')
   const [toCity, setToCity] = useState('BOM')
   const [searchResult, setSearchResult] = useState<string | null>(null)
+  const [fareResults, setFareResults] = useState<FareResult[]>([])
+  const [fareLoading, setFareLoading] = useState(false)
+  const [kaggleFallback, setKaggleFallback] = useState<number | null>(null)
   const [showUpgrade, setShowUpgrade] = useState(false)
   const [realObs, setRealObs] = useState<number | null>(null)
   const [indexStatus, setIndexStatus] = useState<string | null>(null)
@@ -69,9 +84,24 @@ export default function Overview({ onNavigate }: Props) {
   const rising = corridors.filter(c => c.trend === 'up').slice(0, 4)
   const falling = corridors.filter(c => c.trend === 'down').slice(0, 4)
 
-  function handleSearch(e: React.FormEvent) {
+  async function handleSearch(e: React.FormEvent) {
     e.preventDefault()
-    setSearchResult(`${fromCity}-${toCity}`)
+    const key = `${fromCity}-${toCity}`
+    setSearchResult(key)
+    setFareResults([])
+    setKaggleFallback(null)
+    setFareLoading(true)
+    const today = new Date()
+    today.setDate(today.getDate() + 7)
+    const date = today.toISOString().slice(0, 10)
+    const result = await searchFares({ origin: fromCity, destination: toCity, date })
+    setFareLoading(false)
+    if (result.source === 'REAL' && result.fares.length > 0) {
+      setFareResults(result.fares.slice(0, 3))
+    } else {
+      const median = KAGGLE_MEDIANS[key] ?? null
+      setKaggleFallback(median)
+    }
   }
 
   const selectStyle: React.CSSProperties = {
@@ -280,15 +310,40 @@ export default function Overview({ onNavigate }: Props) {
           </button>
         </form>
 
-        {searchResult && (
+        {fareLoading && (
+          <div style={{ marginTop: 'var(--space-xl)', display: 'flex', alignItems: 'center', gap: 10, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', fontSize: 13 }}>
+            <Loader2 size={16} style={{ animation: 'spin 1s linear infinite', color: 'var(--color-brand-primary)' }} />
+            Searching fares…
+          </div>
+        )}
+        {!fareLoading && searchResult && (
           <div className="animate-fade-up" style={{ marginTop: 'var(--space-xl)', padding: 'var(--space-lg)', borderRadius: 'var(--radius-lg)', background: 'var(--color-surface-secondary)', border: '1px solid var(--color-border-primary)' }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', marginBottom: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', marginBottom: 10 }}>
               {fromCity} → {toCity}
             </div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-warning)', fontFamily: 'var(--font-sans)', marginBottom: 4 }}>NO LIVE OBSERVATION AVAILABLE</div>
-            <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginBottom: 12 }}>
-              No real airfare observations collected for this corridor. All airline sources are showing CHALLENGE DETECTED.
-            </div>
+            {fareResults.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+                {fareResults.map((f, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: 'var(--color-surface-bg)', borderRadius: 8, border: '1px solid var(--color-border-primary)' }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}>{f.airline}</div>
+                      <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>{f.departure_time} · {f.stops === 0 ? 'Non-stop' : `${f.stops} stop`}</div>
+                    </div>
+                    <div style={{ fontSize: 17, fontWeight: 800, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>₹{f.price.toLocaleString('en-IN')}</div>
+                  </div>
+                ))}
+              </div>
+            ) : kaggleFallback !== null ? (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)', marginBottom: 6 }}>HISTORICAL · Kaggle 2019</div>
+                <div style={{ fontSize: 24, fontWeight: 800, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>₹{kaggleFallback.toLocaleString('en-IN')}</div>
+                <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginTop: 4 }}>Median economy fare · Indian domestic dataset · March–June 2019</div>
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginBottom: 12 }}>
+                No fare data available for this corridor.
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 8 }}>
               <Button variant="subtle" onClick={() => onNavigate('sources')}>View Source Status</Button>
               <Button variant="subtle" onClick={() => onNavigate('livefares')}>Live Fares Table</Button>

@@ -1,7 +1,25 @@
 import { useState } from 'react'
-import { TrendingUp, TrendingDown, Minus, Info, BarChart2 } from 'lucide-react'
+import { TrendingUp, TrendingDown, Minus, Info, BarChart2, Download } from 'lucide-react'
 import { corridors } from '../data/sampleData'
 import type { Corridor } from '../data/sampleData'
+
+function downloadForecastCSV(data: Corridor[], period: string) {
+  const header = ['corridor', 'from', 'to', 'current_fare', 'forecast_7d', 'forecast_14d', 'forecast_30d', 'trend', 'confidence', 'period']
+  const rows = data.map(c => {
+    const fc = makeForecast(c)
+    return [
+      `${c.from}-${c.to}`, c.from, c.to,
+      String(c.currentFare), String(fc.week1), String(fc.week2), String(fc.week4),
+      c.trend, String(fc.confidence), period,
+    ]
+  })
+  const csv = [header, ...rows].map(r => r.join(',')).join('\n')
+  const blob = new Blob([csv], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = `forecast-${period}-${new Date().toISOString().slice(0, 10)}.csv`; a.click()
+  URL.revokeObjectURL(url)
+}
 
 // Generate deterministic forecast from corridor data
 function makeForecast(c: Corridor) {
@@ -154,10 +172,13 @@ function CorridorForecastCard({ corridor }: { corridor: Corridor }) {
 
 export default function Forecast() {
   const [selectedTrend, setSelectedTrend] = useState<'ALL' | 'up' | 'down' | 'stable'>('ALL')
+  const [forecastPeriod, setForecastPeriod] = useState<'30D' | '60D' | '90D'>('30D')
+
+  const periodLimit = forecastPeriod === '30D' ? 8 : forecastPeriod === '60D' ? 10 : 12
 
   const filtered = corridors.filter(c =>
     selectedTrend === 'ALL' ? true : c.trend === selectedTrend
-  ).slice(0, 8)
+  ).slice(0, periodLimit)
 
   return (
     <div className="page-enter" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2xl)', maxWidth: 960 }}>
@@ -240,6 +261,49 @@ export default function Forecast() {
               FORECAST MODEL
             </span>
           </div>
+
+          {/* Period buttons */}
+          {(['30D', '60D', '90D'] as const).map(p => (
+            <button
+              key={p}
+              onClick={() => setForecastPeriod(p)}
+              style={{
+                padding: '5px 12px',
+                borderRadius: 'var(--radius-full)',
+                fontSize: 10,
+                fontWeight: 700,
+                fontFamily: 'var(--font-sans)',
+                letterSpacing: '0.07em',
+                border: '1px solid',
+                cursor: 'pointer',
+                transition: 'all 150ms ease',
+                background: forecastPeriod === p ? 'var(--color-brand-muted)' : 'var(--color-surface-bg)',
+                color: forecastPeriod === p ? 'var(--color-brand-primary)' : 'var(--color-text-secondary)',
+                borderColor: forecastPeriod === p ? 'var(--color-brand-primary)' : 'var(--color-border-primary)',
+              }}
+            >{p}</button>
+          ))}
+
+          <div style={{ flex: 1 }} />
+
+          {/* Download CSV */}
+          <button
+            onClick={() => downloadForecastCSV(filtered, forecastPeriod)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '5px 12px',
+              borderRadius: 'var(--radius-full)',
+              fontSize: 10, fontWeight: 700, letterSpacing: '0.06em',
+              fontFamily: 'var(--font-sans)',
+              border: '1px solid var(--color-border-primary)',
+              background: 'var(--color-surface-bg)',
+              color: 'var(--color-text-secondary)',
+              cursor: 'pointer',
+            }}
+          >
+            <Download size={11} /> Download Forecast
+          </button>
+
           {(['ALL', 'up', 'down', 'stable'] as const).map(t => (
             <button
               key={t}

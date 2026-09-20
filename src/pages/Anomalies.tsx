@@ -1,7 +1,25 @@
 import { useState } from 'react'
-import { AlertTriangle, Activity, TrendingUp, TrendingDown, Minus } from 'lucide-react'
+import { AlertTriangle, Activity, TrendingUp, TrendingDown, Minus, Download } from 'lucide-react'
 import { recentAnomalies } from '../data/sampleData'
 import type { Anomaly } from '../data/sampleData'
+
+function downloadAnomaliesCSV(data: Anomaly[]) {
+  const header = ['id', 'route', 'type', 'fare', 'expected_fare', 'deviation_pct', 'severity', 'resolved', 'detected_at']
+  const rows = data.map(a => [
+    a.id, a.route, a.type,
+    String(a.fare), String(a.expectedFare),
+    a.deviation.toFixed(1),
+    getSeverity(a),
+    String(a.resolved),
+    a.detectedAt,
+  ])
+  const csv = [header, ...rows].map(r => r.join(',')).join('\n')
+  const blob = new Blob([csv], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const el = document.createElement('a')
+  el.href = url; el.download = `anomalies-${new Date().toISOString().slice(0, 10)}.csv`; el.click()
+  URL.revokeObjectURL(url)
+}
 
 type Severity = 'HIGH' | 'MEDIUM' | 'LOW'
 
@@ -245,19 +263,52 @@ export default function Anomalies() {
             {f}
           </button>
         ))}
+        <div style={{ flex: 1 }} />
+        <button
+          onClick={() => downloadAnomaliesCSV(filtered.length > 0 ? filtered : recentAnomalies)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 5,
+            padding: '5px 12px',
+            borderRadius: 'var(--radius-full)',
+            fontSize: 10, fontWeight: 700, letterSpacing: '0.06em',
+            fontFamily: 'var(--font-sans)',
+            border: '1px solid var(--color-border-primary)',
+            background: 'var(--color-surface-bg)',
+            color: 'var(--color-text-secondary)',
+            cursor: 'pointer',
+          }}
+        >
+          <Download size={11} /> Export CSV
+        </button>
       </div>
 
       {/* Anomaly cards */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>
         {filtered.length === 0 ? (
           <div className="ap-card" style={{ padding: 'var(--space-3xl)', textAlign: 'center' }}>
-            <div style={{ fontSize: 28, marginBottom: 10 }}>✓</div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-success)', fontFamily: 'var(--font-sans)', marginBottom: 4 }}>
-              {filter === 'ALL' ? 'No anomalies detected' : `No ${filter.toLowerCase()} anomalies`}
+            <div style={{ fontSize: 28, marginBottom: 10 }}>⚡</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginBottom: 4 }}>
+              No anomalies match current filter — showing all
             </div>
-            <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>
-              {filter !== 'ALL' ? 'Try changing the filter to see all anomalies.' : 'All corridors are within normal range.'}
+            <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginBottom: 12 }}>
+              {filter !== 'ALL' ? `No ${filter.toLowerCase()} anomalies in the current dataset.` : 'All corridors are within normal range.'}
             </div>
+            {filter !== 'ALL' && (
+              <button
+                onClick={() => setFilter('ALL')}
+                style={{
+                  padding: '6px 16px', borderRadius: 'var(--radius-full)',
+                  fontSize: 11, fontWeight: 700, letterSpacing: '0.06em',
+                  fontFamily: 'var(--font-sans)',
+                  border: '1px solid var(--color-brand-primary)',
+                  background: 'var(--color-brand-muted)',
+                  color: 'var(--color-brand-primary)',
+                  cursor: 'pointer',
+                }}
+              >
+                Reset to ALL
+              </button>
+            )}
           </div>
         ) : (
           filtered.map(a => <AnomalyCard key={a.id} anomaly={a} />)

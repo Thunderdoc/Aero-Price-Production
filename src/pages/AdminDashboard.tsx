@@ -1,11 +1,12 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
 import { useGovData } from '../hooks/useGovData'
 import { useAuth } from '../contexts/AuthContext'
 import { apiAuditLog, apiSystemMetrics, isBackendAvailable } from '../services/api'
-import { AlertTriangle, CheckCircle, XCircle, Shield, Users, Activity, FileText, Settings, ToggleLeft, RefreshCw } from 'lucide-react'
+import { AlertTriangle, CheckCircle, XCircle, Shield, Users, Activity, FileText, Settings, ToggleLeft, RefreshCw, Download } from 'lucide-react'
 import { getApiHealth } from '../services/flightData'
+import { supabase, SUPABASE_CONFIGURED } from '../services/supabase'
 
 const _h = getApiHealth()
 
@@ -102,7 +103,50 @@ export default function AdminDashboard() {
   const [auditLoading, setAuditLoading] = useState(false)
   const [metrics, setMetrics] = useState<SystemMetrics | null>(null)
   const [thresholds, setThresholds] = useState(THRESHOLDS)
-  const { token } = useAuth()
+  const [toastMsg, setToastMsg] = useState<string | null>(null)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const { token, user } = useAuth()
+
+  function showToast(msg: string) {
+    setToastMsg(msg)
+    setTimeout(() => setToastMsg(null), 2500)
+  }
+
+  async function saveConfig(key: string, value: unknown) {
+    if (!SUPABASE_CONFIGURED) return
+    await supabase.from('app_settings').upsert(
+      { key, value: JSON.stringify(value), updated_at: new Date().toISOString() },
+      { onConflict: 'key' }
+    )
+    await logAudit('CONFIG_CHANGE', { key, value })
+  }
+
+  async function logAudit(action: string, details: Record<string, unknown>) {
+    if (!SUPABASE_CONFIGURED) return
+    await supabase.from('audit_log').insert({
+      actor: (user as { email?: string } | null)?.email ?? 'ADMIN',
+      action,
+      details,
+      created_at: new Date().toISOString(),
+    })
+  }
+
+  function handleThresholdChange(key: string, value: number) {
+    setThresholds(prev => prev.map(item => item.key === key ? { ...item, value } : item))
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => saveConfig(key, value), 500)
+  }
+
+  function downloadAuditCSV() {
+    const header = ['Timestamp', 'Actor', 'Action', 'Detail']
+    const rows = audit.map(e => [e.ts, e.actor, e.action, e.detail].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+    const csv = [header.join(','), ...rows].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = 'audit_log.csv'; a.click()
+    URL.revokeObjectURL(url)
+  }
   const govData = useGovData()
   const now = new Date()
   const timestamp = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false }) + ' IST'
@@ -140,7 +184,12 @@ export default function AdminDashboard() {
   ]
 
   return (
-    <div className="flex flex-col" style={{ gap: 'var(--space-xl)' }}>
+    <div className="flex flex-col" style={{ gap: 'var(--space-xl)', position: 'relative' }}>
+      {toastMsg && (
+        <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 9999, background: 'var(--color-surface-secondary)', border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-md)', padding: '10px 18px', fontSize: 13, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', boxShadow: 'var(--shadow-md)', maxWidth: 480, textAlign: 'center' }}>
+          {toastMsg}
+        </div>
+      )}
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-sm)', marginBottom: 'var(--space-xs)' }}>
         <Shield size={16} style={{ color: 'var(--color-danger)', marginTop: 3 }} />
@@ -242,7 +291,13 @@ export default function AdminDashboard() {
                     <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}>{src.name}</div>
                     <div style={{ fontSize: 10, color: 'var(--color-warning)', fontFamily: 'var(--font-sans)' }}>CHALLENGE DETECTED — cannot enable</div>
                   </div>
-                  <ToggleLeft size={24} style={{ color: 'var(--color-text-tertiary)', opacity: 0.4 }} />
+                  <button
+                    onClick={() => showToast(`Cannot enable — ${src.name} source shows CHALLENGE DETECTED. Configure backend collector.`)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, borderRadius: 4 }}
+                    title="Toggle source"
+                  >
+                    <ToggleLeft size={24} style={{ color: 'var(--color-text-tertiary)', opacity: 0.4 }} />
+                  </button>
                 </div>
               ))}
           </div>
@@ -302,6 +357,9 @@ export default function AdminDashboard() {
 
       {tab === 'audit' && (
         <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', overflow: 'hidden' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 14px', borderBottom: '1px solid var(--color-border-primary)' }}>
+            <Button variant="neutral" onClick={downloadAuditCSV} iconEnd={<Download size={13} />}>Download Audit Log</Button>
+          </div>
           {auditLoading && (
             <div style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', borderBottom: '1px solid var(--color-border-primary)' }}>
               <RefreshCw size={12} style={{ animation: 'spin 1s linear infinite' }} /> Fetching audit log…
@@ -351,7 +409,7 @@ export default function AdminDashboard() {
                   <input
                     type="number"
                     value={t.value}
-                    onChange={e => setThresholds(prev => prev.map(item => item.key === t.key ? { ...item, value: Number(e.target.value) } : item))}
+                    onChange={e => handleThresholdChange(t.key, Number(e.target.value))}
                     style={{ width: 72, padding: '5px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border-primary)', background: 'var(--color-surface-bg)', color: 'var(--color-text-primary)', fontSize: 13, fontFamily: 'var(--font-mono)', textAlign: 'right', outline: 'none' }}
                   />
                   <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', minWidth: 64 }}>{t.unit}</span>

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
-import { AlertTriangle, RefreshCw, Shield, Globe, Server } from 'lucide-react'
+import { AlertTriangle, RefreshCw, Shield, Globe, Server, CheckCircle2, XCircle } from 'lucide-react'
+import { fetchDgcaMonthlyStats, fetchDgcaCirculars } from '../services/govFetcher'
 import { Button } from '../components/ui/Button'
 import { AirfareSourceCard, GovSourceCard } from '../components/SourceCard'
 import { useGovData } from '../hooks/useGovData'
@@ -62,7 +63,7 @@ const AIRFARE_SOURCES: AirfareSource[] = [
     status: _asKey ? 'CONNECTED' : 'NOT_CONFIGURED',
     status_reason: _asKey
       ? `API key configured (VITE_FLIGHT_API_KEY). Fetching live domestic flight schedules for DEL, BOM, BLR, HYD, MAA, CCU corridors via /v1/flights.`
-      : 'Set VITE_FLIGHT_API_KEY in .env. Free tier provides flight schedules; paid tier adds real-time position data.',
+      : 'API key not detected. Free tier provides flight schedules; paid tier adds real-time position data. Add your AviationStack key to connect.',
     robots_txt: 'ALLOWED', captcha_detected: false, api_available: true,
     last_attempt: _asKey ? new Date().toISOString() : null,
     records_received: 0,
@@ -75,7 +76,7 @@ const AIRFARE_SOURCES: AirfareSource[] = [
     status: _efKey ? 'CONNECTED' : 'NOT_CONFIGURED',
     status_reason: _efKey
       ? `API key configured (VITE_EF_API_KEY, ak_live_ prefix). Ready to fetch live Indian domestic fare data.`
-      : 'Set VITE_EF_API_KEY in .env. Credit-based live fare search API.',
+      : 'API key not detected. Credit-based live fare search API. Add your EF API key to connect.',
     robots_txt: 'ALLOWED', captcha_detected: false, api_available: true,
     last_attempt: _efKey ? new Date().toISOString() : null,
     records_received: 0,
@@ -88,7 +89,7 @@ const AIRFARE_SOURCES: AirfareSource[] = [
     status: _ignavKey ? 'CONNECTED' : 'NOT_CONFIGURED',
     status_reason: _ignavKey
       ? `API key configured (VITE_IGNAV_API_KEY). Indian aviation navigation and route data source.`
-      : 'Set VITE_IGNAV_API_KEY in .env.',
+      : 'API key not detected. Add your Ignav.io key to connect Indian aviation route data.',
     robots_txt: 'ALLOWED', captcha_detected: false, api_available: true,
     last_attempt: _ignavKey ? new Date().toISOString() : null,
     records_received: 0,
@@ -97,7 +98,7 @@ const AIRFARE_SOURCES: AirfareSource[] = [
     id: 'amadeus', name: 'Amadeus Self-Service API', organization: 'Amadeus IT Group SA',
     source_url: 'https://developers.amadeus.com/self-service',
     status: 'NOT_CONFIGURED',
-    status_reason: 'Authorized B2B flight content aggregator. Set AMADEUS_API_KEY + AMADEUS_API_SECRET in backend/.env.',
+    status_reason: 'Authorized B2B flight content aggregator. Add AMADEUS_API_KEY + AMADEUS_API_SECRET to connect.',
     robots_txt: 'ALLOWED', captcha_detected: false, api_available: true,
     last_attempt: null, records_received: 0,
   },
@@ -113,6 +114,8 @@ export default function DataSources() {
   const [tab, setTab] = useState<'airfare' | 'government'>('airfare')
   const [liveSourceStatus, setLiveSourceStatus] = useState<Record<string, { status: string; records: number }>>({})
   const [hoveredSourceId, setHoveredSourceId] = useState<string | null>(null)
+  const [govRefreshing, setGovRefreshing] = useState(false)
+  const [govRefreshResult, setGovRefreshResult] = useState<{ ok: boolean; msg: string; ts: Date } | null>(null)
 
   useEffect(() => {
     isBackendAvailable().then(up => {
@@ -325,7 +328,7 @@ export default function DataSources() {
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
                     <span className={`ap-badge ${isConnected ? 'ap-badge-live' : isChallenge ? 'ap-badge-gen' : 'ap-badge-sandbox'}`}>
-                      {s.status}
+                      {s.status === 'NOT_CONFIGURED' ? 'SETUP REQUIRED' : s.status}
                     </span>
                     {s.robots_txt === 'DISALLOWED' && (
                       <span className="ap-badge ap-badge-offline">robots.txt: DISALLOW</span>
@@ -384,11 +387,62 @@ export default function DataSources() {
 
       {tab === 'government' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
             <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>
-              {isLoading ? 'Fetching government sources…' : `Last checked: ${new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST`}
+              {isLoading || govRefreshing ? 'Fetching government sources…' : govRefreshResult
+                ? `Last updated: ${Math.round((Date.now() - govRefreshResult.ts.getTime()) / 60000) || '<1'} min ago`
+                : `Last checked: ${new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST`}
             </span>
-            {isLoading && <RefreshCw size={13} style={{ color: 'var(--color-text-tertiary)', animation: 'spin 1s linear infinite' }} />}
+            {(isLoading || govRefreshing) && <RefreshCw size={13} style={{ color: 'var(--color-text-tertiary)', animation: 'spin 1s linear infinite' }} />}
+            {govRefreshResult && !govRefreshing && (
+              govRefreshResult.ok
+                ? <CheckCircle2 size={13} style={{ color: 'var(--color-success)' }} />
+                : <XCircle size={13} style={{ color: 'var(--color-danger)' }} />
+            )}
+            {govRefreshResult && !govRefreshing && (
+              <span style={{ fontSize: 11, color: govRefreshResult.ok ? 'var(--color-success)' : 'var(--color-danger)', fontFamily: 'var(--font-sans)' }}>
+                {govRefreshResult.msg}
+              </span>
+            )}
+            <button
+              disabled={govRefreshing}
+              onClick={async () => {
+                setGovRefreshing(true)
+                setGovRefreshResult(null)
+                try {
+                  const [monthly, circulars] = await Promise.all([
+                    fetchDgcaMonthlyStats(),
+                    fetchDgcaCirculars(),
+                  ])
+                  const ok = monthly.status !== 'UNAVAILABLE' || circulars.status !== 'UNAVAILABLE'
+                  const msgs: string[] = []
+                  if (monthly.status !== 'UNAVAILABLE') msgs.push(`Monthly stats: ${monthly.status}`)
+                  else msgs.push('Monthly stats: UNAVAILABLE')
+                  if (circulars.status !== 'UNAVAILABLE') msgs.push(`Circulars: ${circulars.status}`)
+                  else msgs.push('Circulars: UNAVAILABLE')
+                  setGovRefreshResult({ ok, msg: msgs.join(' · '), ts: new Date() })
+                } catch (err) {
+                  setGovRefreshResult({ ok: false, msg: err instanceof Error ? err.message : 'Fetch failed', ts: new Date() })
+                } finally {
+                  setGovRefreshing(false)
+                }
+              }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                padding: '5px 12px', borderRadius: 7,
+                border: '1px solid var(--color-border-primary)',
+                background: 'var(--color-surface-secondary)',
+                fontSize: 11, fontWeight: 600, color: 'var(--color-text-secondary)',
+                cursor: govRefreshing ? 'not-allowed' : 'pointer',
+                fontFamily: 'var(--font-sans)',
+                opacity: govRefreshing ? 0.6 : 1,
+                marginLeft: 'auto',
+                transition: 'all 150ms',
+              }}
+            >
+              <RefreshCw size={11} style={govRefreshing ? { animation: 'spin 1s linear infinite' } : {}} />
+              Refresh
+            </button>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
             {datasets.map(d => {

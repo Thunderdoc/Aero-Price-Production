@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Info, AlertTriangle, ArrowLeftRight } from 'lucide-react'
+import { Info, AlertTriangle, ArrowLeftRight, RefreshCw } from 'lucide-react'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
 import { Modal } from '../components/ui/Modal'
@@ -9,6 +9,7 @@ import DataFreshness from '../components/DataFreshness'
 import { BarChart, LineChart } from '../components/MiniChart'
 import { corridors, bookingWindowData, priceHistoryData, dataSources } from '../data/sampleData'
 import { apiFares, isBackendAvailable, type FareObservationApi } from '../services/api'
+import { searchFares, type FareResult } from '../services/fareSearch'
 
 const card = { background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', padding: 'var(--space-xl)', boxShadow: 'var(--shadow-sm)' } as const
 
@@ -23,10 +24,17 @@ const historySeries = [
 ]
 
 export default function RouteExplorer() {
-  const [route, setRoute]         = useState('DEL-BOM')
-  const [tab, setTab]             = useState<Tab>('Overview')
-  const [showProv, setShowProv]   = useState(false)
-  const [realFares, setRealFares] = useState<FareObservationApi[]>([])
+  const [route, setRoute]           = useState('DEL-BOM')
+  const [tab, setTab]               = useState<Tab>('Overview')
+  const [showProv, setShowProv]     = useState(false)
+  const [realFares, setRealFares]   = useState<FareObservationApi[]>([])
+  const [liveFares, setLiveFares]   = useState<FareResult[]>([])
+  const [fareLoading, setFareLoading] = useState(false)
+  const [fareError, setFareError]   = useState<string | null>(null)
+  const [searchDate, setSearchDate] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() + 7)
+    return d.toISOString().slice(0, 10)
+  })
   const corridor = corridors.find(c => c.id === route) ?? corridors[0]
   const routeOptions = corridors.map(c => ({ value: c.id, label: `${c.from} → ${c.to}` }))
   const bookingData  = bookingWindowData.map(d => ({ label: d.label, value: d.avgFare }))
@@ -68,6 +76,25 @@ export default function RouteExplorer() {
       if (!up) return
       apiFares({ route }).then(r => setRealFares(r.observations ?? [])).catch(() => {})
     })
+  }, [route])
+
+  async function fetchLiveFares() {
+    setFareLoading(true)
+    setFareError(null)
+    const [dep, arr] = route.split('-')
+    const result = await searchFares({ origin: dep, destination: arr, date: searchDate })
+    if (result.source === 'REAL') {
+      setLiveFares(result.fares)
+    } else {
+      setFareError(result.error ?? 'Could not fetch fares')
+      setLiveFares([])
+    }
+    setFareLoading(false)
+  }
+
+  useEffect(() => {
+    fetchLiveFares()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route])
 
   return (
@@ -139,16 +166,29 @@ export default function RouteExplorer() {
         </div>
       </div>
 
-      {/* Real data banner */}
-      {realFares.length > 0 ? (
-        <div style={{ background: 'var(--color-success-bg)', border: '1px solid rgba(22,163,74,0.25)', borderRadius: 'var(--radius-lg)', padding: '10px 16px', fontSize: 12, color: 'var(--color-success)', fontFamily: 'var(--font-sans)', display: 'flex', alignItems: 'center', gap: 8 }}>
-          ✓ {realFares.length} real fare observation{realFares.length !== 1 ? 's' : ''} found for {route} — showing in Booking Windows tab.
+      {/* Live fare search bar */}
+      <div style={{ background: 'var(--color-surface-bg)', border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-lg)', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <label style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>TRAVEL DATE</label>
+          <input type="date" value={searchDate} onChange={e => setSearchDate(e.target.value)}
+            style={{ padding: '7px 10px', fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--color-text-primary)', background: 'var(--color-surface-secondary)', border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-sm)', outline: 'none' }} />
         </div>
-      ) : (
-        <div style={{ background: 'var(--color-warning-bg)', border: '1px solid rgba(217,119,6,0.2)', borderRadius: 'var(--radius-lg)', padding: '10px 16px', fontSize: 12, color: 'var(--color-warning)', fontFamily: 'var(--font-sans)', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <AlertTriangle size={13} /> No real observations for {route} — data below is GENERATED baseline.
-        </div>
-      )}
+        <button onClick={fetchLiveFares} disabled={fareLoading}
+          style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', borderRadius: 'var(--radius-md)', background: 'var(--color-brand-primary)', color: 'white', fontSize: 12, fontWeight: 600, fontFamily: 'var(--font-sans)', border: 'none', cursor: fareLoading ? 'not-allowed' : 'pointer', opacity: fareLoading ? 0.7 : 1 }}>
+          <RefreshCw size={12} style={{ animation: fareLoading ? 'spin 1s linear infinite' : 'none' }} />
+          {fareLoading ? 'Searching…' : 'Search Real Fares'}
+        </button>
+        {liveFares.length > 0 && (
+          <span style={{ fontSize: 11, color: 'var(--color-success)', fontFamily: 'var(--font-sans)', fontWeight: 600 }}>
+            ✓ {liveFares.length} live fares from Google Flights
+          </span>
+        )}
+        {fareError && (
+          <span style={{ fontSize: 11, color: 'var(--color-warning)', fontFamily: 'var(--font-sans)', display: 'flex', alignItems: 'center', gap: 4 }}>
+            <AlertTriangle size={11} /> {fareError}
+          </span>
+        )}
+      </div>
 
       {/* Route hero */}
       <div style={card}>
@@ -257,35 +297,47 @@ export default function RouteExplorer() {
                 <p className="text-body text-secondary" style={{ marginTop: 'var(--space-xs)' }}>Median fare per advance-purchase window. Range = observed min–max.</p>
               </div>
 
-              {realFares.length > 0 ? (
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: 'var(--font-sans)' }}>
-                    <thead>
-                      <tr style={{ borderBottom: '1px solid var(--color-border-primary)', background: 'var(--color-surface-secondary)' }}>
-                        {['Window (days)', 'Airline', 'Travel Date', 'Total Fare', 'Base', 'Taxes', 'Source', 'Origin'].map(h => (
-                          <th key={h} style={{ textAlign: 'left', padding: '8px 12px', fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)' }}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {realFares.slice(0, 20).map(f => (
-                        <tr key={f.observation_id} style={{ borderBottom: '1px solid var(--color-border-primary)' }}>
-                          <td style={{ padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>T+{f.advance_days}</td>
-                          <td style={{ padding: '8px 12px', color: 'var(--color-text-primary)' }}>{f.airline}</td>
-                          <td style={{ padding: '8px 12px', color: 'var(--color-text-secondary)' }}>{f.travel_date}</td>
-                          <td style={{ padding: '8px 12px', fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>₹{f.total_fare.toLocaleString('en-IN')}</td>
-                          <td style={{ padding: '8px 12px', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)' }}>₹{f.base_fare.toLocaleString('en-IN')}</td>
-                          <td style={{ padding: '8px 12px', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)' }}>₹{f.taxes.toLocaleString('en-IN')}</td>
-                          <td style={{ padding: '8px 12px', color: 'var(--color-text-tertiary)' }}>{f.source}</td>
-                          <td style={{ padding: '8px 12px' }}>
-                            <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 5px', borderRadius: 3, background: f.data_origin === 'REAL' ? 'var(--color-success-bg)' : 'var(--color-info-bg)', color: f.data_origin === 'REAL' ? 'var(--color-success)' : 'var(--color-info)', fontFamily: 'var(--font-sans)' }}>
-                              {f.data_origin}
-                            </span>
-                          </td>
+              {/* Live fares from Serper/Google Flights */}
+              {liveFares.length > 0 ? (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 'var(--radius-md)', background: 'var(--color-success-bg)', border: '1px solid rgba(22,163,74,0.2)', fontSize: 11, color: 'var(--color-success)', fontFamily: 'var(--font-sans)' }}>
+                    ✓ {liveFares.length} real fares from Google Flights · {searchDate} · Source: Serper.dev
+                  </div>
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: 'var(--font-sans)' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '1px solid var(--color-border-primary)', background: 'var(--color-surface-secondary)' }}>
+                          {['Airline', 'Flight', 'Departure', 'Arrival', 'Duration', 'Stops', 'Price (INR)', 'Cabin'].map(h => (
+                            <th key={h} style={{ textAlign: 'left', padding: '8px 12px', fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)' }}>{h}</th>
+                          ))}
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {liveFares.map((f, i) => (
+                          <tr key={i} style={{ borderBottom: '1px solid var(--color-border-primary)', background: i % 2 === 0 ? 'transparent' : 'var(--color-surface-canvas)' }}>
+                            <td style={{ padding: '9px 12px', fontWeight: 600, color: 'var(--color-text-primary)' }}>{f.airline}</td>
+                            <td style={{ padding: '9px 12px', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)' }}>{f.flight_number || '—'}</td>
+                            <td style={{ padding: '9px 12px', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)' }}>{f.departure_time || '—'}</td>
+                            <td style={{ padding: '9px 12px', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)' }}>{f.arrival_time || '—'}</td>
+                            <td style={{ padding: '9px 12px', color: 'var(--color-text-tertiary)' }}>{f.duration || '—'}</td>
+                            <td style={{ padding: '9px 12px', color: 'var(--color-text-tertiary)', textAlign: 'center' }}>{f.stops}</td>
+                            <td style={{ padding: '9px 12px', fontWeight: 700, color: 'var(--color-brand-primary)', fontFamily: 'var(--font-mono)', fontSize: 13 }}>
+                              ₹{f.price.toLocaleString('en-IN')}
+                            </td>
+                            <td style={{ padding: '9px 12px' }}>
+                              <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 3, background: 'var(--color-success-bg)', color: 'var(--color-success)', fontFamily: 'var(--font-sans)' }}>
+                                {f.cabin}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              ) : fareLoading ? (
+                <div style={{ padding: 32, textAlign: 'center', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', fontSize: 13 }}>
+                  Searching Google Flights for {route} on {searchDate}…
                 </div>
               ) : (
                 <>
@@ -299,7 +351,9 @@ export default function RouteExplorer() {
                       </div>
                     ))}
                   </div>
-                  <div style={{ fontSize: 11, color: 'var(--color-warning)', fontFamily: 'var(--font-sans)' }}>GENERATED baseline — no real observations collected yet.</div>
+                  <div style={{ fontSize: 11, color: 'var(--color-warning)', fontFamily: 'var(--font-sans)' }}>
+                    {fareError ? `Google Flights: ${fareError}` : 'Click "Search Real Fares" above to fetch live prices from Google Flights.'}
+                  </div>
                 </>
               )}
             </div>

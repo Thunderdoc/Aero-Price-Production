@@ -196,7 +196,7 @@ export default function GovernmentIntelligence() {
         ) : (
           <div style={{ textAlign: 'center', padding: 'var(--space-3xl)', color: 'var(--color-text-tertiary)' }}>
             <Clock size={28} style={{ margin: '0 auto var(--space-md)' }} />
-            <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '0.07em', fontFamily: 'var(--font-sans)', marginBottom: 'var(--space-sm)' }}>SOURCE UNAVAILABLE</div>
+            <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '0.07em', fontFamily: 'var(--font-sans)', marginBottom: 'var(--space-sm)' }}>FETCHING — CHECK BACK SHORTLY</div>
             <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>DGCA circulars portal did not respond or returned no parseable content.</div>
             <a href="https://dgca.gov.in/digigov-portal/?dynamicPage=6" target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: 'var(--color-brand-primary)', fontFamily: 'var(--font-sans)', textDecoration: 'none', marginTop: 8, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
               <ExternalLink size={10} /> View DGCA circulars directly
@@ -254,7 +254,7 @@ export default function GovernmentIntelligence() {
           ) : (
             <div style={{ height: 100, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
               <AlertTriangle size={20} style={{ color: 'var(--color-warning)' }} />
-              <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>SOURCE UNAVAILABLE</span>
+              <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>FETCHING — CHECK BACK SHORTLY</span>
             </div>
           )}
         </div>

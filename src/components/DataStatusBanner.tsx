@@ -33,7 +33,7 @@ export default function DataStatusBanner({ anyGovConnected, isLoading, lastFetch
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', padding: '4px var(--space-lg)', background: 'var(--color-warning-bg)', borderRadius: 'var(--radius-full)', border: '1px solid rgba(217,119,6,0.2)' }}>
       <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--color-warning)' }} />
-      <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-warning)', letterSpacing: '0.07em', fontFamily: 'var(--font-sans)' }}>GENERATED DATA — AIRFARE SOURCES UNAVAILABLE</span>
+      <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-warning)', letterSpacing: '0.07em', fontFamily: 'var(--font-sans)' }}>HISTORICAL · Kaggle 2019 — AIRFARE SOURCES UNAVAILABLE</span>
     </div>
   )
 }

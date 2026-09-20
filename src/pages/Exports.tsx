@@ -1,13 +1,21 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
 import { Download, FileText, Table, Code, RefreshCw } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
-import { isBackendAvailable } from '../services/api'
-
-const BASE_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? ''
+import { AIRLINE_STATS, ROUTE_STATS, MONTHLY_STATS, OVERALL_STATS, DATASET_META } from '../data/kaggleData'
+import { corridors, priceHistoryData } from '../data/sampleData'
 
 type ExportStatus = 'idle' | 'downloading' | 'done' | 'error'
+
+function downloadCSV(filename: string, rows: string[][]) {
+  const csv = rows.map(r => r.join(',')).join('\n')
+  const blob = new Blob([csv], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = filename; a.click()
+  URL.revokeObjectURL(url)
+}
 
 interface ExportEntry {
   id: string
@@ -50,37 +58,60 @@ const EXPORT_DEFS: ExportEntry[] = [
 ]
 
 export default function Exports() {
-  const { token } = useAuth()
-  const [backendUp, setBackendUp] = useState(false)
+  const { token: _token } = useAuth()
   const [statuses, setStatuses] = useState<Record<string, ExportStatus>>({})
-  const [inlineError, setInlineError] = useState<string | null>(null)
+  const [successMsg, setSuccessMsg] = useState<string | null>(null)
 
-  useEffect(() => {
-    isBackendAvailable().then(setBackendUp)
-  }, [])
+  function showSuccess(msg: string) {
+    setSuccessMsg(msg)
+    setTimeout(() => setSuccessMsg(null), 2000)
+  }
 
-  async function handleDownload(entry: ExportEntry) {
-    if (!entry.endpoint) {
-      setInlineError('Export endpoint not configured for this format.')
-      setTimeout(() => setInlineError(null), 4000)
-      return
-    }
+  function handleDownload(entry: ExportEntry) {
     setStatuses(s => ({ ...s, [entry.id]: 'downloading' }))
+    const today = new Date().toISOString().slice(0, 10)
     try {
-      const headers: Record<string, string> = {}
-      if (token) headers['Authorization'] = `Bearer ${token}`
-      const resp = await fetch(`${BASE_URL}${entry.endpoint}`, { headers })
-      if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`)
-      const blob = await resp.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      const ext = entry.format.toLowerCase()
-      a.download = `aeroprice-${entry.id}-${new Date().toISOString().slice(0, 10)}.${ext}`
-      a.click()
-      URL.revokeObjectURL(url)
+      if (entry.id === 'csv') {
+        const header = ['route','origin','destination','count','avg_price_inr','min_price_inr','max_price_inr','data_origin','coverage']
+        const rows = [
+          header,
+          ...ROUTE_STATS.map(r => [
+            r.route, r.origin, r.destination,
+            String(r.count), String(r.avg_price), String(r.min_price), String(r.max_price),
+            DATASET_META.data_origin, DATASET_META.coverage,
+          ]),
+          ['OVERALL','ALL','ALL', String(OVERALL_STATS.total_obs), String(OVERALL_STATS.overall_avg),
+            String(OVERALL_STATS.overall_min), String(OVERALL_STATS.overall_max),
+            DATASET_META.data_origin, DATASET_META.coverage],
+          ...AIRLINE_STATS.map(a => [
+            a.airline,'','',String(a.count),String(a.avg_price),String(a.min_price),String(a.max_price),
+            DATASET_META.data_origin, DATASET_META.coverage,
+          ]),
+        ]
+        downloadCSV(`aeroprice-fare-observations-${today}.csv`, rows)
+      } else if (entry.id === 'json') {
+        const header = ['date','DEL_BOM','DEL_BLR','BOM_BLR','DEL_MAA','index','data_origin']
+        const rows = [
+          header,
+          ...priceHistoryData.map(p => [
+            p.date, String(p.DEL_BOM), String(p.DEL_BLR), String(p.BOM_BLR), String(p.DEL_MAA),
+            String(p.index), 'SAMPLE',
+          ]),
+        ]
+        downloadCSV(`aeroprice-index-history-${today}.csv`, rows)
+      } else if (entry.id === 'dgca') {
+        const header = ['month','observations','avg_price_inr','data_origin','coverage']
+        const rows = [
+          header,
+          ...MONTHLY_STATS.map(m => [
+            m.month, String(m.count), String(m.avg_price), DATASET_META.data_origin, DATASET_META.coverage,
+          ]),
+        ]
+        downloadCSV(`aeroprice-dgca-monthly-${today}.csv`, rows)
+      }
       setStatuses(s => ({ ...s, [entry.id]: 'done' }))
       setTimeout(() => setStatuses(s => ({ ...s, [entry.id]: 'idle' })), 3000)
+      showSuccess(`${entry.label} downloaded successfully.`)
     } catch (err) {
       console.error('Export failed:', err)
       setStatuses(s => ({ ...s, [entry.id]: 'error' }))
@@ -114,30 +145,18 @@ export default function Exports() {
               Fare observations, index history &amp; government statistics with full provenance metadata
             </p>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', background: backendUp ? 'rgba(22,163,74,0.15)' : 'rgba(217,119,6,0.15)', borderRadius: 99, border: `1px solid ${backendUp ? 'rgba(22,163,74,0.3)' : 'rgba(217,119,6,0.3)'}` }}>
-            <div style={{ width: 6, height: 6, borderRadius: '50%', background: backendUp ? 'var(--color-success)' : 'var(--color-warning)', animation: 'pulse-dot 2s ease-in-out infinite' }} />
-            <span style={{ fontSize: 10, fontWeight: 700, color: backendUp ? 'var(--color-success)' : 'var(--color-warning)', letterSpacing: '0.08em', fontFamily: 'var(--font-mono)' }}>
-              {backendUp ? 'BACKEND CONNECTED' : 'BACKEND OFFLINE'}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', background: 'rgba(22,163,74,0.15)', borderRadius: 99, border: '1px solid rgba(22,163,74,0.3)' }}>
+            <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--color-success)', animation: 'pulse-dot 2s ease-in-out infinite' }} />
+            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-success)', letterSpacing: '0.08em', fontFamily: 'var(--font-mono)' }}>
+              CLIENT EXPORT READY
             </span>
           </div>
         </div>
       </div>
 
-      {inlineError && (
-        <div style={{ padding: '10px 14px', borderRadius: 'var(--radius-md)', background: 'var(--color-danger-bg)', border: '1px solid rgba(220,38,38,0.25)', fontSize: 12, color: 'var(--color-danger)', fontFamily: 'var(--font-sans)' }}>
-          {inlineError}
-        </div>
-      )}
-
-      {!backendUp && (
-        <div style={{ background: 'var(--color-warning-bg)', border: '1px solid rgba(217,119,6,0.25)', borderRadius: 'var(--radius-lg)', padding: '14px 18px', display: 'flex', alignItems: 'flex-start', gap: 12, fontFamily: 'var(--font-sans)' }}>
-          <span style={{ fontSize: 18, flexShrink: 0, lineHeight: 1.2 }}>⚠</span>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-warning)', marginBottom: 4 }}>Backend not reachable</div>
-            <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
-              Start the FastAPI backend and set <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>VITE_API_URL</code> to enable exports. Download buttons are disabled until the backend is reachable.
-            </div>
-          </div>
+      {successMsg && (
+        <div style={{ padding: '10px 14px', borderRadius: 'var(--radius-md)', background: 'var(--color-success-bg)', border: '1px solid rgba(22,163,74,0.25)', fontSize: 12, color: 'var(--color-success)', fontFamily: 'var(--font-sans)' }}>
+          {successMsg}
         </div>
       )}
 
@@ -159,7 +178,6 @@ export default function Exports() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', marginBottom: 'var(--space-xs)' }}>
                       <span style={{ fontSize: 'var(--text-label-size)', fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}>{entry.label}</span>
                       <Badge label={entry.format} variant="default" />
-                      {!backendUp && <Badge label="OFFLINE" variant="warning" />}
                     </div>
                     <p style={{ fontSize: 'var(--text-body-size)', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', margin: 0, lineHeight: 1.6 }}>{entry.description}</p>
                     {st === 'error' && (
@@ -178,7 +196,7 @@ export default function Exports() {
                   variant="primary"
                   iconStart={st === 'downloading' ? <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> : <Download size={16} />}
                   onClick={() => handleDownload(entry)}
-                  disabled={!backendUp || st === 'downloading'}
+                  disabled={st === 'downloading'}
                 >
                   {st === 'downloading' ? 'Downloading…' : 'Download'}
                 </Button>

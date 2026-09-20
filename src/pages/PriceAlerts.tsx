@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Bell, Trash2, Plus, Lock, Mail, MessageSquare, AlertTriangle } from 'lucide-react'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
@@ -6,6 +6,13 @@ import { Modal } from '../components/ui/Modal'
 import { sampleAlerts } from '../data/sampleData'
 import { useAuth } from '../contexts/AuthContext'
 import UpgradeModal from '../components/UpgradeModal'
+import { supabase, SUPABASE_CONFIGURED, savePriceAlert, getPriceAlerts } from '../services/supabase'
+
+const KAGGLE_FARE: Record<string, number> = {
+  'DEL-BOM': 5840, 'DEL-BLR': 5320, 'BOM-BLR': 4890,
+  'DEL-MAA': 5640, 'DEL-CCU': 5200, 'BOM-MAA': 4340,
+  'BLR-HYD': 3120, 'DEL-HYD': 4890,
+}
 
 const CITY_OPTIONS = ['DEL', 'BOM', 'BLR', 'MAA', 'CCU', 'HYD', 'AMD', 'GOI']
 
@@ -38,23 +45,55 @@ export default function PriceAlerts() {
   const [showCreate, setShowCreate] = useState(false)
   const [showUpgrade, setShowUpgrade] = useState(false)
   const [form, setForm] = useState<TrackForm>(INITIAL_FORM)
+  const [emailEnabled, setEmailEnabled] = useState(true)
+  const [whatsappEnabled, setWhatsappEnabled] = useState(false)
+  const [savedKey, setSavedKey] = useState<string | null>(null)
 
-  function handleCreate(e: React.FormEvent) {
+  function flashSaved(key: string) {
+    setSavedKey(key)
+    setTimeout(() => setSavedKey(null), 1800)
+  }
+
+  useEffect(() => {
+    if (SUPABASE_CONFIGURED) {
+      getPriceAlerts(user?.email).then(rows => {
+        if (rows.length > 0) {
+          setAlerts(rows.map((r: Record<string, unknown>) => ({
+            id: String(r.id ?? Date.now()),
+            route: String(r.route ?? ''),
+            targetFare: Number(r.threshold_fare ?? 0),
+            currentFare: KAGGLE_FARE[String(r.route ?? '')] ?? 0,
+            triggered: false,
+            createdAt: String(r.created_at ?? new Date().toISOString()),
+          })))
+        }
+      })
+    }
+  }, [])
+
+  async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
-    setAlerts(prev => [...prev, {
+    const newAlert = {
       id: `alert-${Date.now()}`,
       route: `${form.from}-${form.to}`,
       targetFare: form.threshold,
       currentFare: 0,
       triggered: false,
       createdAt: new Date().toISOString(),
-    }])
+    }
+    setAlerts(prev => [...prev, newAlert])
+    if (SUPABASE_CONFIGURED) {
+      await savePriceAlert({ user_email: user?.email ?? 'demo@aeroprice.in', route: newAlert.route, threshold_fare: form.threshold })
+    }
     setShowCreate(false)
     setForm(INITIAL_FORM)
   }
 
-  function deleteAlert(id: string) {
+  async function deleteAlert(id: string, route: string) {
     setAlerts(prev => prev.filter(a => a.id !== id))
+    if (SUPABASE_CONFIGURED) {
+      await supabase.from('price_alerts').delete().eq('route', route).eq('user_email', user?.email ?? 'demo@aeroprice.in')
+    }
   }
 
   // FREE users — full-screen gate
@@ -83,7 +122,7 @@ export default function PriceAlerts() {
           ))}
         </div>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center' }}>
-          <Button variant="ghost" onClick={() => {}}>Continue free</Button>
+          <Button variant="ghost" onClick={() => setUpgradeOpen(false)}>Continue free</Button>
           <Button variant="primary" onClick={() => { login('user@aeroprice.in', 'aero123') }}>
             Use demo subscriber account
           </Button>
@@ -162,7 +201,13 @@ export default function PriceAlerts() {
                   </div>
                   <div>
                     <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-text-tertiary)', letterSpacing: '0.1em', marginBottom: 4 }}>CURRENT OBS.</div>
-                    <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--color-warning)', fontFamily: 'var(--font-mono)' }}>NO DATA</div>
+                    {KAGGLE_FARE[alert.route] ? (
+                      <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)' }}>
+                        Kaggle 2019 median: ₹{KAGGLE_FARE[alert.route].toLocaleString('en-IN')}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>Kaggle 2019: —</div>
+                    )}
                   </div>
                   <div>
                     <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-text-tertiary)', letterSpacing: '0.1em', marginBottom: 4 }}>CREATED</div>
@@ -173,7 +218,7 @@ export default function PriceAlerts() {
                 </div>
               </div>
               <button
-                onClick={() => deleteAlert(alert.id)}
+                onClick={() => deleteAlert(alert.id, alert.route)}
                 style={{ padding: 8, border: 'none', background: 'transparent', cursor: 'pointer', borderRadius: 8, color: 'var(--color-danger)', transition: 'background 150ms ease' }}
                 onMouseOver={e => { (e.currentTarget as HTMLElement).style.background = 'var(--color-danger-bg)' }}
                 onMouseOut={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
@@ -198,11 +243,11 @@ export default function PriceAlerts() {
       <div style={{ background: 'var(--color-surface-bg)', borderRadius: 12, border: '1px solid var(--color-border-primary)', padding: 20, boxShadow: 'var(--shadow-sm)' }}>
         <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--color-text-tertiary)', marginBottom: 14 }}>NOTIFICATION PREFERENCES</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {[
-            { icon: Mail, label: 'Email Notifications', sub: 'Get fare alerts in your inbox', enabled: true },
-            { icon: MessageSquare, label: 'WhatsApp Notifications', sub: 'Get alerts via WhatsApp', enabled: false },
-          ].map(({ icon: Icon, label, sub, enabled }) => (
-            <div key={label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderRadius: 8, background: 'var(--color-surface-secondary)' }}>
+          {([
+            { icon: Mail, label: 'Email Notifications', sub: 'Get fare alerts in your inbox', key: 'email', enabled: emailEnabled, toggle: () => { setEmailEnabled(v => !v); flashSaved('email') } },
+            { icon: MessageSquare, label: 'WhatsApp Notifications', sub: 'Get alerts via WhatsApp', key: 'whatsapp', enabled: whatsappEnabled, toggle: () => { setWhatsappEnabled(v => !v); flashSaved('whatsapp') } },
+          ] as const).map(({ icon: Icon, label, sub, key, enabled, toggle }) => (
+            <div key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderRadius: 8, background: 'var(--color-surface-secondary)' }}>
               <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
                 <Icon size={15} style={{ color: 'var(--color-text-secondary)' }} />
                 <div>
@@ -210,8 +255,11 @@ export default function PriceAlerts() {
                   <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{sub}</div>
                 </div>
               </div>
-              <div style={{ width: 36, height: 20, borderRadius: 10, background: enabled ? 'var(--color-brand-primary)' : 'var(--color-border-secondary)', position: 'relative', cursor: 'pointer' }}>
-                <div style={{ position: 'absolute', top: 2, left: enabled ? 18 : 2, width: 16, height: 16, borderRadius: '50%', background: 'white', transition: 'left 200ms ease', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {savedKey === key && <span style={{ fontSize: 10, color: 'var(--color-success)', fontFamily: 'var(--font-sans)', fontWeight: 600 }}>Saved</span>}
+                <button onClick={toggle} aria-pressed={enabled} style={{ width: 36, height: 20, borderRadius: 10, background: enabled ? 'var(--color-brand-primary)' : 'var(--color-border-secondary)', position: 'relative', cursor: 'pointer', border: 'none', padding: 0 }}>
+                  <div style={{ position: 'absolute', top: 2, left: enabled ? 18 : 2, width: 16, height: 16, borderRadius: '50%', background: 'white', transition: 'left 200ms ease', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
+                </button>
               </div>
             </div>
           ))}
