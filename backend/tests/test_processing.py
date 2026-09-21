@@ -126,9 +126,9 @@ def test_provenance_live_mode_excludes_generated():
     assert not is_production_eligible(rec, "live")
 
 
-def test_provenance_demo_mode_includes_generated():
+def test_provenance_demo_mode_excludes_generated():
     rec = _make_record(data_origin="GENERATED_TEST")
-    assert is_production_eligible(rec, "demo")
+    assert not is_production_eligible(rec, "demo")
 
 
 def test_provenance_live_mode_includes_real():

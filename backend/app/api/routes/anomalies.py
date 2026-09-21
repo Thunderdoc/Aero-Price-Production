@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from datetime import datetime, timezone, timedelta
+import json
 from app.core.database import get_db
 from app.core.auth import require_analyst
 from app.models.fare import FareObservation
@@ -24,7 +25,7 @@ async def list_anomalies(
     """Return fare observations flagged as anomalies (quality_flags contains OUTLIER)."""
     filters = [
         FareObservation.quality_flags.like('%OUTLIER%'),
-        FareObservation.data_origin != "GENERATED_TEST",
+        FareObservation.data_origin.in_(["REAL", "OFFICIAL"]),
     ]
     if route:
         filters.append(FareObservation.route == route.upper())
@@ -50,7 +51,7 @@ async def list_anomalies(
                 "airline": o.airline,
                 "travel_date": o.travel_date,
                 "data_origin": o.data_origin,
-                "quality_flags": o.quality_flags or [],
+                "quality_flags": json.loads(o.quality_flags or "[]"),
                 "collected_at": o.collected_at.isoformat() if o.collected_at else None,
             }
             for o in obs

@@ -150,6 +150,8 @@ class GoogleFlightsAdapter(FareSourceAdapter):
     credential_env_vars = []
 
     def is_configured(self) -> bool:
+        if "GOOGLE_FLIGHTS_ENABLED" in self.config:
+            return bool(self.config["GOOGLE_FLIGHTS_ENABLED"])
         return getattr(settings, "GOOGLE_FLIGHTS_ENABLED", True)
 
     async def collect(

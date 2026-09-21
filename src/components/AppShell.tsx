@@ -60,8 +60,8 @@ const aviationNav: NavItem[] = [
 const ROLE_BADGE: Record<string, { label: string; bg: string; color: string; border: string }> = {
   ADMIN:      { label: 'ADMIN',    bg: 'var(--color-danger-bg)',        color: 'var(--color-danger)',       border: 'rgba(220,38,38,0.3)' },
   ANALYST:    { label: 'ANALYST',  bg: 'var(--color-info-bg)',          color: 'var(--color-info)',         border: 'rgba(3,105,161,0.3)' },
-  SUBSCRIBER: { label: 'PRO',      bg: 'var(--color-brand-muted)',      color: 'var(--color-brand-primary)', border: 'rgba(37,99,235,0.3)' },
-  FREE:       { label: 'FREE',     bg: 'var(--color-surface-secondary)',color: 'var(--color-text-tertiary)', border: 'var(--color-border-primary)' },
+  SUBSCRIBER: { label: 'SUBSCRIBED', bg: 'var(--color-brand-muted)',    color: 'var(--color-brand-primary)', border: 'rgba(37,99,235,0.3)' },
+  FREE:       { label: 'USER',     bg: 'var(--color-surface-secondary)',color: 'var(--color-text-tertiary)', border: 'var(--color-border-primary)' },
 }
 
 function roleFromPlan(role: UserRole, plan: UserPlan): string {
@@ -313,7 +313,9 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
                 <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {user?.name ?? 'User'}
                 </div>
-                <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', marginTop: 1 }}>{user?.plan ?? 'FREE'}</div>
+                <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', marginTop: 1 }}>
+                  {user?.plan === 'FREE' ? 'USER' : user?.plan ?? 'USER'}
+                </div>
               </div>
               <ChevronDown size={12} style={{ color: 'var(--color-text-tertiary)', flexShrink: 0, transform: avatarOpen ? 'rotate(180deg)' : '', transition: 'transform 150ms ease' }} />
             </button>
@@ -330,7 +332,7 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
                 <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--color-border-primary)', background: 'var(--color-surface-secondary)' }}>
                   <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-primary)' }}>{user?.email}</div>
                   <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', marginTop: 3 }}>
-                    Role: {user?.role} · Plan: {user?.plan}
+                    Role: {user?.role === 'PUBLIC' ? 'USER' : user?.role} · Access: {user?.plan === 'FREE' ? 'STANDARD' : user?.plan}
                   </div>
                 </div>
                 <button
@@ -440,8 +442,15 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
             />
             {/* System status dot */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--color-warning)', animation: 'pulse-dot 2s ease-in-out infinite' }} />
-              <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--color-text-tertiary)', letterSpacing: '0.06em' }}>SOURCES: CHALLENGE</span>
+              <div style={{
+                width: 6, height: 6, borderRadius: '50%',
+                background: govData.anyConnected ? '#16a34a' : '#d97706',
+                boxShadow: govData.anyConnected ? '0 0 6px #22c55e' : 'none',
+                animation: govData.anyConnected ? 'pulse-dot 2s ease-in-out infinite' : 'none',
+              }} />
+              <span style={{ fontSize: 10, fontWeight: 700, color: govData.anyConnected ? '#15803d' : '#b45309', letterSpacing: '0.06em' }}>
+                {govData.anyConnected ? 'GOV DATA CONNECTED' : 'DEMO/CACHE MODE'}
+              </span>
             </div>
           </div>
         </div>

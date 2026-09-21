@@ -13,7 +13,9 @@ from app.services.index_engine import (
 
 
 def test_min_corridors_constant():
-    assert MIN_CORRIDORS_TO_PUBLISH == 15
+    # The configured basket contains 12 verified corridors. Requiring 15 would
+    # make a legitimate full-basket live index impossible to publish.
+    assert MIN_CORRIDORS_TO_PUBLISH == 10
 
 
 def test_base_value_constant():

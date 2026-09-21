@@ -17,10 +17,34 @@ interface AuthContextValue {
   user: AuthUser | null
   token: string | null
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>
+  loginWithGoogle: () => Promise<{ success: boolean; error?: string }>
   logout: () => void
 }
 
-// Demo fallback — used when backend is unreachable
+const STORAGE_KEY = 'aeroprice_auth'
+const TOKEN_KEY = 'aeroprice_token'
+
+function envEmailList(value?: string): string[] {
+  return (value ?? '')
+    .split(',')
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean)
+}
+
+const FIREBASE_ADMIN_EMAILS = envEmailList(import.meta.env.VITE_FIREBASE_ADMIN_EMAILS)
+const FIREBASE_ANALYST_EMAILS = envEmailList(import.meta.env.VITE_FIREBASE_ANALYST_EMAILS)
+
+function roleForFirebaseEmail(email: string): Pick<AuthUser, 'role' | 'plan'> {
+  const normalized = email.trim().toLowerCase()
+  if (FIREBASE_ADMIN_EMAILS.includes(normalized)) {
+    return { role: 'ADMIN', plan: 'ADMIN' }
+  }
+  if (FIREBASE_ANALYST_EMAILS.includes(normalized)) {
+    return { role: 'ANALYST', plan: 'GOVERNMENT' }
+  }
+  return { role: 'PUBLIC', plan: 'FREE' }
+}
+
 const DEMO_USERS: Record<string, { password: string; user: AuthUser }> = {
   'admin@aeroprice.in': {
     password: 'aeroadmin',
@@ -32,25 +56,18 @@ const DEMO_USERS: Record<string, { password: string; user: AuthUser }> = {
   },
   'user@aeroprice.in': {
     password: 'aero123',
-    user: { name: 'Subscriber User', email: 'user@aeroprice.in', role: 'PUBLIC', plan: 'SUBSCRIBER', initials: 'SU' },
+    user: { name: 'User Account', email: 'user@aeroprice.in', role: 'PUBLIC', plan: 'FREE', initials: 'UA' },
   },
 }
 
-const STORAGE_KEY = 'aeroprice_auth'
-const TOKEN_KEY = 'aeroprice_token'
-
 function loadStoredUser(): AuthUser | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return null
-    return JSON.parse(raw) as AuthUser
-  } catch {
-    return null
-  }
+  localStorage.removeItem(STORAGE_KEY)
+  localStorage.removeItem(TOKEN_KEY)
+  return null
 }
 
 function loadStoredToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY)
+  return null
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -79,36 +96,48 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.setItem(TOKEN_KEY, resp.access_token)
       return { success: true }
     } catch {
-      // Backend unreachable or returned 401 — fall through to demo fallback
-    }
+      const demo = DEMO_USERS[emailLower]
+      if (!demo) return { success: false, error: 'Invalid email or password.' }
+      if (demo.password !== password) return { success: false, error: 'Incorrect password for this demo account.' }
 
-    // Demo fallback: known demo accounts
-    const known = DEMO_USERS[emailLower]
-    if (known) {
-      if (known.password !== password) {
-        return { success: false, error: 'Incorrect password for this demo account.' }
+      setUser(demo.user)
+      setToken(null)
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(demo.user))
+      localStorage.removeItem(TOKEN_KEY)
+      return { success: true }
+    }
+  }
+
+  async function loginWithGoogle(): Promise<{ success: boolean; error?: string }> {
+    try {
+      const { signInWithGooglePopup } = await import('../services/firebase')
+      const credential = await signInWithGooglePopup()
+      const firebaseUser = credential.user
+      const email = firebaseUser.email || ''
+      const mappedAccess = roleForFirebaseEmail(email)
+      const displayName = firebaseUser.displayName || firebaseUser.email || 'Google User'
+      const authedUser: AuthUser = {
+        name: displayName,
+        email,
+        role: mappedAccess.role,
+        plan: mappedAccess.plan,
+        initials: displayName.slice(0, 2).toUpperCase(),
       }
-      setUser(known.user)
+      setUser(authedUser)
       setToken(null)
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(known.user))
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(authedUser))
       localStorage.removeItem(TOKEN_KEY)
       return { success: true }
+    } catch (err) {
+      const code = typeof err === 'object' && err && 'code' in err ? String((err as { code?: string }).code) : ''
+      if (code.includes('popup-closed-by-user') || code.includes('cancelled-popup-request')) {
+        return { success: false, error: 'Google sign-in was cancelled.' }
+      }
+      if (code.includes('unauthorized-domain')) {
+        return { success: false, error: 'This deployment domain is not authorized in Firebase Authentication.' }
+      }
+      return { success: false, error: 'Unable to connect to Google sign-in. Please try again.' }
     }
-
-    // Any valid-looking email with password "demo" gets FREE public access
-    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-    if (emailPattern.test(emailLower) && password === 'demo') {
-      const name = emailLower.split('@')[0]
-      const initials = name.slice(0, 2).toUpperCase()
-      const freeUser: AuthUser = { name, email: emailLower, role: 'PUBLIC', plan: 'FREE', initials }
-      setUser(freeUser)
-      setToken(null)
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(freeUser))
-      localStorage.removeItem(TOKEN_KEY)
-      return { success: true }
-    }
-
-    return { success: false, error: 'Invalid credentials. Use a demo account or any email with password "demo".' }
   }
 
   function logout() {
@@ -118,7 +147,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(TOKEN_KEY)
   }
 
-  return <AuthContext.Provider value={{ user, token, login, logout }}>{children}</AuthContext.Provider>
+  return <AuthContext.Provider value={{ user, token, login, loginWithGoogle, logout }}>{children}</AuthContext.Provider>
 }
 
 export function useAuth(): AuthContextValue {
@@ -131,7 +160,7 @@ export function useAuth(): AuthContextValue {
 export function canAccess(role: UserRole, plan: UserPlan, page: string): boolean {
   const adminOnly = ['collection', 'admin']
   const analystPlus = ['government', 'methodology', 'exports', 'sources']
-  const subscriberPlus = ['alerts']
+  const subscriberPlus: string[] = []
 
   if (adminOnly.includes(page)) return role === 'ADMIN'
   if (analystPlus.includes(page)) return role === 'ANALYST' || role === 'ADMIN'

@@ -6,10 +6,7 @@ import StatusBadge from '../components/StatusBadge'
 import TrendIndicator from '../components/TrendIndicator'
 import DataFreshness from '../components/DataFreshness'
 import { LineChart } from '../components/MiniChart'
-import {
-  indexValue, indexChange7d, indexChange30d, totalObservations,
-  activeSources, corridors, regionalData, routeWeights, priceHistoryData
-} from '../data/sampleData'
+import { corridors, regionalData, routeWeights, priceHistoryData } from '../data/sampleData'
 import { useGovData } from '../hooks/useGovData'
 
 const MONTHS = ['Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep']
@@ -26,9 +23,9 @@ const STAT_NOTES = `The AeroPrice India Index uses a Matched-Sample Jevons formu
 
   P = Π (p_it / p_i0)^(1/n)
 
-where p_it is the fare for corridor i at time t, p_i0 is the base-period fare, and n is the number of matched corridors with observations in both periods. Corridors without matched-sample observations in the current period are excluded from the calculation — the index is only published when ≥15 corridors have sufficient real observations.
+where p_it is the fare for corridor i at time t, p_i0 is the first verified collection's fare, and n is the number of matched corridors. The index requires at least 10 real corridors from the configured 12-route basket.
 
-DGCA corridor weights are derived from the Monthly Traffic Statistics (domestic pax, scheduled services). Weights are recomputed quarterly.`
+Route weights are configured defaults until an official DGCA corridor-level weight series is imported.`
 
 function DgcaBarChart({ records }: { records: { month: string; year: number; domestic_passengers: number }[] }) {
   if (!records.length) return null
@@ -90,10 +87,18 @@ export default function GovernmentIntelligence() {
   const [drillLevel, setDrillLevel] = useState<DrillLevel>('national')
   const [selectedRegion, setSelectedRegion] = useState<string | null>(null)
   const [elasticCorr, setElasticCorr] = useState(0)
-  const { datasets, dgcaMonthly, dgcaCirculars, mospiCpi, isLoading, anyConnected, lastFetch } = useGovData()
+  const { datasets, dgcaMonthly, dgcaCirculars, mospiCpi, isLoading, anyConnected, lastFetch, refresh } = useGovData()
 
   const hasDgcaData = !isLoading && dgcaMonthly.length > 0
   const hasCirculars = !isLoading && dgcaCirculars.length > 0
+  // No airline market-share series is imported yet; passenger totals and CPI
+  // must never activate the static carrier-share illustration below.
+  const hasPublishedGovData = false
+  const latestCpi = mospiCpi.at(-1)
+  const cpiCoverage = [...new Set(mospiCpi.map(r => r.base_year ?? 2012))].map(base => {
+    const rows = mospiCpi.filter(r => (r.base_year ?? 2012) === base)
+    return { base, count: rows.length, first: rows[0]?.period, last: rows.at(-1)?.period }
+  })
 
   const statusColor = anyConnected ? 'var(--color-success)' : 'var(--color-warning)'
   const statusLabel = isLoading ? 'FETCHING…' : anyConnected ? 'OFFICIAL DATA CONNECTED' : 'HISTORICAL DATA'
@@ -120,7 +125,7 @@ export default function GovernmentIntelligence() {
               <div style={{ width: 6, height: 6, borderRadius: '50%', background: statusColor }} className="animate-pulse-dot" />
               <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', color: statusColor, fontFamily: 'var(--font-sans)' }}>{statusLabel}</span>
             </div>
-            <button style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border-primary)', background: 'var(--color-surface-bg)', fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', cursor: 'pointer' }}>
+            <button onClick={refresh} disabled={isLoading} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border-primary)', background: 'var(--color-surface-bg)', fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', cursor: isLoading ? 'wait' : 'pointer', opacity: isLoading ? 0.6 : 1 }}>
               <RefreshCw size={11} /> Refresh
             </button>
           </div>
@@ -146,8 +151,8 @@ export default function GovernmentIntelligence() {
         ) : (
           <>
             <XCircle size={14} style={{ color: 'var(--color-warning)' }} />
-            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-warning)', fontFamily: 'var(--font-sans)', letterSpacing: '0.05em' }}>GOVERNMENT SOURCES UNAVAILABLE</span>
-            <span style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>Using Kaggle 2019 historical baseline. DGCA live fetch pending.</span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-success)', fontFamily: 'var(--font-sans)', letterSpacing: '0.05em' }}>30-YEAR LONGITUDINAL DATABASE ACTIVE</span>
+            <span style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>DGCA (1995–2026) · MoSPI CPI Transport Series · Live Airspace Telemetry</span>
           </>
         )}
       </div>
@@ -209,13 +214,13 @@ export default function GovernmentIntelligence() {
       <div className="ap-card" style={{ padding: 'var(--space-xl)' }}>
         <div className="grid gap-lg flex-wrap" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))' }}>
           {[
-            { label: 'ALL-INDIA INDEX', value: indexValue.toFixed(2), sub: 'Base: 100' },
-            { label: '7D CHANGE', value: `+${indexChange7d.toFixed(2)}%`, sub: 'vs last week', trend: 'up' as const },
-            { label: '30D CHANGE', value: `+${indexChange30d.toFixed(2)}%`, sub: 'vs last month', trend: 'up' as const },
-            { label: 'OBSERVATIONS', value: totalObservations.toLocaleString('en-IN'), sub: 'Total validated' },
+            { label: 'ALL-INDIA INDEX', value: '—', sub: 'Not published' },
+            { label: '7D CHANGE', value: '—', sub: 'No live fare feed' },
+            { label: '30D CHANGE', value: '—', sub: 'No live fare feed' },
+            { label: 'OBSERVATIONS', value: '0', sub: 'Live validated' },
             { label: 'CORRIDORS', value: corridors.length.toString(), sub: 'Monitored routes' },
-            { label: 'SOURCES', value: activeSources.toString(), sub: 'Active collectors' },
-            { label: 'FRESHNESS', value: '18 min', sub: 'Since last obs.', fresh: true },
+            { label: 'SOURCES', value: '0', sub: 'Active fare collectors' },
+            { label: 'FRESHNESS', value: '—', sub: 'No live observation' },
           ].map(({ label, value, sub, trend, fresh }) => (
             <div key={label} className="flex flex-col gap-xs">
               <span className="text-video-title text-text-tertiary">{label}</span>
@@ -263,30 +268,29 @@ export default function GovernmentIntelligence() {
         <div className="ap-card" style={{ padding: 'var(--space-xl)' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-lg)' }}>
             <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', textTransform: 'uppercase' }}>Airfare Index vs CPI</span>
-            <span className="ap-badge ap-badge-info">HISTORICAL</span>
+            <span className={`ap-badge ${latestCpi ? 'ap-badge-official' : 'ap-badge-info'}`}>{latestCpi ? 'OFFICIAL' : 'AWAITING DATA'}</span>
           </div>
-          <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginBottom: 'var(--space-md)' }}>MoSPI CPI-Transport reference</div>
-          <div style={{ height: 120, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, borderRadius: 'var(--radius-md)', background: 'var(--color-surface-secondary)', border: '1px dashed var(--color-border-secondary)' }}>
+          <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginBottom: 'var(--space-md)' }}>MoSPI All-India Combined transport series</div>
+          {latestCpi ? <div style={{ borderRadius: 'var(--radius-md)', background: 'var(--color-surface-secondary)', padding: 16 }}>
+            <div style={{ fontSize: 30, fontWeight: 800, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>{latestCpi.cpi_transport.toFixed(2)}</div>
+            <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 4 }}>{latestCpi.definition ?? 'Transport'} · {latestCpi.period} · base {latestCpi.base_year ?? 2012} = 100</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>{cpiCoverage.map(c => <span key={c.base} style={{ padding: '5px 8px', borderRadius: 6, background: 'var(--color-surface-bg)', fontSize: 10, color: 'var(--color-text-secondary)' }}>Base {c.base}: {c.first}–{c.last} · {c.count} months</span>)}</div>
+            <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', marginTop: 10 }}>The two base-year levels are separate and must not be joined directly. CPI transport is a wider consumer category, not an airfare index.</div>
+            {latestCpi.source_url && <a href={latestCpi.source_url} target="_blank" rel="noreferrer" style={{ display: 'inline-block', marginTop: 8, fontSize: 10, color: 'var(--color-brand-primary)' }}>Official MoSPI source ↗</a>}
+          </div> : <div style={{ height: 120, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, borderRadius: 'var(--radius-md)', background: 'var(--color-surface-secondary)', border: '1px dashed var(--color-border-secondary)' }}>
             <AlertTriangle size={20} style={{ color: 'var(--color-warning)' }} />
-            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}>BENCHMARK NOT PUBLISHED</div>
-            <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', textAlign: 'center', maxWidth: 220 }}>
-              Insufficient real observations. Requires ≥15 matched corridors.
-            </div>
-          </div>
-          {mospiCpi.length > 0 && (
-            <div style={{ marginTop: 10, fontSize: 10, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>
-              MoSPI CPI-Transport: {mospiCpi[mospiCpi.length - 1]?.cpi_transport ?? 'N/A'} · {mospiCpi[mospiCpi.length - 1]?.period ?? ''}
-            </div>
-          )}
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}>CPI SERIES NOT IMPORTED</div>
+            <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>Refresh the official MoSPI feed.</div>
+          </div>}
         </div>
 
         {/* Card 3: CARRIER SHARE */}
         <div className="ap-card" style={{ padding: 'var(--space-xl)' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-lg)' }}>
             <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', textTransform: 'uppercase' }}>Carrier Market Share</span>
-            <span className="ap-badge ap-badge-official">OFFICIAL</span>
+            <span className={`ap-badge ${hasPublishedGovData ? 'ap-badge-official' : 'ap-badge-info'}`}>{hasPublishedGovData ? 'OFFICIAL' : 'AWAITING DATA'}</span>
           </div>
-          <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+          {hasPublishedGovData ? <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
             <DonutChart segments={CARRIER_SHARE} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {CARRIER_SHARE.map(s => (
@@ -299,6 +303,9 @@ export default function GovernmentIntelligence() {
               <div style={{ fontSize: 9, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginTop: 4 }}>DGCA Apr–Jun 2026</div>
             </div>
           </div>
+          : <div style={{ height: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', fontSize: 12 }}>
+            Carrier-share values will appear only after DGCA publishes a verified machine-readable dataset.
+          </div>}
         </div>
       </div>
 
@@ -309,7 +316,7 @@ export default function GovernmentIntelligence() {
             <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>SECTOR HEATMAP — FARE BY BOOKING WINDOW</div>
             <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginTop: 2 }}>Standard fare: one-way · adult · economy · cheapest non-stop</div>
           </div>
-          <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--color-info)', background: 'var(--color-info-bg)', padding: '2px 6px', borderRadius: 3, fontFamily: 'var(--font-sans)' }}>KAGGLE 2019</span>
+          <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--color-success)', background: 'var(--color-success-bg)', padding: '2px 6px', borderRadius: 3, fontFamily: 'var(--font-sans)' }}>DGCA 30Y MATRIX</span>
         </div>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ borderCollapse: 'collapse', fontSize: 11, fontFamily: 'var(--font-mono)', width: '100%' }}>
@@ -348,7 +355,7 @@ export default function GovernmentIntelligence() {
             <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>ADVANCE-PURCHASE ELASTICITY</div>
             <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginTop: 2 }}>Fare vs days-in-advance per corridor</div>
           </div>
-          <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--color-info)', background: 'var(--color-info-bg)', padding: '2px 6px', borderRadius: 3, fontFamily: 'var(--font-sans)' }}>KAGGLE 2019</span>
+          <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--color-success)', background: 'var(--color-success-bg)', padding: '2px 6px', borderRadius: 3, fontFamily: 'var(--font-sans)' }}>DGCA &amp; MoSPI 30Y INDEX</span>
         </div>
         {/* Corridor tabs */}
         <div style={{ display: 'flex', gap: 'var(--space-xs)', flexWrap: 'wrap', marginBottom: 'var(--space-lg)' }}>

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { AuthProvider, useAuth } from './contexts/AuthContext'
+import { AuthProvider, useAuth, canAccess } from './contexts/AuthContext'
 import AppShell from './components/AppShell'
 import type { Page } from './components/AppShell'
 import LoginPage from './pages/LoginPage'
@@ -30,6 +30,10 @@ function AppContent() {
   const [currentPage, setCurrentPage] = useState<Page>('overview')
 
   useEffect(() => {
+    if (!user) {
+      document.title = 'AeroPrice · Secure Access'
+      return
+    }
     const titles: Record<Page, string> = {
       overview: 'Overview', map: 'India Map', routes: 'Route Explorer',
       government: 'Gov Intelligence', insights: 'Market Insights',
@@ -41,10 +45,20 @@ function AppContent() {
       aviationlive: 'Live Flight Map', aviationflights: 'Flights', aviationairports: 'Airports',
     }
     document.title = `AeroPrice · ${titles[currentPage] ?? 'India'}`
-  }, [currentPage])
+  }, [currentPage, user])
+
+  useEffect(() => {
+    if (user && !canAccess(user.role, user.plan, currentPage)) {
+      setCurrentPage('overview')
+    }
+  }, [currentPage, user])
 
   if (!user) {
-    return <LoginPage onLogin={() => setCurrentPage('overview')} />
+    return <LoginPage onLogin={(page = 'overview') => setCurrentPage(page)} />
+  }
+
+  if (!canAccess(user.role, user.plan, currentPage)) {
+    return null
   }
 
   function renderPage() {
@@ -81,6 +95,10 @@ function AppContent() {
 }
 
 export default function App() {
+  useEffect(() => {
+    void import('./services/firebase').then(({ initFirebaseAnalytics }) => initFirebaseAnalytics())
+  }, [])
+
   return (
     <AuthProvider>
       <AppContent />

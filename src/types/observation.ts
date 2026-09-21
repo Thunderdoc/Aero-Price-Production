@@ -105,5 +105,9 @@ export interface MospiCpiRecord {
   period: string
   cpi_transport: number
   cpi_general: number
+  base_year?: number
+  definition?: string
+  series?: string
+  source_url?: string
   data_origin: DataOrigin
 }

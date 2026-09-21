@@ -12,6 +12,11 @@ logs/
 .claude-replay.*
 .tmp-*
 /.figma/design-context/
+integrations/sources/
+backend/.venv/
+backend/aeroprice.db
+__pycache__/
+*.py[cod]
 
 # Platform-managed agentplat state, not project source. In the
 # client-initiated single-repo workspace layout (make's `Path: "."` spec) the

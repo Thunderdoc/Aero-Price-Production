@@ -15,11 +15,11 @@ from app.core.config import settings
 from app.core.database import create_all_tables, AsyncSessionLocal
 from app.api.routes import auth, health, fares, index, sources, government, collections, dashboard
 from app.api.routes import admin as admin_routes
-from app.api.routes import forecasts, exports, anomalies as anomalies_routes
+from app.api.routes import forecasts, exports, anomalies as anomalies_routes, aviation, historical, maps
 from app.api.routes.routes_basket import router as routes_router
 from app.api.routes.compare import router as compare_router
 from app.services.collector import run_collection
-from app.services.gov_fetcher import run_gov_fetches
+from app.services.gov_fetcher import run_gov_fetches, ensure_gov_dataset_registry
 from app.seed.routes import seed_route_basket
 
 logging.basicConfig(
@@ -49,6 +49,7 @@ async def lifespan(app: FastAPI):
     logger.info("Database tables verified.")
     async with AsyncSessionLocal() as db:
         seeded = await seed_route_basket(db)
+        await ensure_gov_dataset_registry(db)
     if seeded:
         logger.info(f"Seeded {seeded} routes into route_baskets table.")
 
@@ -72,9 +73,8 @@ async def lifespan(app: FastAPI):
             "Note: all airline sources will return CHALLENGE_DETECTED until NDC credentials are configured."
         )
 
-        # Run gov fetch immediately on startup
-        async with AsyncSessionLocal() as db:
-            await run_gov_fetches(db)
+        # Refreshes run on the scheduler or on an authenticated UI request.
+        # Startup remains fast even if an official publisher is temporarily slow.
 
     yield
 
@@ -90,6 +90,15 @@ app = FastAPI(
     version="2.0.0",
     lifespan=lifespan,
 )
+
+@app.middleware("http")
+async def security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    return response
 
 app.add_middleware(
     CORSMiddleware,
@@ -114,6 +123,9 @@ app.include_router(exports.router, prefix="/api")
 app.include_router(anomalies_routes.router, prefix="/api")
 app.include_router(routes_router, prefix="/api")
 app.include_router(compare_router, prefix="/api")
+app.include_router(aviation.router, prefix="/api")
+app.include_router(historical.router, prefix="/api")
+app.include_router(maps.router, prefix="/api")
 
 
 @app.get("/")

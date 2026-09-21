@@ -2,11 +2,18 @@ from fastapi import APIRouter, Depends, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 from app.core.database import get_db
+from app.core.database import AsyncSessionLocal
 from app.core.auth import require_admin, require_analyst
 from app.models.collection import CollectionRun, SourceHealth
 from app.services.collector import run_collection
 
 router = APIRouter(prefix="/collections", tags=["collections"])
+
+
+async def _run_triggered_collection(triggered_by: str) -> None:
+    """Background tasks must create their own session after the request ends."""
+    async with AsyncSessionLocal() as collection_db:
+        await run_collection(collection_db, triggered_by=triggered_by)
 
 
 @router.get("")
@@ -44,7 +51,7 @@ async def trigger_collection(
     admin: dict = Depends(require_admin),
 ):
     """Manually trigger a collection run."""
-    background_tasks.add_task(run_collection, db, triggered_by=admin["email"])
+    background_tasks.add_task(_run_triggered_collection, admin["email"])
     return {
         "status": "TRIGGERED",
         "message": "Collection run started. Sources with CHALLENGE_DETECTED will be skipped — configure a backend collector.",

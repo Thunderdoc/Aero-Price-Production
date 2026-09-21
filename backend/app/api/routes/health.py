@@ -20,7 +20,7 @@ async def health_check(db: AsyncSession = Depends(get_db)):
 
     fare_count = await db.scalar(
         select(func.count()).select_from(FareObservation)
-        .where(FareObservation.data_origin != "GENERATED_TEST")
+        .where(FareObservation.data_origin.in_(["REAL", "OFFICIAL"]))
     )
     last_run = await db.scalar(
         select(CollectionRun.ended_at)

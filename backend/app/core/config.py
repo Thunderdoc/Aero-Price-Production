@@ -1,4 +1,5 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import model_validator
 from typing import List
 
 
@@ -7,14 +8,13 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite+aiosqlite:///./aeroprice.db"
 
     # Auth
-    SECRET_KEY: str = "dev-insecure-key-change-in-production"
+    SECRET_KEY: str = "local-development-only-change-me"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
     ALGORITHM: str = "HS256"
 
     # Collection
     COLLECTION_INTERVAL_MINUTES: int = 60
     COLLECTION_ENABLED: bool = True
-    ALLORIGINS_BASE: str = "https://api.allorigins.win/get?url="
 
     # Airline API keys (blank = CHALLENGE_DETECTED)
     INDIGO_API_KEY: str = ""
@@ -44,8 +44,16 @@ class Settings(BaseSettings):
     AMADEUS_ENV: str = "sandbox"
 
     # Government data
-    DGCA_STATS_URL: str = "https://dgca.gov.in/digigov-portal/"
-    MOSPI_ESANKHYIKI_URL: str = ""
+    # Official public pages.  These are fetched by the backend directly (never
+    # through a browser CORS proxy), so the audit trail stays on the source site.
+    DGCA_STATS_URL: str = "https://dgca.gov.in/digigov-portal/?page=statisticsMenu/airTransportStatistics/monthlystatistics/monthlypassengerstatistics.html"
+    DGCA_CIRCULARS_URL: str = "https://dgca.gov.in/digigov-portal/?page=newsdetail/officecircular/officecircular.html"
+    DGCA_FLEET_URL: str = "https://dgca.gov.in/digigov-portal/"
+    MOSPI_ESANKHYIKI_URL: str = "https://esankhyiki.mospi.gov.in/"
+    MOSPI_CPI_API_URL: str = "https://api.mospi.gov.in/api/cpi/getCPIData"
+    # Set this to a verified official CSV download URL when MoSPI publishes the
+    # current CPI Transport file. Blank deliberately means "not configured".
+    MOSPI_CPI_CSV_URL: str = ""
     DATAGOV_AVIATION_DATASET_ID: str = ""
 
     # CORS
@@ -58,6 +66,16 @@ class Settings(BaseSettings):
     #   live token  ("duffel_live_*")  → REAL provenance when live_mode=true in response
     # Never commit this value — set in backend/.env only.
     DUFFEL_API_TOKEN: str = ""
+
+    # Optional keyed live-tracking provider. ADSB.lol remains the keyless
+    # default; Aviation Edge is preferred when a valid server-side key exists.
+    AVIATION_EDGE_API_KEY: str = ""
+    AVIATIONSTACK_API_KEY: str = ""
+    CARTO_API_KEY: str = ""
+
+    # Server-side search providers. Never expose these as VITE_* browser vars.
+    SERPER_API_KEY: str = ""
+    SERPAPI_API_KEY: str = ""
 
     # Data mode
     # live = only real collected/official data returned
@@ -76,9 +94,15 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.ENVIRONMENT == "production"
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
+
+    @model_validator(mode="after")
+    def validate_security(self):
+        if self.is_production and (len(self.SECRET_KEY) < 32 or self.SECRET_KEY == "local-development-only-change-me"):
+            raise ValueError("SECRET_KEY must be a non-default value of at least 32 characters in production")
+        if "*" in self.ALLOWED_ORIGINS:
+            raise ValueError("Wildcard CORS origins are not allowed")
+        return self
 
 
 settings = Settings()

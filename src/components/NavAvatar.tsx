@@ -9,7 +9,7 @@ const ROLE_STYLE = {
 }
 
 const PLAN_LABEL = {
-  ADMIN: 'Admin', GOVERNMENT: 'Analyst', SUBSCRIBER: 'Subscriber', FREE: 'Free'
+  ADMIN: 'Admin', GOVERNMENT: 'Analyst', SUBSCRIBER: 'Subscribed', FREE: 'User'
 }
 
 export default function NavAvatar() {
@@ -73,7 +73,7 @@ export default function NavAvatar() {
             <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>{user.email}</div>
             <div style={{ marginTop: 6 }}>
               <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: st.color, background: st.bg, padding: '2px 6px', borderRadius: 3 }}>
-                {user.role} · {PLAN_LABEL[user.plan]}
+                {user.role === 'PUBLIC' ? 'USER' : user.role} · {user.plan === 'FREE' ? 'Standard' : PLAN_LABEL[user.plan]}
               </span>
             </div>
           </div>

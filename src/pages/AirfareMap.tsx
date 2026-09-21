@@ -98,6 +98,15 @@ interface AerialArcProps {
   routeLabel: string
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 function AerialArc({ from, to, color, weight, highlighted, routeLabel }: AerialArcProps) {
   const map = useMap()
 
@@ -161,7 +170,7 @@ function AerialArc({ from, to, color, weight, highlighted, routeLabel }: AerialA
 
     // Bind tooltip on arc hover
     arc.bindTooltip(
-      `<div style="font-family:monospace;font-size:11px;padding:2px 4px;">${routeLabel}</div>`,
+      `<div style="font-family:monospace;font-size:11px;padding:2px 4px;">${escapeHtml(routeLabel)}</div>`,
       { sticky: true, opacity: 0.92 }
     )
 
@@ -226,8 +235,8 @@ function AirportMarker({ lat, lng, iata, name, city, tier }: AirportMarkerProps)
     const marker = L.marker([lat, lng], { icon })
       .bindTooltip(
         `<div style="font-family:monospace;font-size:11px;line-height:1.5;">
-          <strong style="font-size:12px;">${iata}</strong> &nbsp;${name}<br/>
-          <span style="color:#64748b;">${city}</span>
+          <strong style="font-size:12px;">${escapeHtml(iata)}</strong> &nbsp;${escapeHtml(name)}<br/>
+          <span style="color:#64748b;">${escapeHtml(city)}</span>
         </div>`,
         { sticky: false, opacity: 0.95 }
       )
@@ -375,7 +384,7 @@ function FlightsBadge({ count, connectionStatus }: FlightsBadgeProps) {
         }}
       />
       <span style={{ fontSize: 'var(--text-caption-size)', fontWeight: 600 }}>
-        {count} flights over India
+        {count} flight positions over India
       </span>
       <span
         style={{
@@ -390,7 +399,7 @@ function FlightsBadge({ count, connectionStatus }: FlightsBadgeProps) {
           letterSpacing: '0.05em',
         }}
       >
-        {connectionStatus}
+        {connectionStatus === 'live' ? 'checked' : connectionStatus}
       </span>
     </div>
   )
@@ -595,7 +604,9 @@ export default function AirfareMap() {
       } else {
         setApiStatus('UNAVAILABLE')
       }
-    }).catch(() => { if (!cancelled) setApiStatus('UNAVAILABLE') })
+    }).catch(() => {
+      if (!cancelled) setApiStatus('UNAVAILABLE')
+    })
     return () => { cancelled = true }
   }, [])
 
@@ -666,7 +677,15 @@ export default function AirfareMap() {
           }}>
             AIRFARE ROUTE MAP · INDIA
           </span>
-          <span style={{ fontFamily: 'var(--font-mono)', letterSpacing: '0.07em', fontSize: 9, fontWeight: 700, color: 'var(--color-info)', background: 'var(--color-info-bg)', padding: '2px 6px', borderRadius: 3 }}>HISTORICAL · Kaggle 2019</span>
+          <span style={{
+            fontFamily: 'var(--font-mono)', letterSpacing: '0.07em', fontSize: 9, fontWeight: 700,
+            color: apiStatus === 'REAL' ? 'var(--color-success)' : 'var(--color-warning)',
+            background: apiStatus === 'REAL' ? 'rgba(22,163,74,0.15)' : 'rgba(217,119,6,0.15)',
+            border: `1px solid ${apiStatus === 'REAL' ? 'rgba(22,163,74,0.3)' : 'rgba(217,119,6,0.3)'}`,
+            padding: '2px 8px', borderRadius: 4,
+          }}>
+            {apiStatus === 'REAL' ? 'AIRSPACE DATA CHECKED' : 'AIRSPACE DATA DEGRADED'}
+          </span>
         </div>
         {/* Right: source status pill + flight count */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', position: 'relative', zIndex: 1 }}>
@@ -688,10 +707,10 @@ export default function AirfareMap() {
           </div>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'rgba(255,255,255,0.45)', letterSpacing: '0.04em' }}>
             {apiStatus === 'REAL'
-              ? `${realFlightCount} REAL flights (AviationStack)`
+              ? `${realFlightCount} provider rows (AviationStack)`
               : apiStatus === 'loading'
               ? 'Connecting to AviationStack…'
-              : `${liveFlights.length} flights tracked`}
+              : `${liveFlights.length} sample flight positions`}
           </span>
         </div>
       </div>
@@ -709,12 +728,11 @@ export default function AirfareMap() {
           style={{ flex: 1, height: '100%', width: '100%' }}
           zoomControl={true}
         >
-          {/* Basemap — Mapbox Streets Light */}
+          {/* Basemap — OpenStreetMap public tiles; no API key required or exposed. */}
           <TileLayer
-            attribution='&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-            url={`https://api.mapbox.com/styles/v1/mapbox/light-v11/tiles/{z}/{x}/{y}?access_token=${import.meta.env.VITE_MAPBOX_TOKEN}`}
-            tileSize={512}
-            zoomOffset={-1}
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            tileSize={256}
             maxZoom={19}
           />
 

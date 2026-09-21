@@ -31,6 +31,7 @@ from app.collectors.challenge import (
     SpiceJetAdapter, AirIndiaExpressAdapter,
 )
 from app.collectors.aggregators.amadeus import AmadeusAdapter
+from app.collectors.aggregators.serpapi_google_flights import SerpApiGoogleFlightsAdapter
 from app.collectors.duffel import DuffelAdapter, SOURCE_ID as DUFFEL_SOURCE_ID
 
 logger = logging.getLogger(__name__)
@@ -192,6 +193,15 @@ DUFFEL_SOURCE = {
 }
 AIRFARE_SOURCE_REGISTRY.append(DUFFEL_SOURCE)
 
+SERPAPI_SOURCE = {
+    "id": "serpapi-google-flights", "name": "SerpApi Google Flights", "type": "AGGREGATOR",
+    "status": "CONFIGURED" if settings.SERPAPI_API_KEY else "NOT_CONFIGURED", "robots_txt": "ALLOWED",
+    "captcha_detected": False, "api_available": True,
+    "note": "Authorized Google Flights results. Collected at T+7 once per route to protect quota.",
+    "credential_vars": ["SERPAPI_API_KEY"],
+}
+AIRFARE_SOURCE_REGISTRY.append(SERPAPI_SOURCE)
+
 
 def _make_adapters() -> list[FareSourceAdapter]:
     amadeus_cfg = {
@@ -213,15 +223,17 @@ def _make_adapters() -> list[FareSourceAdapter]:
         "AMADEUS_BASE_URL": settings.AMADEUS_BASE_URL,
     }
     duffel_cfg = {"DUFFEL_API_TOKEN": settings.DUFFEL_API_TOKEN}
+    serpapi_cfg = {"SERPAPI_API_KEY": settings.SERPAPI_API_KEY}
 
     adapters: list[FareSourceAdapter] = [
+        SerpApiGoogleFlightsAdapter(serpapi_cfg),
         DuffelAdapter(duffel_cfg),     # authorized Duffel REST API — REAL or SANDBOX_TEST
-        AmadeusAdapter(cfg),           # authorized Amadeus — REAL (production) or SANDBOX_TEST
-        IndiGoAdapter(cfg),            # CHALLENGE_DETECTED until NDC credentials provided
-        AirIndiaAdapter(cfg),
-        AirIndiaExpressAdapter(cfg),
-        AkasaAdapter(cfg),
-        SpiceJetAdapter(cfg),
+        AmadeusAdapter(amadeus_cfg),   # authorized Amadeus — REAL (production) or SANDBOX_TEST
+        IndiGoAdapter(airline_cfg),    # CHALLENGE_DETECTED until NDC credentials provided
+        AirIndiaAdapter(airline_cfg),
+        AirIndiaExpressAdapter(airline_cfg),
+        AkasaAdapter(airline_cfg),
+        SpiceJetAdapter(airline_cfg),
     ]
     return adapters
 
@@ -308,7 +320,7 @@ async def run_collection(db: AsyncSession, triggered_by: str = "scheduler") -> s
     """
     run_id = str(uuid.uuid4())
     adapters = _make_adapters()
-    all_registries = _all_source_registry() + GOV_SOURCE_REGISTRY
+    all_registries = AIRFARE_SOURCE_REGISTRY + GOV_SOURCE_REGISTRY
     routes_planned = len(ROUTE_BASKET) * len(ADVANCE_WINDOWS)
     total_collected = 0
     total_rejected = 0
@@ -387,7 +399,7 @@ async def run_collection(db: AsyncSession, triggered_by: str = "scheduler") -> s
                                         data_origin=rec.data_origin,
                                         collector_version="2.0",
                                         raw_hash=rec.raw_hash,
-                                        quality_flags=rec.quality_flags or [],
+                                        quality_flags=json.dumps(rec.quality_flags or []),
                                         is_valid=True,
                                     ))
                                     persist_ok = True
@@ -435,17 +447,7 @@ async def run_collection(db: AsyncSession, triggered_by: str = "scheduler") -> s
                                             else "SANDBOX_TEST: synthetic fare from Amadeus test environment"
                                         ),
                                     })
-                                    content_hash = hashlib.sha256(raw_body.encode()).hexdigest()[:16]
-                                    db.add(RawFarePayload(
-                                        id=str(uuid.uuid4()),
-                                        collection_run_id=run_id,
-                                        source=adapter.source_id,
-                                        route=route,
-                                        travel_date=travel_date,
-                                        raw_body=raw_body,
-                                        content_hash=content_hash,
-                                        collected_at=datetime.now(timezone.utc),
-                                    ))
+                                    await _store_raw_payload(db, result, run_id, raw_body)
                                 except Exception as raw_err:
                                     logger.warning("Raw payload store failed (non-fatal): %s", raw_err)
 
@@ -462,6 +464,13 @@ async def run_collection(db: AsyncSession, triggered_by: str = "scheduler") -> s
                     await db.commit()
 
         await db.commit()
+
+        # The first fully covered real-data run establishes a 100-point base;
+        # future runs measure the Jevons change against that real baseline.
+        from app.services.index_engine import publish_index
+        await publish_index(db, date.today().isoformat(), [
+            {"route": route, "weight": 1.0} for route in ROUTE_BASKET
+        ])
 
         final_status = (
             "COMPLETED" if total_collected > 0

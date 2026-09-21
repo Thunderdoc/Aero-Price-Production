@@ -4,6 +4,7 @@ Flags outliers per route/advance_days/cabin bucket.
 """
 import logging
 import math
+import json
 from datetime import datetime, timezone, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func
@@ -30,7 +31,7 @@ async def detect_anomalies(db: AsyncSession, lookback_days: int = 30) -> dict:
         .where(and_(
             FareObservation.data_origin.in_(["REAL", "OFFICIAL"]),
             FareObservation.is_valid == True,
-            FareObservation.collected_at >= since.isoformat(),
+            FareObservation.collected_at >= since,
         ))
     )
     observations = rows.scalars().all()
@@ -59,20 +60,26 @@ async def detect_anomalies(db: AsyncSession, lookback_days: int = 30) -> dict:
         variance = sum((f - mean) ** 2 for f in fares) / len(fares)
         stddev = math.sqrt(variance)
 
-        if stddev == 0:
-            continue
-
         buckets_analyzed += 1
 
         for obs in bucket_obs:
             if obs.total_fare is None:
                 continue
-            z = abs((obs.total_fare - mean) / stddev)
+            # A value differing from a perfectly flat baseline is anomalous;
+            # avoid silently accepting it merely because baseline variance is 0.
+            z = abs((obs.total_fare - mean) / stddev) if stddev else (
+                math.inf if obs.total_fare != mean else 0.0
+            )
             if z > Z_THRESHOLD:
-                flags = list(obs.quality_flags or [])
+                try:
+                    flags = json.loads(obs.quality_flags or "[]")
+                    if not isinstance(flags, list):
+                        flags = []
+                except (TypeError, ValueError):
+                    flags = []
                 if "OUTLIER" not in flags:
                     flags.append("OUTLIER")
-                    obs.quality_flags = flags
+                    obs.quality_flags = json.dumps(flags)
                     total_flagged += 1
 
     await db.commit()
@@ -103,6 +110,7 @@ async def get_anomaly_summary(db: AsyncSession) -> dict:
     flagged = await db.scalar(
         select(func.count()).select_from(FareObservation)
         .where(
+            FareObservation.data_origin.in_(["REAL", "OFFICIAL"]),
             FareObservation.quality_flags.like('%OUTLIER%')
         )
     )

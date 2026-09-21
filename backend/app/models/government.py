@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Float, Integer, DateTime, Text, func
+from sqlalchemy import Column, String, Float, Integer, DateTime, Text, UniqueConstraint, func
 from app.core.database import Base
 from app.models.base import new_uuid
 
@@ -47,6 +47,22 @@ class MospiCpiRecord(Base):
     cpi_general     = Column(Float, nullable=True)
     retrieved_at    = Column(DateTime(timezone=True), nullable=False, default=func.now())
     source          = Column(String(10), default="OFFICIAL")
+
+
+class MospiTransportSeries(Base):
+    """Publisher values kept separate across CPI base years and definitions."""
+    __tablename__ = "mospi_transport_series"
+    __table_args__ = (UniqueConstraint("base_year", "period", name="uq_mospi_transport_base_period"),)
+
+    id = Column(String(36), primary_key=True, default=new_uuid)
+    base_year = Column(Integer, nullable=False)
+    period = Column(String(7), nullable=False)
+    value = Column(Float, nullable=False)
+    definition = Column(String(80), nullable=False)
+    series = Column(String(20), nullable=False)
+    publisher_status = Column(String(10), nullable=True)
+    source_url = Column(Text, nullable=False)
+    retrieved_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
 
 
 class DgcaCircular(Base):

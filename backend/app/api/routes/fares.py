@@ -15,7 +15,7 @@ ADVANCE_WINDOWS = [1, 7, 15, 30, 45]
 # Origins that may appear in the live fares listing
 _LIVE_ORIGINS = ("REAL", "OFFICIAL")
 # Origins excluded from the live listing regardless of filter (synthetic / test)
-_ALWAYS_EXCLUDED = ("GENERATED_TEST",)
+_ALWAYS_EXCLUDED = ("GENERATED_TEST", "HISTORICAL_SNAPSHOT")
 
 
 def _base_query(data_mode: str, requested_origin: Optional[str]):
@@ -59,6 +59,8 @@ async def list_fares(
     origin: Optional[str] = None,
     destination: Optional[str] = None,
     airline: Optional[str] = None,
+    travel_date: Optional[str] = None,
+    cabin: Optional[str] = None,
     advance_days: Optional[int] = None,
     data_origin: Optional[str] = None,
     limit: int = Query(100, le=1000),
@@ -85,6 +87,10 @@ async def list_fares(
         q = q.where(FareObservation.destination == destination.upper())
     if airline:
         q = q.where(FareObservation.airline == airline)
+    if travel_date:
+        q = q.where(FareObservation.travel_date == travel_date)
+    if cabin:
+        q = q.where(FareObservation.cabin == cabin.upper())
     if advance_days is not None:
         q = q.where(FareObservation.advance_days == advance_days)
 

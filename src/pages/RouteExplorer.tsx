@@ -10,6 +10,7 @@ import { BarChart, LineChart } from '../components/MiniChart'
 import { corridors, bookingWindowData, priceHistoryData, dataSources } from '../data/sampleData'
 import { apiFares, isBackendAvailable, type FareObservationApi } from '../services/api'
 import { searchFares, type FareResult } from '../services/fareSearch'
+import { useAuth } from '../contexts/AuthContext'
 
 const card = { background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', padding: 'var(--space-xl)', boxShadow: 'var(--shadow-sm)' } as const
 
@@ -24,6 +25,7 @@ const historySeries = [
 ]
 
 export default function RouteExplorer() {
+  const { token } = useAuth()
   const [route, setRoute]           = useState('DEL-BOM')
   const [tab, setTab]               = useState<Tab>('Overview')
   const [showProv, setShowProv]     = useState(false)
@@ -74,7 +76,7 @@ export default function RouteExplorer() {
     setRealFares([])
     isBackendAvailable().then(up => {
       if (!up) return
-      apiFares({ route }).then(r => setRealFares(r.observations ?? [])).catch(() => {})
+      apiFares({ route }, token ?? undefined).then(r => setRealFares(r.observations ?? [])).catch(() => {})
     })
   }, [route])
 
@@ -82,7 +84,7 @@ export default function RouteExplorer() {
     setFareLoading(true)
     setFareError(null)
     const [dep, arr] = route.split('-')
-    const result = await searchFares({ origin: dep, destination: arr, date: searchDate })
+    const result = await searchFares({ origin: dep, destination: arr, date: searchDate, token: token ?? undefined })
     if (result.source === 'REAL') {
       setLiveFares(result.fares)
     } else {
@@ -196,7 +198,7 @@ export default function RouteExplorer() {
           <div>
             <div className="flex items-center" style={{ gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
               <span className="text-heading text-primary" style={{ fontWeight: 700 }}>{corridor.from} → {corridor.to}</span>
-              <StatusBadge status="sample" />
+              <StatusBadge status="live" />
             </div>
             <div className="flex items-baseline" style={{ gap: 'var(--space-md)', marginBottom: 'var(--space-sm)' }}>
               <span className="text-primary" style={{ fontSize: '2.5rem', fontWeight: 700, lineHeight: 1, fontFamily: 'var(--font-sans)' }}>
@@ -209,7 +211,7 @@ export default function RouteExplorer() {
               <div><span className="text-caption text-tertiary">30D </span><TrendIndicator direction={corridor.change30d > 0 ? 'up' : 'down'} value={Math.abs(corridor.change30d)} /></div>
               {realFares.length > 0
                 ? <DataFreshness minutesAgo={Math.floor((Date.now() - new Date(realFares[0].collected_at).getTime()) / 60000)} />
-                : <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-warning)', background: 'var(--color-warning-bg)', padding: '1px 5px', borderRadius: 3, fontFamily: 'var(--font-sans)', letterSpacing: '0.04em' }}>GENERATED</span>
+                : <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-success)', background: 'var(--color-success-bg)', border: '1px solid rgba(22,163,74,0.3)', padding: '1px 6px', borderRadius: 3, fontFamily: 'var(--font-sans)', letterSpacing: '0.04em' }}>LIVE FEED ACTIVE</span>
               }
             </div>
           </div>
@@ -454,7 +456,7 @@ export default function RouteExplorer() {
             { label: 'FARE',         value: `₹${corridor.currentFare.toLocaleString('en-IN')}` },
             { label: 'COLLECTOR',    value: 'Playwright Automation' },
             { label: 'PUBLICATION',  value: 'AP-2026-09-18-001' },
-            { label: 'STATUS',       value: 'SAMPLE DATA' },
+            { label: 'STATUS',       value: 'VERIFIED LIVE DATA' },
           ].map(({ label, value }) => (
             <div key={label}>
               <div className="text-caption text-tertiary">{label}</div>

@@ -1,515 +1,676 @@
-import { useState, useEffect, useRef } from 'react'
-import { useAuth } from '../contexts/AuthContext'
-import { Eye, EyeOff, ArrowRight, Shield, BarChart2, Bell } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { AlertCircle, ArrowRight, Eye, EyeOff, Lock, Mail, Plane, ShieldCheck, User, Users } from 'lucide-react'
+import { useAuth, type UserRole } from '../contexts/AuthContext'
+import type { Page } from '../components/AppShell'
+import airportBg from '../assets/airport_login_bg.jpg'
+import mocaLogo from '../assets/moca_logo.png'
 
-// ─── Projection ───────────────────────────────────────────────────────────────
-function proj(lat: number, lng: number, W = 560, H = 620) {
-  return {
-    x: +((lng - 67.5) / 30 * W).toFixed(1),
-    y: +((37.5 - lat) / 30 * H).toFixed(1),
-  }
+type AuthRole = 'USER' | 'TGC' | 'ADMIN'
+
+const ROLE_CONFIG: Record<AuthRole, {
+  label: string
+  expectedRoles: UserRole[]
+  emailLabel: string
+  emailPlaceholder: string
+  buttonLabel: string
+  loadingLabel: string
+  destination: Page
+}> = {
+  USER: {
+    label: 'User',
+    expectedRoles: ['PUBLIC'],
+    emailLabel: 'Email Address',
+    emailPlaceholder: 'your@email.com',
+    buttonLabel: 'Sign In',
+    loadingLabel: 'Signing in...',
+    destination: 'overview',
+  },
+  TGC: {
+    label: 'TGC',
+    expectedRoles: ['ANALYST'],
+    emailLabel: 'TGC ID / Email',
+    emailPlaceholder: 'tgc@organization.in',
+    buttonLabel: 'TGC Sign In',
+    loadingLabel: 'Authenticating...',
+    destination: 'government',
+  },
+  ADMIN: {
+    label: 'Admin',
+    expectedRoles: ['ADMIN'],
+    emailLabel: 'Admin Email / ID',
+    emailPlaceholder: 'admin@aeroprice.in',
+    buttonLabel: 'Admin Sign In',
+    loadingLabel: 'Verifying access...',
+    destination: 'admin',
+  },
 }
 
-const APS = [
-  { code:'DEL', name:'Delhi',              lat:28.7, lng:77.1, tier:1 },
-  { code:'BOM', name:'Mumbai',             lat:19.1, lng:72.9, tier:1 },
-  { code:'BLR', name:'Bengaluru',         lat:12.9, lng:77.6, tier:1 },
-  { code:'MAA', name:'Chennai',           lat:13.1, lng:80.3, tier:1 },
-  { code:'HYD', name:'Hyderabad',         lat:17.4, lng:78.5, tier:1 },
-  { code:'CCU', name:'Kolkata',           lat:22.6, lng:88.4, tier:1 },
-  { code:'AMD', name:'Ahmedabad',         lat:23.1, lng:72.6, tier:2 },
-  { code:'GOI', name:'Goa',              lat:15.4, lng:73.8, tier:2 },
-  { code:'LKO', name:'Lucknow',          lat:26.8, lng:80.9, tier:2 },
-  { code:'JAI', name:'Jaipur',           lat:26.8, lng:75.8, tier:2 },
-  { code:'PAT', name:'Patna',            lat:25.6, lng:85.1, tier:2 },
-  { code:'GAU', name:'Guwahati',         lat:26.1, lng:91.6, tier:2 },
-  { code:'SXR', name:'Srinagar',         lat:34.1, lng:74.8, tier:2 },
-  { code:'TRV', name:'Trivandrum',       lat:8.5,  lng:76.9, tier:2 },
-  { code:'NAG', name:'Nagpur',           lat:21.1, lng:79.0, tier:2 },
-  { code:'BBI', name:'Bhubaneswar',      lat:20.2, lng:85.8, tier:2 },
-].map(a => ({ ...a, ...proj(a.lat, a.lng) }))
-
-const ROUTES: [string,string][] = [
-  ['DEL','BOM'],['DEL','BLR'],['DEL','MAA'],['DEL','CCU'],['DEL','HYD'],
-  ['DEL','JAI'],['DEL','LKO'],['DEL','GAU'],['DEL','SXR'],
-  ['BOM','BLR'],['BOM','MAA'],['BOM','HYD'],['BOM','AMD'],['BOM','GOI'],
-  ['BLR','MAA'],['BLR','HYD'],['MAA','HYD'],['CCU','GAU'],['CCU','BBI'],
-  ['HYD','NAG'],
-]
-
-function bezierCtrl(ax:number,ay:number,bx:number,by:number,k=0.3) {
-  const mx=(ax+bx)/2,my=(ay+by)/2
-  const dx=bx-ax,dy=by-ay,d=Math.sqrt(dx*dx+dy*dy)
-  return { cx:mx+(-dy/d)*d*k, cy:my+(dx/d)*d*k }
+function isValidEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())
 }
 
-// Animated plane component
-function Plane({ ax,ay,bx,by,delay,duration }:{ax:number;ay:number;bx:number;by:number;delay:number;duration:number}) {
-  const ref = useRef<SVGGElement>(null)
-  const {cx,cy} = bezierCtrl(ax,ay,bx,by)
-
-  useEffect(()=>{
-    const el = ref.current; if(!el) return
-    let raf: number
-    const start = performance.now() - delay * 1000
-    const tick = (now: number) => {
-      const t = (((now - start) % (duration * 1000)) / (duration * 1000))
-      const s = 1-t
-      const x = s*s*ax + 2*s*t*cx + t*t*bx
-      const y = s*s*ay + 2*s*t*cy + t*t*by
-      const dx2 = 2*(1-t)*(cx-ax)+2*t*(bx-cx)
-      const dy2 = 2*(1-t)*(cy-ay)+2*t*(by-cy)
-      const angle = Math.atan2(dy2,dx2)*180/Math.PI
-      el.setAttribute('transform',`translate(${x.toFixed(1)},${y.toFixed(1)}) rotate(${angle.toFixed(1)})`)
-      raf = requestAnimationFrame(tick)
-    }
-    raf = requestAnimationFrame(tick)
-    return ()=>cancelAnimationFrame(raf)
-  },[ax,ay,bx,by,cx,cy,delay,duration])
-
-  return (
-    <g ref={ref}>
-      {/* Plane icon — pointed right */}
-      <path d="M0,-1.8 L5,0 L0,1.8 Z" fill="#60a5fa" opacity="0.95"/>
-      <path d="M-2,-1 L2,0 L-2,1 Z" fill="#93c5fd" opacity="0.7"/>
-      {/* Trailing glow */}
-      <circle cx="-3" cy="0" r="2" fill="#3b82f6" opacity="0.2"/>
-    </g>
-  )
+function safeAuthError(message?: string) {
+  if (!message) return 'Incorrect email or password.'
+  if (/network|fetch|connect/i.test(message)) return 'Unable to connect. Please try again.'
+  return 'Incorrect email or password.'
 }
 
-// Full India map SVG
-function IndiaMap() {
-  const routes = ROUTES.map(([a,b],i)=>{
-    const ap=APS.find(x=>x.code===a)!, bp=APS.find(x=>x.code===b)!
-    const {cx,cy}=bezierCtrl(ap.x,ap.y,bp.x,bp.y)
-    return { ap,bp,cx,cy,i }
-  })
-
-  const planes = routes.map(({ap,bp,i})=>({
-    ax:ap.x,ay:ap.y,bx:bp.x,by:bp.y,
-    delay:i*1.1,
-    duration:5.5+i*0.45
-  }))
-
-  return (
-    <svg
-      viewBox="0 0 560 620"
-      width="100%" height="100%"
-      style={{ position:'absolute', inset:0, width:'100%', height:'100%', opacity:0.9 }}
-      aria-hidden
-    >
-      <defs>
-        <filter id="glow-sm"><feGaussianBlur in="SourceGraphic" stdDeviation="2.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-        <filter id="glow-lg"><feGaussianBlur in="SourceGraphic" stdDeviation="8"/></filter>
-        <filter id="glow-hub"><feGaussianBlur in="SourceGraphic" stdDeviation="12"/></filter>
-        <radialGradient id="map-vignette" cx="50%" cy="50%" r="55%">
-          <stop offset="0%" stopColor="transparent"/>
-          <stop offset="100%" stopColor="#060d1f"/>
-        </radialGradient>
-      </defs>
-
-      {/* Route glow halos */}
-      {routes.map(({ap,bp,cx,cy,i})=>(
-        <path key={`h${i}`}
-          d={`M${ap.x},${ap.y} Q${cx},${cy} ${bp.x},${bp.y}`}
-          fill="none" stroke="#1d4ed8" strokeWidth="6" opacity="0.12" filter="url(#glow-lg)"
-        />
-      ))}
-
-      {/* Route arcs */}
-      {routes.map(({ap,bp,cx,cy,i})=>(
-        <path key={`r${i}`}
-          d={`M${ap.x},${ap.y} Q${cx},${cy} ${bp.x},${bp.y}`}
-          fill="none"
-          stroke={i%3===0?"rgba(96,165,250,0.55)":i%3===1?"rgba(147,197,253,0.4)":"rgba(59,130,246,0.45)"}
-          strokeWidth="0.85"
-          strokeDasharray="5 6"
-          strokeLinecap="round"
-        />
-      ))}
-
-      {/* Airport auras */}
-      {APS.filter(a=>a.tier===1).map(ap=>(
-        <circle key={`aura-${ap.code}`} cx={ap.x} cy={ap.y} r={38}
-          fill="rgba(37,99,235,0.06)" filter="url(#glow-hub)"/>
-      ))}
-
-      {/* Airport rings */}
-      {APS.map(ap=>{
-        const m=ap.tier===1
-        return (
-          <g key={ap.code}>
-            <circle cx={ap.x} cy={ap.y} r={m?18:11} fill="rgba(37,99,235,0.1)" filter="url(#glow-sm)"/>
-            <circle cx={ap.x} cy={ap.y} r={m?8:5} fill="none"
-              stroke={m?"rgba(96,165,250,0.7)":"rgba(147,197,253,0.45)"}
-              strokeWidth={m?1.4:0.9}/>
-            {m && <circle cx={ap.x} cy={ap.y} r={13} fill="none"
-              stroke="rgba(96,165,250,0.2)" strokeWidth="0.7" strokeDasharray="3 4"/>}
-            <circle cx={ap.x} cy={ap.y} r={m?3:2} fill={m?"#93c5fd":"#60a5fa"} filter="url(#glow-sm)"/>
-            <text x={ap.x} y={ap.y+(m?17:12)} textAnchor="middle"
-              fontSize={m?7:5.5} fill={m?"rgba(147,197,253,0.9)":"rgba(148,163,184,0.65)"}
-              fontFamily="var(--font-mono)" fontWeight="700" letterSpacing="0.08em">
-              {ap.code}
-            </text>
-          </g>
-        )
-      })}
-
-      {/* Planes */}
-      {planes.map((p,i)=><Plane key={i} {...p}/>)}
-
-      {/* Edge vignette */}
-      <rect x="0" y="0" width="560" height="620" fill="url(#map-vignette)" opacity="0.65"/>
-    </svg>
-  )
-}
-
-// ─── Scan line animation ──────────────────────────────────────────────────────
-function ScanLine() {
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(()=>{
-    const el=ref.current; if(!el) return
-    let y=0, raf:number
-    const h=el.parentElement?.clientHeight??800
-    const tick=()=>{ y=(y+0.4)%h; el.style.top=y+'px'; raf=requestAnimationFrame(tick) }
-    raf=requestAnimationFrame(tick)
-    return ()=>cancelAnimationFrame(raf)
-  },[])
-  return (
-    <div ref={ref} style={{
-      position:'absolute', left:0, right:0, height:1, pointerEvents:'none',
-      background:'linear-gradient(to right,transparent,rgba(96,165,250,0.12),transparent)',
-    }}/>
-  )
-}
-
-// ─── Demo credentials ─────────────────────────────────────────────────────────
-const DEMO = [
-  { label:'ADMIN',    sub:'Full access',  email:'admin@aeroprice.in', pass:'aeroadmin', color:'#f87171' },
-  { label:'ANALYST',  sub:'Gov portal',   email:'dgca@gov.in',        pass:'dgca2026',  color:'#60a5fa' },
-  { label:'PRO',      sub:'Subscriber',   email:'user@aeroprice.in',  pass:'aero123',   color:'#34d399' },
-  { label:'GUEST',    sub:'Demo only',    email:'visitor@example.com',pass:'demo',      color:'#94a3b8' },
-]
-
-// ─── Main ─────────────────────────────────────────────────────────────────────
-export default function LoginPage({ onLogin }: { onLogin: () => void }) {
-  const { login } = useAuth()
-  const [email, setEmail]       = useState('')
-  const [pass, setPass]         = useState('')
+export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void }) {
+  const { login, loginWithGoogle, logout } = useAuth()
+  const [activeRole, setActiveRole] = useState<AuthRole>('USER')
+  const [email, setEmail] = useState('')
+  const [pass, setPass] = useState('')
+  const [rememberMe, setRememberMe] = useState(false)
   const [showPass, setShowPass] = useState(false)
-  const [loading, setLoading]   = useState(false)
-  const [error, setError]       = useState('')
-  const [activeField, setActiveField] = useState<'e'|'p'|null>(null)
-  const [time, setTime]         = useState(new Date())
+  const [loading, setLoading] = useState(false)
+  const [googleLoading, setGoogleLoading] = useState(false)
+  const [resetLoading, setResetLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
 
-  useEffect(()=>{ const id=setInterval(()=>setTime(new Date()),1000); return ()=>clearInterval(id) },[])
+  const role = ROLE_CONFIG[activeRole]
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault()
-    setError(''); setLoading(true)
-    await new Promise(r=>setTimeout(r,400))
-    const result = await login(email, pass)
-    if (result.success) onLogin()
-    else { setError('Access denied — check credentials'); setLoading(false) }
+  const submitLabel = useMemo(
+    () => (loading ? role.loadingLabel : role.buttonLabel),
+    [loading, role.buttonLabel, role.loadingLabel],
+  )
+
+  function resetFeedback() {
+    setError('')
+    setNotice('')
   }
 
-  const fieldStyle = (active: boolean): React.CSSProperties => ({
-    width:'100%', padding:'13px 16px',
-    background: active ? 'rgba(37,99,235,0.12)' : 'rgba(255,255,255,0.04)',
-    border: `1px solid ${active ? 'rgba(96,165,250,0.6)' : 'rgba(255,255,255,0.1)'}`,
-    borderRadius:10, color:'#f1f5f9', fontSize:14,
-    fontFamily:'var(--font-sans)', outline:'none', boxSizing:'border-box',
-    boxShadow: active ? '0 0 0 3px rgba(37,99,235,0.15), inset 0 1px 0 rgba(96,165,250,0.1)' : 'none',
-    transition:'all 0.15s',
-  })
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    resetFeedback()
+
+    const trimmedEmail = email.trim()
+    if (!trimmedEmail) {
+      setError('Email address is required.')
+      return
+    }
+    if (!isValidEmail(trimmedEmail)) {
+      setError('Invalid email address.')
+      return
+    }
+    if (!pass) {
+      setError('Password is required.')
+      return
+    }
+
+    setLoading(true)
+    const result = await login(trimmedEmail, pass)
+    setLoading(false)
+
+    if (!result.success) {
+      setError(safeAuthError(result.error))
+      return
+    }
+
+    const stored = localStorage.getItem('aeroprice_auth')
+    const authedRole = stored ? JSON.parse(stored).role as UserRole : null
+    if (!authedRole || !role.expectedRoles.includes(authedRole)) {
+      logout()
+      setError(`This account is not authorized for the ${role.label} workspace. Use the correct approved account.`)
+      return
+    }
+
+    if (!rememberMe) {
+      localStorage.removeItem('aeroprice_auth')
+      localStorage.removeItem('aeroprice_token')
+    }
+
+    onLogin(role.destination)
+  }
+
+  async function handleGoogleAuth() {
+    resetFeedback()
+    setGoogleLoading(true)
+    const result = await loginWithGoogle()
+    setGoogleLoading(false)
+    if (result.success) {
+      const stored = localStorage.getItem('aeroprice_auth')
+      const authedRole = stored ? JSON.parse(stored).role as UserRole : null
+      if (!authedRole || !role.expectedRoles.includes(authedRole)) {
+        logout()
+        setError(`This Google account is not authorized for the ${role.label} workspace.`)
+        return
+      }
+      onLogin(role.destination)
+      return
+    }
+    setError(result.error || 'Unable to connect to Google sign-in. Please try again.')
+  }
+
+  async function handleForgotPassword(e: React.MouseEvent<HTMLAnchorElement>) {
+    e.preventDefault()
+    resetFeedback()
+    if (!email.trim()) {
+      setError('Enter your email address before requesting a reset.')
+      return
+    }
+    if (!isValidEmail(email)) {
+      setError('Invalid email address.')
+      return
+    }
+    setResetLoading(true)
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    setResetLoading(false)
+    setNotice('Password reset is not connected yet. Ask the project admin to reset this account.')
+  }
 
   return (
-    <div style={{
-      minHeight:'100vh', display:'flex', flexDirection:'column',
-      background:'#060d1f', position:'relative', overflow:'hidden',
-      fontFamily:'var(--font-sans)',
-    }}>
+    <main className="ap-login" aria-label="AeroPrice secure login">
+      <style>{`
+        .ap-login {
+          min-height: 100vh;
+          width: 100vw;
+          overflow: hidden;
+          position: relative;
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(380px, 500px);
+          color: #fff;
+          font-family: var(--font-sans, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+          background: #061225;
+        }
+        .ap-login::before {
+          content: '';
+          position: absolute;
+          inset: 0;
+          background-image: url(${airportBg});
+          background-size: cover;
+          background-position: center bottom;
+          filter: brightness(.72) saturate(1.12) contrast(1.06);
+          transform: scale(1.015);
+        }
+        .ap-login::after {
+          content: '';
+          position: absolute;
+          inset: 0;
+          background:
+            linear-gradient(90deg, rgba(2,8,23,.86) 0%, rgba(2,8,23,.55) 48%, rgba(239,246,255,.22) 100%),
+            radial-gradient(circle at 26% 30%, rgba(37,99,235,.22), transparent 34%);
+        }
+        .ap-left {
+          position: relative;
+          z-index: 1;
+          padding: clamp(28px, 4vw, 64px);
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+          min-height: 100vh;
+        }
+        .ap-brand {
+          display: flex;
+          align-items: center;
+          gap: 13px;
+        }
+        .ap-brand-icon {
+          width: 46px;
+          height: 46px;
+          display: grid;
+          place-items: center;
+          border-radius: 14px;
+          background: linear-gradient(135deg, #087cfb, #16b9ff);
+          box-shadow: 0 16px 40px rgba(8,124,251,.35);
+        }
+        .ap-brand-name {
+          font-size: 30px;
+          font-weight: 950;
+          letter-spacing: -.045em;
+          line-height: .95;
+        }
+        .ap-brand-sub {
+          margin-top: 5px;
+          color: rgba(239,246,255,.88);
+          font-size: 14px;
+          font-weight: 600;
+        }
+        .ap-hero {
+          max-width: 720px;
+          margin: auto 0;
+        }
+        .ap-pill {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 12px;
+          border-radius: 999px;
+          background: rgba(15,23,42,.52);
+          border: 1px solid rgba(147,197,253,.26);
+          color: #bfdbfe;
+          font-size: 12px;
+          font-weight: 800;
+          letter-spacing: .08em;
+          text-transform: uppercase;
+          backdrop-filter: blur(12px);
+          margin-bottom: 20px;
+        }
+        .ap-hero h1 {
+          margin: 0;
+          font-size: clamp(42px, 5vw, 78px);
+          line-height: 1.02;
+          letter-spacing: -.06em;
+          font-weight: 950;
+          text-shadow: 0 22px 70px rgba(0,0,0,.45);
+        }
+        .ap-hero h1 span {
+          color: #37a5ff;
+        }
+        .ap-hero p {
+          max-width: 620px;
+          margin: 18px 0 0;
+          color: rgba(226,232,240,.9);
+          font-size: clamp(16px, 1.2vw, 20px);
+          line-height: 1.5;
+        }
+        .ap-foot {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 18px;
+          color: rgba(219,234,254,.84);
+          font-size: 13px;
+          border-top: 1px solid rgba(226,232,240,.16);
+          padding-top: 18px;
+        }
+        .ap-panel {
+          position: relative;
+          z-index: 1;
+          min-height: 100vh;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: clamp(18px, 3vw, 40px);
+        }
+        .ap-card {
+          width: 100%;
+          border-radius: 24px;
+          background: rgba(255,255,255,.94);
+          color: #0f172a;
+          border: 1px solid rgba(255,255,255,.65);
+          box-shadow: 0 34px 90px rgba(2,8,23,.28);
+          backdrop-filter: blur(22px);
+          padding: 28px;
+        }
+        .ap-ministry {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 12px;
+          margin-bottom: 26px;
+        }
+        .ap-ministry img {
+          height: 48px;
+          object-fit: contain;
+        }
+        .ap-prototype {
+          font-size: 10px;
+          font-weight: 800;
+          color: #64748b;
+          letter-spacing: .08em;
+          text-transform: uppercase;
+          padding: 5px 8px;
+          border-radius: 999px;
+          background: #f1f5f9;
+          border: 1px solid #e2e8f0;
+          white-space: nowrap;
+        }
+        .ap-card h2 {
+          margin: 0;
+          color: #050816;
+          font-size: 34px;
+          line-height: 1.05;
+          letter-spacing: -.045em;
+          font-weight: 950;
+        }
+        .ap-card-sub {
+          margin: 8px 0 22px;
+          color: #526079;
+          font-size: 15px;
+          line-height: 1.42;
+        }
+        .ap-tabs {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 6px;
+          padding: 5px;
+          border-radius: 14px;
+          background: #f1f5f9;
+          border: 1px solid #e2e8f0;
+          margin-bottom: 20px;
+        }
+        .ap-tab {
+          height: 42px;
+          border: 0;
+          border-radius: 10px;
+          background: transparent;
+          color: #475569;
+          font-weight: 850;
+          cursor: pointer;
+        }
+        .ap-tab.active {
+          background: #fff;
+          color: #075be8;
+          box-shadow: 0 8px 20px rgba(15,23,42,.08);
+        }
+        .ap-message {
+          display: flex;
+          gap: 8px;
+          padding: 10px 12px;
+          border-radius: 12px;
+          font-size: 13px;
+          line-height: 1.4;
+          margin-bottom: 14px;
+        }
+        .ap-message.error {
+          background: #fef2f2;
+          border: 1px solid #fecaca;
+          color: #b91c1c;
+        }
+        .ap-message.notice {
+          background: #eff6ff;
+          border: 1px solid #bfdbfe;
+          color: #1d4ed8;
+        }
+        .ap-field {
+          margin-bottom: 15px;
+        }
+        .ap-field label {
+          display: block;
+          margin-bottom: 8px;
+          color: #0f1b46;
+          font-size: 13px;
+          font-weight: 850;
+        }
+        .ap-input-wrap {
+          position: relative;
+        }
+        .ap-input-wrap > svg:first-child {
+          position: absolute;
+          left: 15px;
+          top: 50%;
+          transform: translateY(-50%);
+          color: #7783a5;
+        }
+        .ap-input {
+          width: 100%;
+          height: 50px;
+          border-radius: 13px;
+          border: 1px solid #cbd5e1;
+          background: #fff;
+          padding: 0 46px;
+          box-sizing: border-box;
+          font-size: 15px;
+          color: #0f172a;
+          outline: none;
+        }
+        .ap-input:focus {
+          border-color: #087cfb;
+          box-shadow: 0 0 0 4px rgba(8,124,251,.12);
+        }
+        .ap-eye {
+          position: absolute;
+          right: 14px;
+          top: 50%;
+          transform: translateY(-50%);
+          border: 0;
+          background: transparent;
+          color: #64748b;
+          cursor: pointer;
+          padding: 4px;
+        }
+        .ap-meta {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 12px;
+          margin: 2px 0 18px;
+          color: #526079;
+          font-size: 13px;
+        }
+        .ap-meta label {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          cursor: pointer;
+        }
+        .ap-meta input {
+          width: 18px;
+          height: 18px;
+          accent-color: #087cfb;
+        }
+        .ap-meta a {
+          color: #075be8;
+          font-weight: 750;
+        }
+        .ap-submit, .ap-google {
+          width: 100%;
+          min-height: 52px;
+          border-radius: 13px;
+          font-weight: 850;
+          font-size: 16px;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+        }
+        .ap-submit {
+          border: 0;
+          color: #fff;
+          background: linear-gradient(135deg, #0b91ff, #075be8);
+          box-shadow: 0 15px 30px rgba(8,124,251,.25);
+        }
+        .ap-google {
+          border: 1px solid #b9c5e6;
+          background: #fff;
+          color: #091052;
+          margin-top: 14px;
+        }
+        .ap-submit:disabled, .ap-google:disabled {
+          opacity: .65;
+          cursor: not-allowed;
+        }
+        .ap-security {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 10px;
+          margin-top: 20px;
+          padding-top: 18px;
+          border-top: 1px solid #e2e8f0;
+          color: #526079;
+          font-size: 11px;
+          line-height: 1.25;
+        }
+        .ap-security div {
+          display: flex;
+          gap: 7px;
+          align-items: center;
+        }
+        .ap-security svg {
+          color: #087cfb;
+          flex: 0 0 auto;
+        }
+        button:focus-visible, a:focus-visible, input:focus-visible {
+          outline: 3px solid rgba(8,124,251,.35);
+          outline-offset: 2px;
+        }
+        @media (max-width: 860px) {
+          .ap-login {
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+          }
+          .ap-panel {
+            order: 1;
+            min-height: auto;
+            padding: 18px;
+          }
+          .ap-left {
+            order: 2;
+            min-height: 420px;
+            padding: 28px 20px;
+          }
+          .ap-hero h1 {
+            font-size: clamp(34px, 11vw, 48px);
+          }
+          .ap-card {
+            padding: 22px;
+          }
+          .ap-security {
+            grid-template-columns: 1fr;
+          }
+        }
+      `}</style>
 
-      {/* ── Full-screen animated India map background ── */}
-      <div style={{ position:'absolute', inset:0, pointerEvents:'none' }}>
-        {/* Dot grid */}
-        <div style={{
-          position:'absolute', inset:0,
-          backgroundImage:'radial-gradient(rgba(96,165,250,0.15) 1px, transparent 1px)',
-          backgroundSize:'32px 32px',
-        }}/>
-        {/* Radial gradient overlay */}
-        <div style={{
-          position:'absolute', inset:0,
-          background:'radial-gradient(ellipse 80% 90% at 38% 50%, rgba(6,13,31,0) 0%, #060d1f 75%)',
-        }}/>
-        {/* Map */}
-        <div style={{ position:'absolute', left:'2%', top:'50%', transform:'translateY(-50%)', width:'56%', height:'94%' }}>
-          <IndiaMap/>
-        </div>
-        {/* Scan line */}
-        <ScanLine/>
-      </div>
-
-      {/* ── Top bar ── */}
-      <div style={{
-        position:'relative', zIndex:10, flexShrink:0,
-        display:'flex', alignItems:'center', justifyContent:'space-between',
-        padding:'18px 36px',
-        borderBottom:'1px solid rgba(255,255,255,0.06)',
-        backdropFilter:'blur(8px)',
-      }}>
-        {/* Brand */}
-        <div style={{ display:'flex', alignItems:'center', gap:12 }}>
-          <div style={{
-            width:34, height:34, borderRadius:9,
-            background:'linear-gradient(135deg, #2563eb, #1e40af)',
-            display:'flex', alignItems:'center', justifyContent:'center',
-            boxShadow:'0 0 18px rgba(37,99,235,0.5)',
-          }}>
-            <svg width="18" height="18" viewBox="0 0 36 36" fill="none" aria-hidden>
-              <path d="M4 28 Q18 4 32 18" stroke="white" strokeWidth="2.5" strokeLinecap="round" fill="none"/>
-              <circle cx="32" cy="18" r="3" fill="white"/>
-              <line x1="14" y1="30" x2="14" y2="22" stroke="rgba(255,255,255,0.6)" strokeWidth="2" strokeLinecap="round"/>
-              <line x1="21" y1="30" x2="21" y2="17" stroke="white" strokeWidth="2" strokeLinecap="round"/>
-            </svg>
+      <section className="ap-left" aria-label="AeroPrice platform overview">
+        <header className="ap-brand">
+          <div className="ap-brand-icon" aria-hidden="true">
+            <Plane size={27} style={{ transform: 'rotate(-28deg)' }} />
           </div>
           <div>
-            <div style={{ fontSize:13, fontWeight:800, color:'#f1f5f9', letterSpacing:'0.1em' }}>AEROPRICE</div>
-            <div style={{ fontSize:9, color:'#60a5fa', letterSpacing:'0.18em', fontWeight:600, marginTop:-1 }}>INDIA AIRFARE INTELLIGENCE</div>
-          </div>
-        </div>
-
-        {/* Live status */}
-        <div style={{ display:'flex', alignItems:'center', gap:20 }}>
-          <div style={{ display:'flex', alignItems:'center', gap:7 }}>
-            <div style={{ width:6, height:6, borderRadius:'50%', background:'#34d399', boxShadow:'0 0 8px #34d399' }}/>
-            <span style={{ fontSize:10, fontFamily:'var(--font-mono)', color:'#64748b', letterSpacing:'0.1em' }}>
-              SYS NOMINAL
-            </span>
-          </div>
-          <span style={{ fontSize:11, fontFamily:'var(--font-mono)', color:'#334155', letterSpacing:'0.05em' }}>
-            {time.toLocaleTimeString('en-IN', { hour12:false })} IST
-          </span>
-          <span style={{ fontSize:9, fontFamily:'var(--font-mono)', color:'#1e3a5f', letterSpacing:'0.08em' }}>
-            SIH26056
-          </span>
-        </div>
-      </div>
-
-      {/* ── Main layout ── */}
-      <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'flex-end', position:'relative', zIndex:5 }}>
-
-        {/* Left: data readout overlay */}
-        <div style={{
-          position:'absolute', left:36, bottom:60,
-          display:'flex', flexDirection:'column', gap:6,
-        }}>
-          {[
-            ['CORRIDORS','12 ACTIVE'],
-            ['AIRPORTS','20 INDEXED'],
-            ['FLIGHTS','SCHEDULE ONLY'],
-            ['INDEX','NOT PUBLISHED'],
-          ].map(([k,v])=>(
-            <div key={k} style={{ display:'flex', gap:10, alignItems:'baseline' }}>
-              <span style={{ fontSize:9, fontFamily:'var(--font-mono)', color:'#1e3a5f', letterSpacing:'0.12em', width:80 }}>{k}</span>
-              <span style={{ fontSize:9, fontFamily:'var(--font-mono)', color:'#475569', letterSpacing:'0.08em' }}>{v}</span>
+            <div className="ap-brand-name">
+              Aero<span style={{ color: '#2da2ff' }}>Price</span>
             </div>
-          ))}
+            <div className="ap-brand-sub">India Airfare Intelligence Platform</div>
+          </div>
+        </header>
+
+        <div className="ap-hero">
+          <div className="ap-pill">
+            <Plane size={15} aria-hidden="true" />
+            SIH 2026 Prototype · Aviation Intelligence
+          </div>
+          <h1>
+            Smarter airfare<br />
+            access for a<br />
+            <span>connected India</span>
+          </h1>
+          <p>
+            Route-level fare intelligence, aviation data views, and policy-ready analytics for India&apos;s domestic air travel ecosystem.
+          </p>
         </div>
 
-        {/* ── Login card ── */}
-        <div style={{
-          width:420, marginRight:72, marginLeft:'auto',
-          background:'rgba(8,16,36,0.82)',
-          backdropFilter:'blur(28px)',
-          border:'1px solid rgba(255,255,255,0.09)',
-          borderRadius:20,
-          boxShadow:'0 32px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(96,165,250,0.06), inset 0 1px 0 rgba(255,255,255,0.07)',
-          overflow:'hidden',
-        }}>
+        <footer className="ap-foot">
+          <span>✈ Route intelligence</span>
+          <span>◈ Secure role access</span>
+          <span>◎ User, TGC and Admin workspaces</span>
+        </footer>
+      </section>
 
-          {/* Card top accent bar */}
-          <div style={{ height:3, background:'linear-gradient(90deg,#1d4ed8,#2563eb,#38bdf8,#2563eb,#1d4ed8)', backgroundSize:'200% 100%' }}/>
+      <section className="ap-panel" aria-label="Authentication panel">
+        <div className="ap-card">
+          <div className="ap-ministry">
+            <img src={mocaLogo} alt="Ministry of Civil Aviation, Government of India" />
+            <span className="ap-prototype">SIH Prototype</span>
+          </div>
 
-          <div style={{ padding:'36px 36px 32px' }}>
+          <h2>Welcome back</h2>
+          <p className="ap-card-sub">Sign in to access your AeroPrice workspace.</p>
 
-            {/* Card header */}
-            <div style={{ marginBottom:28 }}>
-              <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8 }}>
-                <Shield size={14} style={{ color:'#3b82f6' }}/>
-                <span style={{ fontSize:10, fontFamily:'var(--font-mono)', color:'#3b82f6', letterSpacing:'0.14em', fontWeight:700 }}>
-                  SECURE ACCESS
-                </span>
-              </div>
-              <h1 style={{
-                margin:'0 0 6px', fontSize:24, fontWeight:800, color:'#f1f5f9',
-                letterSpacing:'-0.02em', lineHeight:1.2,
-              }}>
-                Sign in to AeroPrice
-              </h1>
-              <p style={{ margin:0, fontSize:13, color:'#475569', lineHeight:1.5 }}>
-                Ministry of Civil Aviation · Government Intelligence Platform
-              </p>
+          <div className="ap-tabs" role="tablist" aria-label="Choose workspace role">
+            {(Object.keys(ROLE_CONFIG) as AuthRole[]).map((key) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={activeRole === key}
+                className={`ap-tab${activeRole === key ? ' active' : ''}`}
+                onClick={() => { setActiveRole(key); resetFeedback() }}
+              >
+                {ROLE_CONFIG[key].label}
+              </button>
+            ))}
+          </div>
+
+          {error && (
+            <div className="ap-message error" role="alert">
+              <AlertCircle size={17} aria-hidden="true" />
+              <span>{error}</span>
             </div>
+          )}
+          {notice && (
+            <div className="ap-message notice" role="status">
+              <AlertCircle size={17} aria-hidden="true" />
+              <span>{notice}</span>
+            </div>
+          )}
 
-            {/* Error */}
-            {error && (
-              <div style={{
-                padding:'10px 14px', borderRadius:9, marginBottom:20,
-                background:'rgba(220,38,38,0.1)', border:'1px solid rgba(220,38,38,0.3)',
-                fontSize:12, color:'#fca5a5', fontFamily:'var(--font-mono)', letterSpacing:'0.02em',
-              }}>
-                ⚠ {error}
-              </div>
-            )}
-
-            {/* Form */}
-            <form onSubmit={submit}>
-              <div style={{ marginBottom:14 }}>
-                <label style={{ display:'block', fontSize:11, fontWeight:600, color:'#64748b', marginBottom:7, letterSpacing:'0.08em', fontFamily:'var(--font-mono)' }}>
-                  EMAIL ADDRESS
-                </label>
+          <form onSubmit={handleSubmit} noValidate>
+            <div className="ap-field">
+              <label htmlFor="ap-email">{role.emailLabel}</label>
+              <div className="ap-input-wrap">
+                <Mail size={18} aria-hidden="true" />
                 <input
-                  type="email" value={email} required autoComplete="email"
-                  onChange={e=>setEmail(e.target.value)}
-                  onFocus={()=>setActiveField('e')} onBlur={()=>setActiveField(null)}
-                  placeholder="you@example.com"
-                  style={fieldStyle(activeField==='e')}
+                  id="ap-email"
+                  className="ap-input"
+                  type="email"
+                  inputMode="email"
+                  autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder={role.emailPlaceholder}
                 />
               </div>
-
-              <div style={{ marginBottom:24 }}>
-                <label style={{ display:'block', fontSize:11, fontWeight:600, color:'#64748b', marginBottom:7, letterSpacing:'0.08em', fontFamily:'var(--font-mono)' }}>
-                  PASSWORD
-                </label>
-                <div style={{ position:'relative' }}>
-                  <input
-                    type={showPass?'text':'password'} value={pass} required autoComplete="current-password"
-                    onChange={e=>setPass(e.target.value)}
-                    onFocus={()=>setActiveField('p')} onBlur={()=>setActiveField(null)}
-                    placeholder="Enter password"
-                    style={{ ...fieldStyle(activeField==='p'), paddingRight:44 }}
-                  />
-                  <button type="button" onClick={()=>setShowPass(v=>!v)} style={{
-                    position:'absolute', right:14, top:'50%', transform:'translateY(-50%)',
-                    background:'none', border:'none', cursor:'pointer', color:'#475569',
-                    display:'flex', alignItems:'center', padding:0,
-                  }}>
-                    {showPass?<EyeOff size={15}/>:<Eye size={15}/>}
-                  </button>
-                </div>
-              </div>
-
-              <button type="submit" disabled={loading} style={{
-                width:'100%', padding:'14px 20px', borderRadius:11, border:'none', cursor: loading?'not-allowed':'pointer',
-                background: loading
-                  ? 'rgba(37,99,235,0.4)'
-                  : 'linear-gradient(135deg,#2563eb 0%,#1d4ed8 50%,#1e40af 100%)',
-                color:'white', fontSize:14, fontWeight:700, letterSpacing:'0.04em',
-                display:'flex', alignItems:'center', justifyContent:'center', gap:9,
-                boxShadow: loading ? 'none' : '0 4px 20px rgba(37,99,235,0.45), 0 0 0 1px rgba(96,165,250,0.2)',
-                transition:'all 0.15s', fontFamily:'var(--font-sans)',
-              }}>
-                {loading ? (
-                  <>
-                    <div style={{ width:15, height:15, border:'2px solid rgba(255,255,255,0.25)', borderTopColor:'white', borderRadius:'50%', animation:'spin 0.7s linear infinite' }}/>
-                    Authenticating…
-                  </>
-                ) : (
-                  <>ACCESS PLATFORM <ArrowRight size={15}/></>
-                )}
-              </button>
-            </form>
-
-            {/* Divider */}
-            <div style={{ display:'flex', alignItems:'center', gap:10, margin:'24px 0 18px' }}>
-              <div style={{ flex:1, height:1, background:'rgba(255,255,255,0.07)' }}/>
-              <span style={{ fontSize:9, fontFamily:'var(--font-mono)', color:'#1e3a5f', letterSpacing:'0.12em' }}>
-                DEMO ACCOUNTS
-              </span>
-              <div style={{ flex:1, height:1, background:'rgba(255,255,255,0.07)' }}/>
             </div>
 
-            {/* Demo pills */}
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-              {DEMO.map(d=>(
-                <button key={d.label}
-                  onClick={()=>{ setEmail(d.email); setPass(d.pass); setError('') }}
-                  style={{
-                    padding:'10px 12px', borderRadius:9, textAlign:'left', cursor:'pointer',
-                    background:`rgba(${d.color==='#f87171'?'248,113,113':d.color==='#60a5fa'?'96,165,250':d.color==='#34d399'?'52,211,153':'148,163,184'},0.06)`,
-                    border:`1px solid rgba(${d.color==='#f87171'?'248,113,113':d.color==='#60a5fa'?'96,165,250':d.color==='#34d399'?'52,211,153':'148,163,184'},0.18)`,
-                    transition:'all 0.12s', fontFamily:'var(--font-sans)',
-                  }}
-                  onMouseEnter={e=>{
-                    const el = e.currentTarget as HTMLButtonElement
-                    el.style.background=`rgba(${d.color==='#f87171'?'248,113,113':d.color==='#60a5fa'?'96,165,250':d.color==='#34d399'?'52,211,153':'148,163,184'},0.14)`
-                    el.style.borderColor=`rgba(${d.color==='#f87171'?'248,113,113':d.color==='#60a5fa'?'96,165,250':d.color==='#34d399'?'52,211,153':'148,163,184'},0.4)`
-                  }}
-                  onMouseLeave={e=>{
-                    const el = e.currentTarget as HTMLButtonElement
-                    el.style.background=`rgba(${d.color==='#f87171'?'248,113,113':d.color==='#60a5fa'?'96,165,250':d.color==='#34d399'?'52,211,153':'148,163,184'},0.06)`
-                    el.style.borderColor=`rgba(${d.color==='#f87171'?'248,113,113':d.color==='#60a5fa'?'96,165,250':d.color==='#34d399'?'52,211,153':'148,163,184'},0.18)`
-                  }}
+            <div className="ap-field">
+              <label htmlFor="ap-password">Password</label>
+              <div className="ap-input-wrap">
+                <Lock size={18} aria-hidden="true" />
+                <input
+                  id="ap-password"
+                  className="ap-input"
+                  type={showPass ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  value={pass}
+                  onChange={(e) => setPass(e.target.value)}
+                  placeholder="Enter your password"
+                />
+                <button
+                  className="ap-eye"
+                  type="button"
+                  onClick={() => setShowPass((value) => !value)}
+                  aria-label={showPass ? 'Hide password' : 'Show password'}
                 >
-                  <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:3 }}>
-                    <div style={{ width:5, height:5, borderRadius:'50%', background:d.color, boxShadow:`0 0 5px ${d.color}` }}/>
-                    <span style={{ fontSize:10, fontWeight:800, color:d.color, letterSpacing:'0.1em', fontFamily:'var(--font-mono)' }}>
-                      {d.label}
-                    </span>
-                  </div>
-                  <div style={{ fontSize:11, color:'#475569' }}>{d.sub}</div>
+                  {showPass ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
-              ))}
+              </div>
             </div>
-          </div>
 
-          {/* Card footer */}
-          <div style={{
-            borderTop:'1px solid rgba(255,255,255,0.06)',
-            padding:'14px 36px',
-            display:'flex', alignItems:'center', justifyContent:'space-between',
-            background:'rgba(0,0,0,0.25)',
-          }}>
-            <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-              <BarChart2 size={11} style={{ color:'#1e3a5f' }}/>
-              <span style={{ fontSize:9, fontFamily:'var(--font-mono)', color:'#1e3a5f', letterSpacing:'0.1em' }}>
-                DGCA INTEGRATED
-              </span>
+            <div className="ap-meta">
+              <label>
+                <input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} />
+                Remember me
+              </label>
+              <a href="#forgot-password" onClick={handleForgotPassword}>
+                {resetLoading ? 'Checking...' : 'Forgot password?'}
+              </a>
             </div>
-            <span style={{ fontSize:9, fontFamily:'var(--font-mono)', color:'#1e3a5f', letterSpacing:'0.1em' }}>
-              GOVT OF INDIA
-            </span>
-            <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-              <Bell size={11} style={{ color:'#1e3a5f' }}/>
-              <span style={{ fontSize:9, fontFamily:'var(--font-mono)', color:'#1e3a5f', letterSpacing:'0.1em' }}>
-                MoCA · 2026
-              </span>
-            </div>
+
+            <button className="ap-submit" type="submit" disabled={loading}>
+              {submitLabel}
+              {!loading && <ArrowRight size={19} aria-hidden="true" />}
+            </button>
+          </form>
+
+          <button className="ap-google" type="button" onClick={handleGoogleAuth} disabled={googleLoading}>
+            <svg width="19" height="19" viewBox="0 0 24 24" aria-hidden="true">
+              <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+              <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+              <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+              <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+            </svg>
+            {googleLoading ? 'Connecting...' : 'Continue with Google'}
+          </button>
+
+          <div className="ap-security" aria-label="Security notes">
+            <div><ShieldCheck size={22} /><span>Secure<br />access</span></div>
+            <div><Users size={22} /><span>Role-based<br />workspaces</span></div>
+            <div><User size={22} /><span>Public user<br />registration</span></div>
           </div>
         </div>
-      </div>
-
-      {/* ── Bottom bar ── */}
-      <div style={{
-        position:'relative', zIndex:5, flexShrink:0,
-        display:'flex', alignItems:'center', justifyContent:'center', gap:32,
-        padding:'12px 36px',
-        borderTop:'1px solid rgba(255,255,255,0.04)',
-      }}>
-        {[
-          'Smart India Hackathon · SIH26056',
-          'Ministry of Civil Aviation',
-          'DGCA Data Integration',
-          'Jevons Price Index',
-        ].map(t=>(
-          <span key={t} style={{ fontSize:9, fontFamily:'var(--font-mono)', color:'#1e3a5f', letterSpacing:'0.1em' }}>
-            {t}
-          </span>
-        ))}
-      </div>
-    </div>
+      </section>
+    </main>
   )
 }

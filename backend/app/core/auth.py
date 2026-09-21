@@ -40,6 +40,10 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 
 
 def authenticate_user(email: str, password: str) -> Optional[dict]:
+    # These fixtures exist only for local development and unit tests. A
+    # production deployment must use the persistent user store instead.
+    if settings.is_production:
+        return None
     user = DEMO_USERS.get(email)
     if not user:
         return None

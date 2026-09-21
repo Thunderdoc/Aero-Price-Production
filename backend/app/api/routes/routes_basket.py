@@ -28,7 +28,7 @@ async def list_routes(
     current_user: dict = Depends(get_current_user),
 ):
     """Return the monitored route basket with per-route observation counts."""
-    since_7d = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    since_7d = datetime.now(timezone.utc) - timedelta(days=7)
 
     routes = []
     for route in ROUTE_BASKET:
@@ -37,7 +37,7 @@ async def list_routes(
             select(func.count()).select_from(FareObservation)
             .where(and_(
                 FareObservation.route == route,
-                FareObservation.data_origin != "GENERATED_TEST",
+                FareObservation.data_origin.in_(["REAL", "OFFICIAL"]),
                 FareObservation.collected_at >= since_7d,
             ))
         )
@@ -69,13 +69,13 @@ async def system_context(
     """Overall system context: coverage, freshness, data-origin breakdown."""
     total = await db.scalar(
         select(func.count()).select_from(FareObservation)
-        .where(FareObservation.data_origin != "GENERATED_TEST")
+        .where(FareObservation.data_origin.in_(["REAL", "OFFICIAL"]))
     )
-    since_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    since_24h = datetime.now(timezone.utc) - timedelta(hours=24)
     fresh = await db.scalar(
         select(func.count()).select_from(FareObservation)
         .where(and_(
-            FareObservation.data_origin != "GENERATED_TEST",
+            FareObservation.data_origin.in_(["REAL", "OFFICIAL"]),
             FareObservation.collected_at >= since_24h,
         ))
     )
@@ -84,8 +84,8 @@ async def system_context(
         "real_observations_24h": fresh or 0,
         "routes_monitored": len(ROUTE_BASKET),
         "advance_windows": [1, 7, 15, 30, 45],
-        "airline_sources_status": "CHALLENGE_DETECTED",
-        "airline_sources_note": "All 5 Indian carriers block automated access. NDC credentials required.",
+        "airline_sources_status": "AGGREGATOR_LIVE" if (fresh or 0) > 0 else "NO_LIVE_DATA",
+        "airline_sources_note": "Verified aggregator fares available. Direct airline feeds still require authorized credentials." if (fresh or 0) > 0 else "No verified fares collected in the past 24 hours.",
         "system_status": "OPERATIONAL" if (fresh or 0) > 0 else "AWAITING_REAL_DATA",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }

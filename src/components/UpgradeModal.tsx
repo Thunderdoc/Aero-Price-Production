@@ -3,14 +3,13 @@ import { Button } from './ui/Button'
 
 interface Props {
   onClose: () => void
-  onSwitchToSubscriber: () => void
 }
 
 const PLANS = [
   {
-    name: 'Free',
+    name: 'Standard User',
     price: '₹0',
-    period: 'forever',
+    period: '',
     color: 'var(--color-text-tertiary)',
     features: [
       'National Airfare Index (when available)',
@@ -21,13 +20,13 @@ const PLANS = [
     locked: ['Price Alerts', 'Track Price', 'Historical export', 'Government Intelligence'],
   },
   {
-    name: 'Subscriber',
+    name: 'Paid Access',
     price: '₹299',
     period: '/month',
     color: 'var(--color-brand-primary)',
     badge: 'POPULAR',
     features: [
-      'Everything in Free',
+      'Everything in Standard User',
       'Price Alerts — unlimited',
       'Track Price on any corridor',
       'Historical fare export (CSV/JSON)',
@@ -42,7 +41,7 @@ const PLANS = [
     period: '',
     color: 'var(--color-indigo)',
     features: [
-      'Everything in Subscriber',
+      'Everything in Paid Access',
       'Full Government Intelligence portal',
       'Bulk data API access',
       'Statistical citation export',
@@ -53,7 +52,7 @@ const PLANS = [
   },
 ]
 
-export default function UpgradeModal({ onClose, onSwitchToSubscriber }: Props) {
+export default function UpgradeModal({ onClose }: Props) {
   return (
     <div
       style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 'var(--space-xl)' }}
@@ -63,8 +62,8 @@ export default function UpgradeModal({ onClose, onSwitchToSubscriber }: Props) {
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 'var(--space-xl) var(--space-2xl)', borderBottom: '1px solid var(--color-border-primary)' }}>
           <div>
-            <h2 style={{ fontSize: 'var(--text-heading-size)', fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', margin: 0 }}>Upgrade to unlock Price Alerts</h2>
-            <p style={{ fontSize: 'var(--text-body-size)', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', margin: '4px 0 0' }}>Track fares and get notified when prices drop below your target.</p>
+            <h2 style={{ fontSize: 'var(--text-heading-size)', fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', margin: 0 }}>Unlock paid access</h2>
+            <p style={{ fontSize: 'var(--text-body-size)', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', margin: '4px 0 0' }}>Track fares and get notified when prices drop below your target after subscription or access-code approval.</p>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 'var(--space-xs)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-tertiary)', display: 'flex' }}>
             <X size={18} />
@@ -77,8 +76,8 @@ export default function UpgradeModal({ onClose, onSwitchToSubscriber }: Props) {
             <div
               key={plan.name}
               style={{
-                background: plan.name === 'Subscriber' ? 'linear-gradient(145deg, #eff6ff, #f0f9ff)' : 'var(--color-surface-secondary)',
-                border: `1.5px solid ${plan.name === 'Subscriber' ? 'var(--color-brand-primary)' : 'var(--color-border-primary)'}`,
+                background: plan.name === 'Paid Access' ? 'linear-gradient(145deg, #eff6ff, #f0f9ff)' : 'var(--color-surface-secondary)',
+                border: `1.5px solid ${plan.name === 'Paid Access' ? 'var(--color-brand-primary)' : 'var(--color-border-primary)'}`,
                 borderRadius: 'var(--radius-lg)', padding: 'var(--space-xl)',
                 position: 'relative',
                 display: 'flex', flexDirection: 'column',
@@ -109,8 +108,8 @@ export default function UpgradeModal({ onClose, onSwitchToSubscriber }: Props) {
         {/* Footer CTA */}
         <div style={{ padding: 'var(--space-lg) var(--space-2xl) var(--space-2xl)', display: 'flex', gap: 'var(--space-md)', alignItems: 'center', justifyContent: 'flex-end' }}>
           <Button variant="ghost" onClick={onClose}>Continue free</Button>
-          <Button variant="subtle" onClick={onSwitchToSubscriber}>Use demo subscriber account</Button>
-          <Button variant="primary">Start 7-day free trial</Button>
+          <Button variant="subtle">Enter access code</Button>
+          <Button variant="primary">Request subscription</Button>
         </div>
       </div>
     </div>

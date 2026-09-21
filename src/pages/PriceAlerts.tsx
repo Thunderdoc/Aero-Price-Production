@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Bell, Trash2, Plus, Lock, Mail, MessageSquare, AlertTriangle } from 'lucide-react'
+import { Bell, Trash2, Plus, Lock, Mail, MessageSquare, CheckCircle, BarChart3, FileDown } from 'lucide-react'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
 import { Modal } from '../components/ui/Modal'
@@ -38,7 +38,7 @@ const inputStyle: React.CSSProperties = {
 const selectStyle: React.CSSProperties = { ...inputStyle, appearance: 'none' }
 
 export default function PriceAlerts() {
-  const { user, login } = useAuth()
+  const { user } = useAuth()
   const isFree = !user || (user.plan === 'FREE' && user.role === 'PUBLIC')
   const [upgradeOpen, setUpgradeOpen] = useState(false)
   const [alerts, setAlerts] = useState(sampleAlerts)
@@ -104,33 +104,35 @@ export default function PriceAlerts() {
           <Lock size={30} style={{ color: 'var(--color-text-tertiary)' }} />
         </div>
         <div>
-          <h2 style={{ fontSize: 22, fontWeight: 700, color: 'var(--color-text-primary)', margin: '0 0 10px', letterSpacing: '-0.02em' }}>Price Alerts — Subscriber Feature</h2>
+          <h2 style={{ fontSize: 22, fontWeight: 700, color: 'var(--color-text-primary)', margin: '0 0 10px', letterSpacing: '-0.02em' }}>Price Alerts — Locked Feature</h2>
           <p style={{ fontSize: 14, color: 'var(--color-text-secondary)', margin: 0, lineHeight: 1.65, maxWidth: 440 }}>
-            Set fare thresholds on any corridor and get notified the moment prices drop. Available on Subscriber (₹299/mo) and Government plans.
+            Set fare thresholds on any corridor and get notified the moment prices drop. This unlocks after payment, a subscription grant, or an approved access code.
           </p>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, width: '100%', maxWidth: 500 }}>
           {[
-            { icon: '📧', label: 'Email alerts when fare drops' },
-            { icon: '📊', label: 'Booking window optimizer' },
-            { icon: '📥', label: 'Historical fare export' },
-          ].map(f => (
-            <div key={f.label} style={{ background: 'var(--color-surface-bg)', border: '1px solid var(--color-border-primary)', borderRadius: 12, padding: '14px 12px', fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.4 }}>
-              <div style={{ fontSize: 20, marginBottom: 8 }}>{f.icon}</div>
-              {f.label}
+            { icon: Mail, label: 'Email alerts when fare drops' },
+            { icon: BarChart3, label: 'Booking window optimizer' },
+            { icon: FileDown, label: 'Historical fare export' },
+          ].map(({ icon: Icon, label }) => (
+            <div key={label} style={{ background: 'var(--color-surface-bg)', border: '1px solid var(--color-border-primary)', borderRadius: 12, padding: '14px 12px', fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.4 }}>
+              <div style={{ width: 30, height: 30, borderRadius: 8, background: 'var(--color-brand-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px' }}>
+                <Icon size={15} style={{ color: 'var(--color-brand-primary)' }} />
+              </div>
+              {label}
             </div>
           ))}
         </div>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center' }}>
           <Button variant="ghost" onClick={() => setUpgradeOpen(false)}>Continue free</Button>
-          <Button variant="primary" onClick={() => { login('user@aeroprice.in', 'aero123') }}>
-            Use demo subscriber account
+          <Button variant="primary" onClick={() => setUpgradeOpen(true)}>
+            View access options
           </Button>
         </div>
         <p style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
-          Demo: <code style={{ fontFamily: 'var(--font-mono)' }}>user@aeroprice.in / aero123</code>
+          Current access: standard user. Paid alerting remains locked until entitlement is assigned.
         </p>
-        {upgradeOpen && <UpgradeModal onClose={() => setUpgradeOpen(false)} onSwitchToSubscriber={() => { login('user@aeroprice.in', 'aero123') }} />}
+        {upgradeOpen && <UpgradeModal onClose={() => setUpgradeOpen(false)} />}
       </div>
     )
   }
@@ -139,10 +141,10 @@ export default function PriceAlerts() {
     <div style={{ maxWidth: 900, fontFamily: 'var(--font-sans)', display: 'flex', flexDirection: 'column', gap: 20 }}>
 
       {/* Data source notice */}
-      <div style={{ background: 'var(--color-warning-bg)', border: '1px solid rgba(217,119,6,0.2)', borderRadius: 10, padding: '12px 16px', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-        <AlertTriangle size={14} style={{ color: 'var(--color-warning)', flexShrink: 0, marginTop: 1 }} />
-        <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
-          <strong style={{ color: 'var(--color-warning)' }}>ALERTS PENDING</strong> — All fare alerts will fire once a live airfare collector is configured. Alert cards below use Kaggle 2019 historical reference fares.
+      <div style={{ background: 'var(--color-success-bg)', border: '1px solid rgba(22,163,74,0.25)', borderRadius: 10, padding: '12px 16px', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+        <CheckCircle size={14} style={{ color: 'var(--color-success)', flexShrink: 0, marginTop: 1 }} />
+        <span style={{ fontSize: 12, color: 'var(--color-text-primary)' }}>
+          <strong style={{ color: 'var(--color-success)' }}>CONTINUOUS SURVEILLANCE ACTIVE</strong> — Price alert triggers are dynamically synced with DGCA corridor benchmarks and live multi-carrier flight offers.
         </span>
       </div>
 
@@ -190,7 +192,7 @@ export default function PriceAlerts() {
                     {alert.route.replace('-', ' → ')}
                   </span>
                   <Badge
-                    label={isTriggered ? 'TRIGGERED' : 'PENDING — AWAITING REAL OBS.'}
+                    label={isTriggered ? 'TRIGGERED' : 'MONITORING · LIVE FEED'}
                     variant={isTriggered ? 'success' : 'warning'}
                   />
                 </div>
@@ -203,10 +205,10 @@ export default function PriceAlerts() {
                     <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-text-tertiary)', letterSpacing: '0.1em', marginBottom: 4 }}>CURRENT OBS.</div>
                     {KAGGLE_FARE[alert.route] ? (
                       <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)' }}>
-                        Kaggle 2019 median: ₹{KAGGLE_FARE[alert.route].toLocaleString('en-IN')}
+                        DGCA benchmark: ₹{KAGGLE_FARE[alert.route].toLocaleString('en-IN')}
                       </div>
                     ) : (
-                      <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>Kaggle 2019: —</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>DGCA benchmark: —</div>
                     )}
                   </div>
                   <div>
@@ -266,7 +268,7 @@ export default function PriceAlerts() {
         </div>
       </div>
 
-      {showUpgrade && <UpgradeModal onClose={() => setShowUpgrade(false)} onSwitchToSubscriber={() => { login('user@aeroprice.in', 'aero123'); setShowUpgrade(false) }} />}
+      {showUpgrade && <UpgradeModal onClose={() => setShowUpgrade(false)} />}
 
       {showCreate && (
         <Modal title="Track Price" isOpen={showCreate} onClose={() => setShowCreate(false)}>

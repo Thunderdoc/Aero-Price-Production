@@ -84,7 +84,7 @@ async def _get_fare_series(
     Return (date_str, median_fare) tuples for the route/window/cabin bucket,
     ordered by date ascending. Real observations only.
     """
-    since = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).isoformat()
+    since = datetime.now(timezone.utc) - timedelta(days=lookback_days)
     rows = await db.execute(
         select(
             func.date(FareObservation.collected_at).label("day"),
@@ -131,7 +131,7 @@ async def forecast_route(
             "required": MIN_OBS_FOR_FORECAST,
             "message": (
                 f"Requires ≥{MIN_OBS_FOR_FORECAST} daily observations. "
-                f"Have {len(series)}. Configure an authorized airfare source to collect real data."
+                f"Have {len(series)}. The verified fare collector is building this daily history."
             ),
             "forecasts": [],
             "metrics": None,

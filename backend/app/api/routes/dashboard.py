@@ -7,6 +7,7 @@ from app.core.auth import get_current_user
 from app.models.fare import FareObservation
 from app.models.collection import CollectionRun, SourceHealth
 from app.models.government import DgcaMonthlyRecord
+from app.models.index import IndexObservation
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -22,13 +23,13 @@ async def dashboard_summary(
 
     real_obs_total = await db.scalar(
         select(func.count()).select_from(FareObservation)
-        .where(FareObservation.data_origin != "GENERATED_TEST")
+        .where(FareObservation.data_origin.in_(["REAL", "OFFICIAL"]))
     ) or 0
 
     real_obs_24h = await db.scalar(
         select(func.count()).select_from(FareObservation)
         .where(and_(
-            FareObservation.data_origin != "GENERATED_TEST",
+            FareObservation.data_origin.in_(["REAL", "OFFICIAL"]),
             FareObservation.collected_at >= since_24h,
         ))
     ) or 0
@@ -51,13 +52,37 @@ async def dashboard_summary(
         ).limit(1)
     )
 
+    latest_index = await db.scalar(
+        select(IndexObservation)
+        .where(IndexObservation.status == "PUBLISHED")
+        .order_by(IndexObservation.calculation_ts.desc())
+        .limit(1)
+    )
+    index_status = latest_index.status if latest_index else "NOT_PUBLISHED"
+    index_value = latest_index.index_value if latest_index else None
+    note = (
+        "Verified airfare observations are available. Route trends require a later collection for comparison."
+        if latest_index else
+        "No published live airfare index yet."
+    )
+
     return {
         "timestamp": now.isoformat(),
+        # Flat fields are consumed by the Overview UI. Keep the nested blocks for
+        # API clients that already use the earlier dashboard response shape.
+        "real_observations": real_obs_total,
+        "sources_live": len(live_sources),
+        "sources_challenge_detected": len(challenge_sources),
+        "gov_datasets_connected": 1 if dgca_latest else 0,
+        "collection_runs_today": 0,
+        "index_status": index_status,
+        "index_value": index_value,
+        "note": note,
         "index": {
-            "value": None,
-            "status": "INSUFFICIENT_DATA",
-            "message": "No real airfare observations. Requires ≥15 matched corridors.",
-            "data_origin": "NO_DATA",
+            "value": index_value,
+            "status": index_status,
+            "message": note,
+            "data_origin": latest_index.data_origin if latest_index else "NO_DATA",
         },
         "observations": {
             "total_real": real_obs_total,

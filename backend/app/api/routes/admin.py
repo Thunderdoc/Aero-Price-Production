@@ -2,7 +2,7 @@
 Admin API: user management, source configuration, anomaly detection, audit log.
 All endpoints require ADMIN role.
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from datetime import datetime, timezone
@@ -35,7 +35,7 @@ async def list_users(
 
 @router.get("/admin/audit-log")
 async def audit_log(
-    limit: int = 50,
+    limit: int = Query(default=50, ge=1, le=200),
     current_user=Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -63,7 +63,7 @@ async def audit_log(
 
 @router.post("/admin/anomaly-detection/run")
 async def run_anomaly_detection(
-    lookback_days: int = 30,
+    lookback_days: int = Query(default=30, ge=1, le=365),
     current_user=Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -86,7 +86,7 @@ async def system_metrics(
 ):
     obs_count = await db.scalar(
         select(func.count()).select_from(FareObservation)
-        .where(FareObservation.data_origin != "GENERATED_TEST")
+        .where(FareObservation.data_origin.in_(["REAL", "OFFICIAL"]))
     )
     source_count = await db.scalar(
         select(func.count()).select_from(SourceHealth)
@@ -99,8 +99,8 @@ async def system_metrics(
         "real_observations": obs_count or 0,
         "source_health_rows": source_count or 0,
         "sources_challenge_detected": challenge_count or 0,
-        "all_airline_sources_blocked": True,
-        "note": "All 5 Indian airline sources return CHALLENGE_DETECTED. "
-                "Configure NDC credentials to enable authorized data collection.",
+        "all_airline_sources_blocked": False if obs_count else True,
+        "note": "Verified aggregator fares are available. Direct airline sites may remain unavailable without authorized NDC access."
+                if obs_count else "No verified live fares have been collected yet.",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }

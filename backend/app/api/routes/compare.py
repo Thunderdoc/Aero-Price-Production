@@ -32,7 +32,7 @@ async def compare_routes(
     if not route_list:
         return {"error": "No routes provided", "routes": []}
 
-    since = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).isoformat()
+    since = datetime.now(timezone.utc) - timedelta(days=lookback_days)
     result = []
 
     for route in route_list:
@@ -41,7 +41,7 @@ async def compare_routes(
             .where(and_(
                 FareObservation.route == route,
                 FareObservation.advance_days == advance_days,
-                FareObservation.data_origin != "GENERATED_TEST",
+                FareObservation.data_origin.in_(["REAL", "OFFICIAL"]),
                 FareObservation.is_valid == True,
                 FareObservation.collected_at >= since,
             ))

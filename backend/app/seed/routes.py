@@ -4,7 +4,6 @@ Route basket seed data.
 Seeds the route_baskets table if it is empty.
 All 12 monitored domestic corridors with equal weights.
 """
-import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from app.models.index import RouteBasket
@@ -23,9 +22,12 @@ async def seed_route_basket(db: AsyncSession) -> int:
     if existing and existing > 0:
         return 0
     for route, weight in SEED_ROUTES:
+        origin, destination = route.split("-", 1)
         db.add(RouteBasket(
-            id=str(uuid.uuid4()),
-            route=route,
+            route_code=route,
+            origin=origin,
+            destination=destination,
+            region="DOMESTIC_TRUNK",
             weight=weight,
             active=True,
         ))

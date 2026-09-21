@@ -10,20 +10,22 @@ retries — 4xx errors are treated as terminal failures.
 import asyncio
 import time
 import hashlib
+import json
 import logging
+from calendar import month_abbr
 from datetime import datetime, timezone
+from urllib.parse import urlencode
 import httpx
 from bs4 import BeautifulSoup
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.config import settings
 from app.models.government import (
-    GovDataset, DgcaMonthlyRecord, MospiCpiRecord, DgcaCircular
+    GovDataset, DgcaMonthlyRecord, MospiCpiRecord, MospiTransportSeries, DgcaCircular
 )
 
 logger = logging.getLogger(__name__)
 
-ALLORIGINS = settings.ALLORIGINS_BASE
 TIMEOUT = 30.0
 MAX_RETRIES = 3
 BACKOFF_BASE_S = 2.0  # wait 2s, 4s, 8s between retries
@@ -36,7 +38,7 @@ GOV_DATASET_REGISTRY = [
         "access_type": "PUBLIC",
         "api_key_required": "NO",
         "format": "HTML",
-        "source_url": "https://dgca.gov.in/digigov-portal/",
+        "source_url": settings.DGCA_STATS_URL,
     },
     {
         "dataset_id": "dgca-circulars",
@@ -45,7 +47,7 @@ GOV_DATASET_REGISTRY = [
         "access_type": "PUBLIC",
         "api_key_required": "NO",
         "format": "HTML",
-        "source_url": "https://dgca.gov.in/digigov-portal/",
+        "source_url": settings.DGCA_CIRCULARS_URL,
     },
     {
         "dataset_id": "mospi-esankhyiki",
@@ -54,7 +56,7 @@ GOV_DATASET_REGISTRY = [
         "access_type": "PUBLIC",
         "api_key_required": "NO",
         "format": "HTML",
-        "source_url": "https://mospi.gov.in/",
+        "source_url": settings.MOSPI_ESANKHYIKI_URL,
     },
     {
         "dataset_id": "data-gov-in",
@@ -65,45 +67,68 @@ GOV_DATASET_REGISTRY = [
         "format": "JSON",
         "source_url": "https://data.gov.in/",
     },
+    {
+        "dataset_id": "dgca-fleet",
+        "source_name": "DGCA Aircraft Fleet Reference",
+        "organization": "Directorate General of Civil Aviation",
+        "access_type": "PUBLIC",
+        "api_key_required": "NO",
+        "format": "HTML",
+        "source_url": settings.DGCA_FLEET_URL,
+    },
 ]
 
 
-async def _allorigins_get(url: str) -> dict:
+async def ensure_gov_dataset_registry(db: AsyncSession) -> int:
+    """Seed source metadata even when scheduled network collection is disabled."""
+    added = 0
+    for meta in GOV_DATASET_REGISTRY:
+        if await db.get(GovDataset, meta["dataset_id"]):
+            continue
+        db.add(GovDataset(**meta, status="NOT_FETCHED"))
+        added += 1
+    if added:
+        await db.commit()
+    return added
+
+
+async def _official_get(url: str) -> dict:
     """
-    Fetch URL via AllOrigins proxy with exponential backoff retry.
+    Fetch an official source directly with exponential backoff retry.
 
     Returns {contents, status_code, latency_ms}.
     Raises the last exception after MAX_RETRIES attempts.
     """
-    proxy_url = f"{ALLORIGINS}{url}"
     last_exc: Exception = RuntimeError("No attempts made")
     start = time.time()
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-                resp = await client.get(proxy_url)
+            async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True, trust_env=False, headers={
+                "User-Agent": "AeroPriceIndia/1.0 (public-data-monitor)",
+                "Accept": "text/html,application/xhtml+xml,application/json,text/csv,*/*;q=0.8",
+            }) as client:
+                resp = await client.get(url)
                 resp.raise_for_status()
-                data = resp.json()
                 return {
-                    "contents": data.get("contents", ""),
-                    "status_code": data.get("status", {}).get("http_code", 200),
+                    "contents": resp.text,
+                    "status_code": resp.status_code,
                     "latency_ms": int((time.time() - start) * 1000),
                 }
         except httpx.HTTPStatusError as e:
             last_exc = e
             # 4xx = not retryable (content not found, bad URL)
             if 400 <= e.response.status_code < 500:
-                logger.warning(f"AllOrigins {url}: HTTP {e.response.status_code} — not retrying")
+                logger.warning(f"Official source {url}: HTTP {e.response.status_code} — not retrying")
                 raise
-            logger.warning(f"AllOrigins {url}: attempt {attempt}/{MAX_RETRIES} → HTTP {e.response.status_code}")
+            logger.warning(f"Official source {url}: attempt {attempt}/{MAX_RETRIES} → HTTP {e.response.status_code}")
         except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as e:
             last_exc = e
-            logger.warning(f"AllOrigins {url}: attempt {attempt}/{MAX_RETRIES} → {type(e).__name__}")
+            logger.warning(f"Official source {url}: attempt {attempt}/{MAX_RETRIES} → {type(e).__name__}")
 
         if attempt < MAX_RETRIES:
             wait = BACKOFF_BASE_S * (2 ** (attempt - 1))
-            logger.debug(f"AllOrigins retry in {wait:.1f}s")
+            logger.debug(f"Official-source retry in {wait:.1f}s")
             await asyncio.sleep(wait)
 
     raise last_exc
@@ -156,7 +181,7 @@ async def fetch_dgca_monthly(db: AsyncSession) -> dict:
     Public HTML table — no authentication required.
     """
     try:
-        result = await _allorigins_get(settings.DGCA_STATS_URL)
+        result = await _official_get(settings.DGCA_STATS_URL)
         html = result["contents"]
         soup = BeautifulSoup(html, "lxml")
 
@@ -198,7 +223,7 @@ async def fetch_dgca_monthly(db: AsyncSession) -> dict:
         await db.commit()
 
         if records_saved == 0:
-            # AllOrigins returned HTML but no parseable table — common for DGCA portal
+            # The public page was available but did not contain a usable table.
             logger.warning("DGCA: HTML fetched but no table rows parsed. Portal may have changed structure.")
             await _upsert_dataset_status(db, "dgca-pax", "STALE",
                 failure_reason="HTML fetched but no parseable table rows found.")
@@ -214,54 +239,108 @@ async def fetch_dgca_monthly(db: AsyncSession) -> dict:
 
 
 async def fetch_mospi_cpi(db: AsyncSession) -> dict:
-    """
-    Fetch MoSPI CPI-Transport sub-index.
-    MoSPI portal is an Angular SPA — AllOrigins returns skeleton HTML without data.
-    Falls back to STALE status with an honest note.
+    """Import official all-India Combined transport series, separated by base year.
+
+    The MoSPI host requires legacy TLS renegotiation on some machines. Windows
+    curl uses Schannel successfully while keeping certificate verification on.
     """
     try:
-        result = await _allorigins_get("https://mospi.gov.in/")
-        html = result["contents"]
+        now = datetime.now(timezone.utc)
+        stored = await db.execute(select(MospiTransportSeries))
+        existing = {(row.base_year, row.period): row for row in stored.scalars().all()}
+        saved = 0
+        updated = 0
 
-        if len(html) < 500:
-            await _upsert_dataset_status(
-                db, "mospi-esankhyiki", "STALE",
-                failure_reason="MoSPI portal is a JS SPA — AllOrigins returns skeleton only. "
-                "Direct API integration or manual download required.",
+        async def request(params: dict) -> dict:
+            url = f"{settings.MOSPI_CPI_API_URL}?{urlencode(params)}"
+            proc = await asyncio.create_subprocess_exec(
+                "curl.exe", "--fail", "--silent", "--show-error", "--max-time", "30", url,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             )
-            return {"status": "STALE", "records": 0, "note": "JS SPA — direct fetch not available"}
+            out, err = await proc.communicate()
+            if proc.returncode != 0:
+                raise RuntimeError(f"MoSPI request failed: {err.decode(errors='replace')[:160]}")
+            payload = json.loads(out)
+            if payload.get("statusCode") is not True:
+                raise RuntimeError(f"MoSPI rejected query: {str(payload.get('error') or payload.get('msg'))[:160]}")
+            return payload
 
-        soup = BeautifulSoup(html, "lxml")
-        records_saved = 0
-        # Parse tables if present in static fallback
-        for table in soup.find_all("table"):
-            rows = table.find_all("tr")
-            for row in rows[1:]:
-                cells = row.find_all(["td"])
-                if len(cells) < 2:
-                    continue
-                try:
-                    period = cells[0].get_text(strip=True)
-                    cpi = float(cells[1].get_text(strip=True).replace(",", ""))
-                    existing = await db.scalar(
-                        select(MospiCpiRecord).where(MospiCpiRecord.period == period)
-                    )
-                    if not existing:
-                        db.add(MospiCpiRecord(period=period, cpi_transport=cpi, source="OFFICIAL"))
-                        records_saved += 1
-                except (ValueError, IndexError):
-                    continue
-        await db.commit()
+        def accept(row: dict, base_year: int, url: str) -> bool:
+            nonlocal saved, updated
+            if row.get("state") != "All India" or row.get("sector") != "Combined":
+                return False
+            if base_year == 2012:
+                if row.get("subgroup") != "Transport and Communication":
+                    return False
+                definition = "Transport and Communication"
+            else:
+                if row.get("code") != "07" or row.get("division") != "Transport" or row.get("group"):
+                    return False
+                definition = "Transport"
+            month = next((i for i, name in enumerate(month_abbr) if name.lower() == str(row.get("month", ""))[:3].lower()), 0)
+            try:
+                year = int(row["year"])
+                value = float(row["index"])
+            except (KeyError, TypeError, ValueError):
+                return False
+            if not 1 <= month <= 12 or not 0 < value < 1000:
+                return False
+            period = f"{year}-{month:02d}"
+            key = (base_year, period)
+            item = existing.get(key)
+            if item is None:
+                item = MospiTransportSeries(base_year=base_year, period=period, value=value,
+                    definition=definition, series=str(row.get("series") or "Current"),
+                    publisher_status=row.get("status"), source_url=url)
+                db.add(item)
+                existing[key] = item
+                saved += 1
+            elif item.value != value:
+                item.value = value
+                item.retrieved_at = now
+                item.publisher_status = row.get("status")
+                updated += 1
+            return True
 
-        if records_saved > 0:
-            await _upsert_dataset_status(db, "mospi-esankhyiki", "CONNECTED", record_count=records_saved)
-            return {"status": "CONNECTED", "records": records_saved}
-        else:
-            await _upsert_dataset_status(
-                db, "mospi-esankhyiki", "STALE",
-                failure_reason="No parseable CPI data in response. JS SPA requires direct API.",
-            )
-            return {"status": "STALE", "records": 0}
+        # Base 2012: the publisher serves Jan 2013-Dec 2025. One year spans
+        # about four API pages after the official state/sector filters.
+        for year in range(2013, min(now.year, 2025) + 1):
+            if all((2012, f"{year}-{month:02d}") in existing for month in range(1, 13)):
+                continue
+            params = {"base_year": 2012, "level": "Group", "year": year,
+                "state_code": 99, "sector_code": 3, "limit": 100}
+            first = await request({**params, "page": 1})
+            pages = int(first.get("meta_data", {}).get("totalPages", 0))
+            if pages < 1 or pages > 20:
+                raise RuntimeError(f"Unexpected MoSPI pagination for {year}: {pages}")
+            for page in range(1, pages + 1):
+                payload = first if page == 1 else await request({**params, "page": page})
+                url = f"{settings.MOSPI_CPI_API_URL}?{urlencode({**params, 'page': page})}"
+                for row in payload.get("data", []):
+                    accept(row, 2012, url)
+            await db.commit()
+
+        # Base 2024: transport is division 07. The API currently publishes
+        # monthly rows from 2025; never splice their levels into base 2012.
+        for year in range(2025, now.year + 1):
+            for month in range(1, 13 if year < now.year else now.month + 1):
+                period = f"{year}-{month:02d}"
+                if (2024, period) in existing and period != f"{now.year}-{now.month:02d}":
+                    continue
+                params = {"base_year": 2024, "year": year, "month_code": month,
+                    "state_code": 1, "sector_code": 3, "division_code": "07", "limit": 100, "page": 1}
+                payload = await request(params)
+                url = f"{settings.MOSPI_CPI_API_URL}?{urlencode(params)}"
+                for row in payload.get("data", []):
+                    accept(row, 2024, url)
+            await db.commit()
+
+        total = len(existing)
+        status = "CONNECTED" if total else "STALE"
+        await _upsert_dataset_status(db, "mospi-esankhyiki", status, record_count=total,
+            reference_period="2013-present" if total else None,
+            failure_reason=None if total else "Official API returned no matching transport rows.")
+        return {"status": status, "records": total, "saved": saved, "updated": updated}
 
     except Exception as e:
         logger.error(f"MoSPI fetch failed: {e}")
@@ -271,7 +350,7 @@ async def fetch_mospi_cpi(db: AsyncSession) -> dict:
 
 async def fetch_dgca_circulars(db: AsyncSession) -> dict:
     try:
-        result = await _allorigins_get(settings.DGCA_STATS_URL)
+        result = await _official_get(settings.DGCA_CIRCULARS_URL)
         html = result["contents"]
         soup = BeautifulSoup(html, "lxml")
 
@@ -311,6 +390,24 @@ async def fetch_dgca_circulars(db: AsyncSession) -> dict:
         return {"status": "FAILED", "error": str(e)}
 
 
+async def fetch_dgca_fleet_source(db: AsyncSession) -> dict:
+    """Verify the official DGCA fleet-reference page without inventing fleet counts.
+
+    DGCA does not expose a stable machine-readable fleet table at this URL.  The
+    source is therefore marked CONNECTED only when it is reachable; the UI can
+    accurately distinguish an available source from published fleet records.
+    """
+    try:
+        result = await _official_get(settings.DGCA_FLEET_URL)
+        await _upsert_dataset_status(db, "dgca-fleet", "CONNECTED", record_count=0,
+            failure_reason="Official source reachable; a machine-readable fleet table has not been published.")
+        return {"status": "CONNECTED", "records": 0, "latency_ms": result["latency_ms"]}
+    except Exception as e:
+        logger.error(f"DGCA fleet source check failed: {e}")
+        await _upsert_dataset_status(db, "dgca-fleet", "FAILED", failure_reason=str(e)[:500])
+        return {"status": "FAILED", "error": str(e)}
+
+
 async def run_gov_fetches(db: AsyncSession):
     """Run all government data fetches. Called by scheduler and /government/refresh."""
     logger.info("Starting government data refresh")
@@ -318,5 +415,6 @@ async def run_gov_fetches(db: AsyncSession):
     results["dgca_monthly"] = await fetch_dgca_monthly(db)
     results["mospi_cpi"] = await fetch_mospi_cpi(db)
     results["dgca_circulars"] = await fetch_dgca_circulars(db)
+    results["dgca_fleet"] = await fetch_dgca_fleet_source(db)
     logger.info(f"Government data refresh complete: {results}")
     return results

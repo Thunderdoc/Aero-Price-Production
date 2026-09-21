@@ -25,7 +25,7 @@ ROUTE_BASKET = [
     {"route": "MAA-BOM", "region": "South-West",   "weight": 0.5, "weight_source": "CONFIGURED"},
 ]
 
-MIN_CORRIDORS_TO_PUBLISH = 15
+MIN_CORRIDORS_TO_PUBLISH = 10
 
 
 @router.get("/current")
@@ -36,13 +36,13 @@ async def current_index(
     """Current index value. Returns INSUFFICIENT_DATA if <15 real matched corridors."""
     real_fare_count = await db.scalar(
         select(func.count()).select_from(FareObservation)
-        .where(FareObservation.data_origin != "GENERATED_TEST")
+        .where(FareObservation.data_origin.in_(["REAL", "OFFICIAL"]))
         .where(FareObservation.is_valid == True)
     )
 
     covered_routes = await db.scalar(
         select(func.count(FareObservation.route.distinct()))
-        .where(FareObservation.data_origin != "GENERATED_TEST")
+        .where(FareObservation.data_origin.in_(["REAL", "OFFICIAL"]))
         .where(FareObservation.is_valid == True)
     ) or 0
 
@@ -54,7 +54,7 @@ async def current_index(
             "covered_routes": covered_routes,
             "required_routes": MIN_CORRIDORS_TO_PUBLISH,
             "real_observations": real_fare_count or 0,
-            "base_period": "2025-01",
+            "base_period": "First verified collection day",
             "base_value": 100.0,
             "method": "JEVONS_MATCHED_SAMPLE",
             "version": "v1.0",

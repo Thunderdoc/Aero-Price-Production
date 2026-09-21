@@ -48,8 +48,10 @@ _ANALYTICAL_ELIGIBLE = frozenset({REAL, OFFICIAL})
 # Origins that may appear in the fares listing (production mode)
 _LIVE_LISTING_ELIGIBLE = frozenset({REAL, OFFICIAL})
 
-# Origins that may appear in the fares listing (demo mode)
-_DEMO_LISTING_ELIGIBLE = frozenset({REAL, OFFICIAL, SANDBOX_TEST, GENERATED_TEST})
+# Demo mode can expose sandbox responses for pipeline validation, but never
+# deterministic/generated fixtures. That prevents placeholder fares appearing
+# anywhere in the user-facing application.
+_DEMO_LISTING_ELIGIBLE = frozenset({REAL, OFFICIAL, SANDBOX_TEST})
 
 
 def assign_provenance(record: FareRecord, source_type: str, amadeus_env: str = "sandbox") -> str:
@@ -90,7 +92,7 @@ def is_production_eligible(record: FareRecord, data_mode: str) -> bool:
     Returns True if a record may be returned by the fares listing API.
 
     data_mode="live"  → only REAL and OFFICIAL
-    data_mode="demo"  → REAL, OFFICIAL, SANDBOX_TEST, GENERATED_TEST
+    data_mode="demo"  → REAL, OFFICIAL, SANDBOX_TEST
                         (SANDBOX_TEST shown with explicit provenance label)
 
     SANDBOX_TEST is never treated as REAL regardless of data_mode.

@@ -77,25 +77,38 @@ alter table price_alerts enable row level security;
 alter table app_settings enable row level security;
 alter table audit_log enable row level security;
 
+drop policy if exists "Public can read fares" on fare_observations;
+drop policy if exists "Service can insert fares" on fare_observations;
+drop policy if exists "Users see own alerts" on price_alerts;
+drop policy if exists "Users create own alerts" on price_alerts;
+drop policy if exists "Users update own alerts" on price_alerts;
+drop policy if exists "Users delete own alerts" on price_alerts;
+drop policy if exists "Public read settings" on app_settings;
+drop policy if exists "Service inserts audit" on audit_log;
+drop policy if exists "Anon reads audit" on audit_log;
+
 -- Allow anon read on fare_observations (public data)
 create policy "Public can read fares" on fare_observations
   for select using (true);
 
--- Allow anon insert (API writes fare data)
+-- Writes must use the backend service role; browser clients are read-only.
 create policy "Service can insert fares" on fare_observations
-  for insert with check (true);
+  for insert to service_role with check (true);
 
 -- Price alerts: users see only their own
 create policy "Users see own alerts" on price_alerts
-  for all using (true);  -- relax for demo; tighten with auth.uid() in production
+  for select using (auth.email() = user_email);
+create policy "Users create own alerts" on price_alerts
+  for insert with check (auth.email() = user_email);
+create policy "Users update own alerts" on price_alerts
+  for update using (auth.email() = user_email) with check (auth.email() = user_email);
+create policy "Users delete own alerts" on price_alerts
+  for delete using (auth.email() = user_email);
 
 -- App settings: read-only for anon
 create policy "Public read settings" on app_settings
   for select using (true);
 
--- Audit log: insert only
+-- Audit log is backend-only; never expose it to anonymous clients.
 create policy "Service inserts audit" on audit_log
-  for insert with check (true);
-
-create policy "Anon reads audit" on audit_log
-  for select using (true);
+  for insert to service_role with check (true);

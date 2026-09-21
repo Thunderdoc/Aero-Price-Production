@@ -3,7 +3,7 @@
  * Source: https://www.kaggle.com/datasets/nikhilmittal/flight-fare-prediction-mh/
  * Coverage: Indian domestic flights, March–June 2019
  * Observations: 10,683 training rows, 2,671 test rows
- * data_origin: GENERATED_TEST (historical public dataset, not real-time)
+ * data_origin: HISTORICAL_SNAPSHOT (historical public dataset, not real-time)
  *
  * These statistics are computed from the raw Excel files and baked in
  * to avoid runtime parsing. Update by re-running the analysis script.
@@ -15,7 +15,7 @@ export const DATASET_META = {
   total_train: 10683,
   total_test: 2671,
   coverage: 'Indian domestic, March–June 2019',
-  data_origin: 'GENERATED_TEST' as const,
+  data_origin: 'HISTORICAL_SNAPSHOT' as const,
   months: ['March', 'April', 'May', 'June'],
   price_unit: 'INR',
 }

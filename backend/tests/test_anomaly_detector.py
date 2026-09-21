@@ -20,7 +20,7 @@ def _compute_z(fares: list, value: float) -> float:
     variance = sum((f - mean) ** 2 for f in fares) / len(fares)
     stddev = math.sqrt(variance)
     if stddev == 0:
-        return 0.0
+        return math.inf if value != mean else 0.0
     return abs((value - mean) / stddev)
 
 

@@ -1,261 +1,367 @@
-import { useState, useEffect, useRef } from 'react'
-import { Radio, RefreshCw, AlertTriangle, Plane, Clock } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Activity, RefreshCw, ShieldCheck } from 'lucide-react'
 import { fetchAllCorridorFlights, type LiveFlight } from '../services/flightData'
 
-// ── India map projection ──────────────────────────────────────────────────────
 const proj = (lat: number, lng: number) => ({
-  x: (lng - 67.5) / 30 * 280,
-  y: (37.5 - lat) / 30 * 310,
+  x: ((lng - 67.5) / 30) * 280,
+  y: ((37.5 - lat) / 30) * 310,
 })
 
-const AIRPORTS: Record<string, { name: string; lat: number; lng: number; major: boolean }> = {
-  DEL:{ name:'Delhi',                lat:28.7, lng:77.1, major:true  },
-  BOM:{ name:'Mumbai',               lat:19.1, lng:72.9, major:true  },
-  BLR:{ name:'Bengaluru',            lat:12.9, lng:77.6, major:true  },
-  MAA:{ name:'Chennai',              lat:13.1, lng:80.3, major:true  },
-  HYD:{ name:'Hyderabad',            lat:17.4, lng:78.5, major:true  },
-  CCU:{ name:'Kolkata',              lat:22.6, lng:88.4, major:true  },
-  AMD:{ name:'Ahmedabad',            lat:23.1, lng:72.6, major:false },
-  GOI:{ name:'Goa',                  lat:15.4, lng:73.8, major:false },
-  LKO:{ name:'Lucknow',             lat:26.8, lng:80.9, major:false },
-  JAI:{ name:'Jaipur',              lat:26.8, lng:75.8, major:false },
-  PAT:{ name:'Patna',               lat:25.6, lng:85.1, major:false },
-  GAU:{ name:'Guwahati',            lat:26.1, lng:91.6, major:false },
+const INDIA_BORDER =
+  'M130,22 C132,18 138,12 144,14 C150,16 156,22 158,28 C160,34 168,36 172,42 C176,48 174,56 170,62 C168,68 166,74 168,80 C170,86 178,92 184,94 C190,96 198,94 204,98 C210,102 212,110 216,116 C220,122 226,124 232,126 C238,128 244,134 250,138 C254,142 258,148 260,154 C262,160 258,166 254,170 C248,174 242,176 238,182 C234,188 232,196 230,202 C228,208 224,214 220,218 C216,222 210,224 206,228 C202,232 198,238 194,244 C190,250 186,256 182,262 C178,268 172,274 168,280 C164,286 160,294 156,300 C152,306 148,312 144,316 C142,320 140,324 138,328 C136,324 134,318 132,312 C128,306 124,300 120,294 C116,288 112,282 108,276 C104,270 98,264 94,258 C90,252 86,246 84,240 C82,234 80,226 78,220 C76,214 72,208 68,202 C64,196 58,192 54,186 C50,180 46,172 44,166 C42,160 44,154 48,148 C52,142 58,138 64,134 C70,130 76,126 80,120 C84,114 88,108 92,102 C96,96 100,90 104,84 C108,78 112,70 116,64 C120,58 122,50 124,42 C126,34 128,26 130,22 Z'
+
+const AIRPORTS = {
+  DEL: { name: 'Delhi', lat: 28.7, lng: 77.1, major: true },
+  BOM: { name: 'Mumbai', lat: 19.1, lng: 72.9, major: true },
+  BLR: { name: 'Bengaluru', lat: 12.9, lng: 77.6, major: true },
+  MAA: { name: 'Chennai', lat: 13.1, lng: 80.3, major: true },
+  HYD: { name: 'Hyderabad', lat: 17.4, lng: 78.5, major: true },
+  CCU: { name: 'Kolkata', lat: 22.6, lng: 88.4, major: true },
+  AMD: { name: 'Ahmedabad', lat: 23.1, lng: 72.6, major: false },
+  GOI: { name: 'Goa', lat: 15.4, lng: 73.8, major: false },
+  GAU: { name: 'Guwahati', lat: 26.1, lng: 91.6, major: false },
+  SXR: { name: 'Srinagar', lat: 34.0, lng: 74.8, major: false },
 }
 
-const APS = Object.entries(AIRPORTS).reduce((acc, [code, ap]) => {
-  const { x, y } = proj(ap.lat, ap.lng)
-  acc[code] = { ...ap, code, x, y }
-  return acc
-}, {} as Record<string, { name: string; lat: number; lng: number; major: boolean; code: string; x: number; y: number }>)
+const AIRPORT_POINTS = Object.entries(AIRPORTS).map(([code, airport]) => ({
+  code,
+  ...airport,
+  ...proj(airport.lat, airport.lng),
+}))
 
 const CORRIDORS = [
-  { dep:'DEL', arr:'BOM' }, { dep:'DEL', arr:'BLR' }, { dep:'DEL', arr:'CCU' },
-  { dep:'BOM', arr:'MAA' }, { dep:'BLR', arr:'HYD' }, { dep:'DEL', arr:'HYD' },
-]
+  ['DEL', 'BOM'],
+  ['DEL', 'BLR'],
+  ['DEL', 'CCU'],
+  ['BOM', 'MAA'],
+  ['BLR', 'HYD'],
+  ['DEL', 'HYD'],
+  ['DEL', 'GAU'],
+  ['BOM', 'GOI'],
+  ['DEL', 'SXR'],
+] as const
 
-function statusColor(s: string) {
-  if (s === 'active')    return 'var(--color-success)'
-  if (s === 'landed')    return 'var(--color-info)'
-  if (s === 'cancelled') return 'var(--color-danger)'
-  if (s === 'scheduled') return 'var(--color-warning)'
-  return 'var(--color-text-tertiary)'
+function statusColor(status: string) {
+  if (status === 'active') return '#16a34a'
+  if (status === 'landed') return '#0284c7'
+  if (status === 'scheduled') return '#d97706'
+  return '#64748b'
+}
+
+function fmtTime(value: Date | null) {
+  return value
+    ? `${value.toLocaleTimeString('en-IN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        timeZone: 'Asia/Kolkata',
+      })} IST`
+    : 'not checked yet'
 }
 
 export default function AviationLive() {
   const [flights, setFlights] = useState<LiveFlight[]>([])
   const [loading, setLoading] = useState(false)
-  const [lastFetch, setLastFetch] = useState<Date|null>(null)
-  const [error, setError] = useState<string|null>(null)
-  const [apiDataCount, setApiDataCount] = useState(0)
-  const intervalRef = useRef<ReturnType<typeof setInterval>|null>(null)
+  const [lastFetch, setLastFetch] = useState<Date | null>(null)
+  const [selectedFlight, setSelectedFlight] = useState<LiveFlight | null>(null)
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   async function load() {
     setLoading(true)
-    setError(null)
     try {
       const results = await fetchAllCorridorFlights()
-      const all: LiveFlight[] = results.flatMap(r => r.flights)
+      const all = results.flatMap((result) => result.flights)
       setFlights(all)
-      setApiDataCount(all.length)
-      if (results.every(r => r.source === 'UNAVAILABLE')) {
-        setError(results[0]?.error ?? 'AviationStack unavailable')
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setSelectedFlight((prev) => prev ?? all[0] ?? null)
+    } catch {
+      setFlights([])
+      setSelectedFlight(null)
+    } finally {
+      setLoading(false)
+      setLastFetch(new Date())
     }
-    setLoading(false)
-    setLastFetch(new Date())
   }
 
   useEffect(() => {
-    load()
-    intervalRef.current = setInterval(load, 60_000)
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
+    void load()
+    intervalRef.current = setInterval(load, 30_000)
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current)
+    }
   }, [])
 
-  const activeFlights   = flights.filter(f => f.status === 'active')
-  const scheduledFlights = flights.filter(f => f.status === 'scheduled')
-  const landedFlights   = flights.filter(f => f.status === 'landed')
+  const stats = useMemo(
+    () => ({
+      active: flights.filter((flight) => flight.status === 'active').length,
+      scheduled: flights.filter((flight) => flight.status === 'scheduled').length,
+      landed: flights.filter((flight) => flight.status === 'landed').length,
+    }),
+    [flights],
+  )
+
+  const plottedFlights = flights.filter((flight) => flight.latitude != null && flight.longitude != null)
 
   return (
-    <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', fontFamily:'var(--font-sans)' }}>
-      {/* Header */}
-      <div style={{ padding:'16px 24px', flexShrink:0, display:'flex', alignItems:'center',
-        justifyContent:'space-between', borderBottom:'1px solid var(--color-border-primary)' }}>
-        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-          <Radio size={17} style={{ color:'var(--color-brand-primary)' }}/>
-          <h1 style={{ margin:0, fontSize:18, fontWeight:700, color:'var(--color-text-primary)', letterSpacing:'-0.01em' }}>
-            Live Flight Map
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18, minHeight: 'calc(100vh - 120px)', fontFamily: 'var(--font-sans)' }}>
+      <section
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          gap: 16,
+          alignItems: 'flex-start',
+          padding: '20px 24px',
+          background: 'var(--color-surface-bg)',
+          border: '1px solid var(--color-border-primary)',
+          borderRadius: 14,
+          boxShadow: 'var(--shadow-sm)',
+        }}
+      >
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <Activity size={16} style={{ color: 'var(--color-brand-primary)' }} />
+            <span style={{ fontSize: 11, fontWeight: 800, color: 'var(--color-brand-primary)', letterSpacing: '0.09em' }}>ADS-B AIRSPACE MONITOR</span>
+          </div>
+          <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: 'var(--color-text-primary)', letterSpacing: '-0.02em' }}>
+            India Airspace Monitor
           </h1>
-          <div style={{ width:7, height:7, borderRadius:'50%', background: error ? 'var(--color-warning)' : 'var(--color-success)',
-            boxShadow: `0 0 6px ${error ? 'var(--color-warning)' : 'var(--color-success)'}` }}/>
-          <span style={{ fontSize:11, color:'var(--color-text-tertiary)' }}>
-            {loading ? 'Refreshing…' : lastFetch ? `Updated ${lastFetch.toLocaleTimeString()}` : 'Not loaded'}
-          </span>
+          <p style={{ margin: '6px 0 0', maxWidth: 760, fontSize: 13, lineHeight: 1.55, color: 'var(--color-text-secondary)' }}>
+            Aircraft positions are displayed when the configured ADS-B provider returns telemetry. This is a situational view, not a complete ATC radar feed.
+          </p>
         </div>
-        <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-          <span style={{ fontSize:11, color:'var(--color-text-tertiary)' }}>
-            {apiDataCount > 0 ? `${apiDataCount} flights via AviationStack` : 'AviationStack — schedule only'}
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 7,
+              padding: '7px 11px',
+              borderRadius: 999,
+              background: plottedFlights.length ? 'rgba(22,163,74,0.12)' : 'rgba(217,119,6,0.12)',
+              border: `1px solid ${plottedFlights.length ? 'rgba(22,163,74,0.28)' : 'rgba(217,119,6,0.28)'}`,
+              color: plottedFlights.length ? 'var(--color-success)' : 'var(--color-warning)',
+              fontSize: 11,
+              fontWeight: 800,
+            }}
+          >
+            <ShieldCheck size={13} />
+            {plottedFlights.length ? `${plottedFlights.length} aircraft plotted` : 'telemetry unavailable'}
           </span>
-          <button onClick={load} disabled={loading}
-            style={{ display:'flex', alignItems:'center', gap:5, padding:'6px 12px', borderRadius:8,
-              border:'1px solid var(--color-border-primary)', background:'var(--color-surface-secondary)',
-              fontSize:11, color:'var(--color-text-secondary)', cursor: loading ? 'not-allowed' : 'pointer',
-              opacity: loading ? 0.6 : 1, fontFamily:'var(--font-sans)' }}>
-            <RefreshCw size={12} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }}/>
+          <button
+            onClick={load}
+            disabled={loading}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 7,
+              padding: '8px 13px',
+              borderRadius: 9,
+              border: '1px solid var(--color-border-primary)',
+              background: 'var(--color-surface-secondary)',
+              color: 'var(--color-text-primary)',
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: loading ? 'not-allowed' : 'pointer',
+            }}
+          >
+            <RefreshCw size={13} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
             Refresh
           </button>
         </div>
-      </div>
+      </section>
 
-      {/* AviationStack limitation notice */}
-      {error && (
-        <div style={{ padding:'10px 24px', flexShrink:0, display:'flex', alignItems:'center', gap:8,
-          background:'var(--color-warning-bg)', borderBottom:'1px solid rgba(217,119,6,0.2)' }}>
-          <AlertTriangle size={13} style={{ color:'var(--color-warning)', flexShrink:0 }}/>
-          <span style={{ fontSize:11, color:'var(--color-warning)' }}>
-            AviationStack: {error}. Free tier provides schedule data, not real-time positions. Map shows corridor routes.
-          </span>
-        </div>
-      )}
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 340px', gap: 18, flex: 1, minHeight: 620 }}>
+        <section
+          style={{
+            position: 'relative',
+            overflow: 'hidden',
+            borderRadius: 16,
+            background: '#f8fafc',
+            border: '1px solid var(--color-border-primary)',
+            boxShadow: 'var(--shadow-sm)',
+          }}
+        >
+          <div style={{ position: 'absolute', top: 14, left: 14, zIndex: 2, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {[
+              ['Active', stats.active, '#16a34a'],
+              ['Scheduled', stats.scheduled, '#d97706'],
+              ['Landed', stats.landed, '#0284c7'],
+            ].map(([label, value, color]) => (
+              <div
+                key={label}
+                style={{
+                  padding: '7px 10px',
+                  borderRadius: 10,
+                  background: 'rgba(255,255,255,0.92)',
+                  border: '1px solid var(--color-border-primary)',
+                  boxShadow: 'var(--shadow-sm)',
+                  display: 'flex',
+                  gap: 7,
+                  alignItems: 'center',
+                }}
+              >
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: color as string }} />
+                <span style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontWeight: 700 }}>{label}</span>
+                <span style={{ fontSize: 13, color: 'var(--color-text-primary)', fontWeight: 900, fontFamily: 'var(--font-mono)' }}>{value}</span>
+              </div>
+            ))}
+          </div>
 
-      <div style={{ flex:1, display:'flex', overflow:'hidden' }}>
-        {/* Map panel */}
-        <div style={{ flex:1, position:'relative', background:'var(--color-surface-canvas)',
-          borderRight:'1px solid var(--color-border-primary)' }}>
-          <svg viewBox="-10 0 300 320" width="100%" height="100%"
-            style={{ position:'absolute', inset:0 }}>
+          <svg viewBox="-12 0 304 322" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" style={{ position: 'absolute', inset: 0 }}>
             <defs>
-              <filter id="al-hub"><feGaussianBlur in="SourceGraphic" stdDeviation="4"/></filter>
-              <filter id="al-node"><feGaussianBlur in="SourceGraphic" stdDeviation="2.5"/></filter>
+              <filter id="soft-shadow">
+                <feDropShadow dx="0" dy="2" stdDeviation="2" floodOpacity="0.18" />
+              </filter>
+              <linearGradient id="india-fill" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#e0f2fe" />
+                <stop offset="100%" stopColor="#dbeafe" />
+              </linearGradient>
             </defs>
+            <rect x="-12" y="0" width="304" height="322" fill="#f8fafc" />
+            <path d="M0 162 H280 M140 20 V300" stroke="#dbeafe" strokeWidth="0.8" strokeDasharray="3 5" />
+            {[44, 82, 120].map((radius) => (
+              <circle key={radius} cx="140" cy="160" r={radius} fill="none" stroke="#dbeafe" strokeWidth="1" strokeDasharray="4 6" />
+            ))}
+            <path d={INDIA_BORDER} fill="url(#india-fill)" stroke="#2563eb" strokeWidth="1.6" filter="url(#soft-shadow)" />
 
-            {/* Corridor arcs */}
-            {CORRIDORS.map((c, i) => {
-              const a = APS[c.dep], b = APS[c.arr]
+            {CORRIDORS.map(([dep, arr]) => {
+              const a = AIRPORT_POINTS.find((point) => point.code === dep)
+              const b = AIRPORT_POINTS.find((point) => point.code === arr)
               if (!a || !b) return null
-              const mx = (a.x+b.x)/2, my = (a.y+b.y)/2 - 30
+              const mx = (a.x + b.x) / 2
+              const my = (a.y + b.y) / 2 - 18
+              return <path key={`${dep}-${arr}`} d={`M${a.x},${a.y} Q${mx},${my} ${b.x},${b.y}`} fill="none" stroke="#93c5fd" strokeWidth="1" strokeDasharray="4 4" />
+            })}
+
+            {AIRPORT_POINTS.map((airport) => (
+              <g key={airport.code}>
+                <circle cx={airport.x} cy={airport.y} r={airport.major ? 6.5 : 4.5} fill="#fff" stroke="#2563eb" strokeWidth="1.8" />
+                <circle cx={airport.x} cy={airport.y} r="2" fill="#2563eb" />
+                <text x={airport.x} y={airport.y + (airport.major ? 16 : 13)} textAnchor="middle" fontSize={airport.major ? 7.5 : 6} fontWeight="800" fill="#1e293b">
+                  {airport.code}
+                </text>
+              </g>
+            ))}
+
+            {plottedFlights.map((flight, index) => {
+              const point = proj(flight.latitude!, flight.longitude!)
+              const selected = selectedFlight?.flight_iata === flight.flight_iata
+              const showLabel = selected || index < 8
               return (
-                <g key={i}>
-                  <path d={`M${a.x},${a.y} Q${mx},${my} ${b.x},${b.y}`}
-                    fill="none" stroke="rgba(96,165,250,0.15)" strokeWidth="3" strokeLinecap="round"
-                    filter="url(#al-node)"/>
-                  <path d={`M${a.x},${a.y} Q${mx},${my} ${b.x},${b.y}`}
-                    fill="none" stroke="rgba(147,197,253,0.4)" strokeWidth="0.75"
-                    strokeDasharray="4 4" strokeLinecap="round"/>
+                <g key={`${flight.flight_iata}-${index}`} onClick={() => setSelectedFlight(flight)} style={{ cursor: 'pointer' }}>
+                  <circle cx={point.x} cy={point.y} r={selected ? 8 : 5} fill={`${statusColor(flight.status)}22`} stroke={statusColor(flight.status)} strokeWidth={selected ? 2 : 1.2} />
+                  <g transform={`translate(${point.x} ${point.y}) rotate(${flight.track_deg ?? 0})`}>
+                    <path d="M0 -5 L3 4 L0 2.6 L-3 4 Z" fill={statusColor(flight.status)} />
+                  </g>
+                  {showLabel && (
+                    <g>
+                      <rect x={point.x + 6} y={point.y - 9} width="36" height="16" rx="4" fill="#0f172a" opacity="0.9" />
+                      <text x={point.x + 10} y={point.y - 2} fontSize="5.2" fontWeight="800" fill="#e2e8f0" fontFamily="monospace">
+                        {flight.flight_iata || 'FLT'}
+                      </text>
+                      <text x={point.x + 10} y={point.y + 4} fontSize="4.2" fill="#bae6fd" fontFamily="monospace">
+                        {flight.altitude_ft ? `${Math.round(flight.altitude_ft / 1000)}k ft` : 'pos'}
+                      </text>
+                    </g>
+                  )}
                 </g>
               )
             })}
-
-            {/* Airport nodes */}
-            {Object.values(APS).map(ap => {
-              const isMajor = ap.major
-              return (
-                <g key={ap.code}>
-                  {isMajor && <circle cx={ap.x} cy={ap.y} r={18} fill="rgba(37,99,235,0.07)" filter="url(#al-hub)"/>}
-                  <circle cx={ap.x} cy={ap.y} r={isMajor?11:7}
-                    fill={isMajor?"rgba(37,99,235,0.2)":"rgba(37,99,235,0.1)"} filter="url(#al-node)"/>
-                  <circle cx={ap.x} cy={ap.y} r={isMajor?5.5:3.5}
-                    fill="none" stroke={isMajor?"rgba(147,197,253,0.7)":"rgba(147,197,253,0.45)"}
-                    strokeWidth={isMajor?1.1:0.8}/>
-                  <circle cx={ap.x} cy={ap.y} r={isMajor?2:1.4}
-                    fill={isMajor?"rgba(230,245,255,1)":"rgba(186,220,255,0.9)"}/>
-                  <text x={ap.x} y={ap.y + (isMajor?16:12)} textAnchor="middle"
-                    fontSize={isMajor?"6.5":"5.5"} fill="rgba(186,220,255,0.8)"
-                    fontFamily="var(--font-sans)" fontWeight="600">
-                    {ap.code}
-                  </text>
-                </g>
-              )
-            })}
-
-            {/* No-position notice */}
-            <text x="140" y="310" textAnchor="middle" fontSize="7" fill="rgba(147,197,253,0.5)"
-              fontFamily="var(--font-sans)">
-              AviationStack free tier: schedule data only · real-time positions unavailable
-            </text>
           </svg>
 
-          {/* KPI overlays */}
-          <div style={{ position:'absolute', top:12, left:12, display:'flex', flexDirection:'column', gap:6 }}>
-            {[
-              { label:'ACTIVE',    value: activeFlights.length,   color:'var(--color-success)' },
-              { label:'SCHEDULED', value: scheduledFlights.length, color:'var(--color-warning)' },
-              { label:'LANDED',    value: landedFlights.length,   color:'var(--color-info)' },
-            ].map(k => (
-              <div key={k.label} style={{ padding:'6px 10px', borderRadius:8,
-                background:'rgba(8,14,26,0.75)', border:`1px solid ${k.color}33`, backdropFilter:'blur(8px)',
-                display:'flex', alignItems:'center', gap:8 }}>
-                <div style={{ width:6, height:6, borderRadius:'50%', background:k.color,
-                  boxShadow:`0 0 4px ${k.color}` }}/>
-                <span style={{ fontSize:10, fontWeight:700, color:k.color, letterSpacing:'0.08em' }}>
-                  {k.label}
-                </span>
-                <span style={{ fontSize:13, fontWeight:800, color:'white', fontFamily:'var(--font-mono)' }}>
-                  {k.value}
-                </span>
-              </div>
-            ))}
+          <div
+            style={{
+              position: 'absolute',
+              bottom: 14,
+              left: 14,
+              right: 14,
+              display: 'flex',
+              justifyContent: 'space-between',
+              gap: 12,
+              alignItems: 'center',
+              padding: '10px 12px',
+              borderRadius: 12,
+              background: 'rgba(255,255,255,0.93)',
+              border: '1px solid var(--color-border-primary)',
+              boxShadow: 'var(--shadow-sm)',
+              fontSize: 11,
+              color: 'var(--color-text-secondary)',
+            }}
+          >
+            <span>Source: configured ADS-B/aviation provider. Coverage may be incomplete.</span>
+            <span style={{ fontFamily: 'var(--font-mono)' }}>Last checked: {fmtTime(lastFetch)}</span>
           </div>
-        </div>
+        </section>
 
-        {/* Sidebar — flights list */}
-        <div style={{ width:300, flexShrink:0, display:'flex', flexDirection:'column', overflow:'hidden' }}>
-          <div style={{ padding:'12px 14px', borderBottom:'1px solid var(--color-border-primary)',
-            display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-            <span style={{ fontSize:12, fontWeight:700, color:'var(--color-text-primary)' }}>
-              Flight Schedule
-            </span>
-            <span style={{ fontSize:10, color:'var(--color-text-tertiary)' }}>
-              {flights.length} total
-            </span>
+        <aside
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            borderRadius: 16,
+            background: 'var(--color-surface-bg)',
+            border: '1px solid var(--color-border-primary)',
+            boxShadow: 'var(--shadow-sm)',
+          }}
+        >
+          <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--color-border-primary)' }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--color-text-primary)' }}>Aircraft Stream</div>
+            <div style={{ marginTop: 3, fontSize: 11, color: 'var(--color-text-tertiary)' }}>{flights.length} rows returned by current provider</div>
           </div>
-          <div style={{ flex:1, overflowY:'auto' }}>
+          <div style={{ flex: 1, overflowY: 'auto' }}>
             {flights.length === 0 ? (
-              <div style={{ padding:24, textAlign:'center' }}>
-                <Plane size={24} style={{ color:'var(--color-text-tertiary)', marginBottom:10 }}/>
-                <p style={{ margin:0, fontSize:12, color:'var(--color-text-tertiary)', lineHeight:1.6 }}>
-                  {loading ? 'Fetching from AviationStack…' : 'No flights returned. AviationStack free tier may require active flights.'}
-                </p>
+              <div style={{ padding: 20, fontSize: 13, color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+                No aircraft telemetry is available right now. The page will retry automatically every 30 seconds.
               </div>
-            ) : flights.map((f, i) => (
-              <div key={`${f.flight_iata}-${i}`} style={{ padding:'10px 14px',
-                borderBottom:'1px solid var(--color-border-primary)',
-                background: i%2===0 ? 'transparent' : 'var(--color-surface-canvas)' }}>
-                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:4 }}>
-                  <span style={{ fontSize:13, fontWeight:700, color:'var(--color-text-primary)',
-                    fontFamily:'var(--font-mono)' }}>
-                    {f.flight_iata || '—'}
-                  </span>
-                  <span style={{ fontSize:9, fontWeight:700, padding:'2px 6px', borderRadius:99,
-                    color: statusColor(f.status),
-                    background: `${statusColor(f.status)}22`,
-                    letterSpacing:'0.08em', border:`1px solid ${statusColor(f.status)}44` }}>
-                    {f.status.toUpperCase()}
-                  </span>
-                </div>
-                <div style={{ fontSize:11, color:'var(--color-text-secondary)', marginBottom:3 }}>
-                  {f.airline_name || f.airline_iata}
-                </div>
-                <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-                  <span style={{ fontSize:11, fontFamily:'var(--font-mono)', color:'var(--color-text-primary)',
-                    fontWeight:600 }}>{f.dep_iata}</span>
-                  <span style={{ fontSize:9, color:'var(--color-text-tertiary)' }}>→</span>
-                  <span style={{ fontSize:11, fontFamily:'var(--font-mono)', color:'var(--color-text-primary)',
-                    fontWeight:600 }}>{f.arr_iata}</span>
-                  {f.dep_scheduled && (
-                    <span style={{ fontSize:10, color:'var(--color-text-tertiary)', marginLeft:'auto',
-                      display:'flex', alignItems:'center', gap:3 }}>
-                      <Clock size={10}/>
-                      {new Date(f.dep_scheduled).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}
-                    </span>
-                  )}
-                </div>
-              </div>
-            ))}
+            ) : (
+              flights.map((flight, index) => {
+                const selected = selectedFlight?.flight_iata === flight.flight_iata
+                return (
+                  <button
+                    key={`${flight.flight_iata}-${index}`}
+                    onClick={() => setSelectedFlight(flight)}
+                    style={{
+                      width: '100%',
+                      textAlign: 'left',
+                      padding: '12px 14px',
+                      border: 'none',
+                      borderBottom: '1px solid var(--color-border-primary)',
+                      borderLeft: selected ? '3px solid var(--color-brand-primary)' : '3px solid transparent',
+                      background: selected ? 'rgba(37,99,235,0.08)' : 'transparent',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
+                      <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>{flight.flight_iata || 'UNKNOWN'}</span>
+                      <span
+                        style={{
+                          fontSize: 9,
+                          fontWeight: 800,
+                          color: statusColor(flight.status),
+                          background: `${statusColor(flight.status)}18`,
+                          border: `1px solid ${statusColor(flight.status)}33`,
+                          borderRadius: 999,
+                          padding: '2px 7px',
+                        }}
+                      >
+                        {flight.status.toUpperCase()}
+                      </span>
+                    </div>
+                    <div style={{ marginTop: 4, fontSize: 11, color: 'var(--color-text-secondary)' }}>
+                      {flight.airline_name || flight.airline_iata || 'Unknown airline'} · {flight.registration || 'registration unavailable'}
+                    </div>
+                    <div style={{ marginTop: 4, display: 'flex', gap: 6, flexWrap: 'wrap', fontSize: 10, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>
+                      <span>
+                        {flight.dep_iata || '---'} -&gt; {flight.arr_iata || '---'}
+                      </span>
+                      {flight.altitude_ft != null && <span>{Math.round(flight.altitude_ft).toLocaleString()} ft</span>}
+                      {flight.ground_speed_kts != null && <span>{Math.round(flight.ground_speed_kts)} kts</span>}
+                    </div>
+                  </button>
+                )
+              })
+            )}
           </div>
-        </div>
+        </aside>
       </div>
     </div>
   )

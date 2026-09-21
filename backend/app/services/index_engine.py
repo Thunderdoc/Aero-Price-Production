@@ -23,11 +23,10 @@ from app.models.index import IndexObservation, IndexPublication, RouteBasket
 
 logger = logging.getLogger(__name__)
 
-BASE_PERIOD = "2025-01"
 BASE_VALUE = 100.0
 INDEX_VERSION = "v1.0"
 METHOD = "JEVONS_MATCHED_SAMPLE"
-MIN_CORRIDORS_TO_PUBLISH = 15
+MIN_CORRIDORS_TO_PUBLISH = 10
 MIN_OBS_PER_CORRIDOR = 3
 
 
@@ -67,14 +66,26 @@ async def calculate_index(
     Calculate the Jevons index for the observation period.
     Returns the result dict; caller decides whether to persist.
     """
-    period_start = f"{observation_period}T00:00:00+00:00"
-    period_end = f"{observation_period}T23:59:59+00:00"
+    # Use bound datetimes, not ISO strings: SQLite stores naive timestamps with
+    # a space separator, so lexical string comparison would miss same-day rows.
+    period_start = datetime.fromisoformat(f"{observation_period}T00:00:00")
+    period_end = datetime.fromisoformat(f"{observation_period}T23:59:59")
 
-    # Base period: use first calendar day of BASE_PERIOD month
-    base_start = f"{BASE_PERIOD}-01T00:00:00+00:00"
-    base_month = datetime.strptime(BASE_PERIOD, "%Y-%m")
-    last_day = (base_month.replace(month=base_month.month % 12 + 1, day=1) - timedelta(days=1)).day
-    base_end = f"{BASE_PERIOD}-{last_day:02d}T23:59:59+00:00"
+    # Never create an artificial historic base. The first verified live-data
+    # day becomes the 100-point baseline for this local deployment.
+    first_observation = await db.scalar(
+        select(FareObservation.collected_at)
+        .where(FareObservation.data_origin.in_(["REAL", "OFFICIAL"]))
+        .where(FareObservation.is_valid == True)
+        .order_by(FareObservation.collected_at.asc()).limit(1)
+    )
+    if first_observation is None:
+        return {"status": "INSUFFICIENT_DATA", "index_value": None, "covered_routes": [],
+                "missing_routes": [r["route"] for r in routes], "n": 0, "required": MIN_CORRIDORS_TO_PUBLISH,
+                "message": "No verified live fare observations available."}
+    base_date = first_observation.date().isoformat()
+    base_start = datetime.fromisoformat(f"{base_date}T00:00:00")
+    base_end = datetime.fromisoformat(f"{base_date}T23:59:59")
 
     ratios = []
     covered_routes = []
@@ -114,7 +125,7 @@ async def calculate_index(
         "status": "CALCULATED",
         "index_value": round(jevons, 2),
         "base_value": BASE_VALUE,
-        "base_period": BASE_PERIOD,
+        "base_period": base_date,
         "n": n,
         "covered_routes": covered_routes,
         "missing_routes": missing_routes,
@@ -129,6 +140,15 @@ async def publish_index(db: AsyncSession, observation_period: str, routes: list[
     """Calculate and persist an index observation. Skip if insufficient data."""
     result = await calculate_index(db, observation_period, routes)
 
+    day_start = datetime.fromisoformat(f"{observation_period}T00:00:00")
+    day_end = datetime.fromisoformat(f"{observation_period}T23:59:59")
+    observation_count = await db.scalar(
+        select(func.count()).select_from(FareObservation)
+        .where(FareObservation.data_origin.in_(["REAL", "OFFICIAL"]))
+        .where(FareObservation.is_valid == True)
+        .where(FareObservation.collected_at >= day_start)
+        .where(FareObservation.collected_at <= day_end)
+    ) or 0
     obs = IndexObservation(
         publication_id=str(uuid.uuid4()),
         observation_period=observation_period,
@@ -136,9 +156,10 @@ async def publish_index(db: AsyncSession, observation_period: str, routes: list[
         status=result["status"] if result["status"] != "CALCULATED" else "PUBLISHED",
         index_version=INDEX_VERSION,
         method=METHOD,
-        base_period=BASE_PERIOD,
+        base_period=result.get("base_period", ""),
         base_value=BASE_VALUE,
         route_count=len(result.get("covered_routes", [])),
+        observation_count=observation_count,
         coverage_pct=len(result.get("covered_routes", [])) / max(len(routes), 1) * 100,
         data_origin=result.get("data_origin", "NO_DATA"),
     )
