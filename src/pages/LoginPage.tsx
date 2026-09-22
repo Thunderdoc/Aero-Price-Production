@@ -3,7 +3,7 @@ import { AlertCircle, ArrowRight, CheckCircle, Eye, EyeOff, Lock, Mail, Plane, S
 import { useAuth, type UserRole } from '../contexts/AuthContext'
 import type { Page } from '../components/AppShell'
 
-type AuthRole = 'USER' | 'TGC' | 'ADMIN'
+type AuthRole = 'USER' | 'DGCA' | 'ADMIN'
 const airportBg = '/airport-login-bg.jpg'
 
 const ROLE_CONFIG: Record<AuthRole, {
@@ -24,12 +24,12 @@ const ROLE_CONFIG: Record<AuthRole, {
     loadingLabel: 'Signing in...',
     destination: 'overview',
   },
-  TGC: {
-    label: 'TGC',
+  DGCA: {
+    label: 'DGCA',
     expectedRoles: ['ANALYST'],
-    emailLabel: 'TGC ID / Email',
-    emailPlaceholder: 'tgc@organization.in',
-    buttonLabel: 'TGC Sign In',
+    emailLabel: 'DGCA ID / Email',
+    emailPlaceholder: 'dgca@organization.in',
+    buttonLabel: 'DGCA Sign In',
     loadingLabel: 'Authenticating...',
     destination: 'government',
   },
@@ -307,6 +307,43 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           color: rgba(226,232,240,.9);
           font-size: clamp(16px, 1.2vw, 20px);
           line-height: 1.5;
+        }
+        .ap-airport-card {
+          margin-top: clamp(16px, 3vh, 28px);
+          width: min(520px, 92%);
+          display: grid;
+          grid-template-columns: 50px 1fr;
+          gap: 12px;
+          align-items: center;
+          padding: 12px 14px;
+          border-radius: 18px;
+          background: rgba(15,23,42,.48);
+          border: 1px solid rgba(147,197,253,.24);
+          box-shadow: 0 18px 44px rgba(2,8,23,.24);
+          backdrop-filter: blur(14px);
+        }
+        .ap-airport-mark {
+          width: 50px;
+          height: 50px;
+          border-radius: 15px;
+          display: grid;
+          place-items: center;
+          color: #e0f2fe;
+          background: linear-gradient(135deg, rgba(14,165,233,.95), rgba(37,99,235,.95));
+          box-shadow: 0 12px 28px rgba(14,165,233,.25);
+        }
+        .ap-airport-card strong {
+          display: block;
+          color: #f8fafc;
+          font-size: 14px;
+          letter-spacing: -.01em;
+        }
+        .ap-airport-card span {
+          display: block;
+          margin-top: 3px;
+          color: rgba(219,234,254,.82);
+          font-size: 12px;
+          line-height: 1.35;
         }
         .ap-foot {
           display: flex;
@@ -602,6 +639,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           .ap-pill { margin-bottom: 10px; padding: 7px 10px; }
           .ap-hero h1 { font-size: clamp(34px, 3.7vw, 56px); }
           .ap-hero p { font-size: 15px; max-width: 560px; }
+          .ap-airport-card { margin-top: 14px; padding: 10px 12px; }
           .ap-card { padding: 18px; }
           .ap-security { grid-template-columns: repeat(3, 1fr); gap: 5px; }
           .ap-security div { justify-content: center; font-size: 10px; }
@@ -611,7 +649,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           .ap-ministry-logo { width: 120px; }
           .ap-card-sub { display: none; }
           .ap-security { display: none; }
-          .ap-brand-sub, .ap-foot { display: none; }
+          .ap-brand-sub, .ap-foot, .ap-airport-card { display: none; }
         }
         @media (prefers-reduced-motion: reduce) {
           .ap-bg-media, .ap-left, .ap-panel, .ap-brand-icon {
@@ -677,12 +715,21 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           <p>
             Route-level fare intelligence, aviation data views, and policy-ready analytics for India&apos;s domestic air travel ecosystem.
           </p>
+          <div className="ap-airport-card">
+            <div className="ap-airport-mark">
+              <Plane size={24} aria-hidden="true" />
+            </div>
+            <div>
+              <strong>Chhatrapati Shivaji Maharaj International Airport</strong>
+              <span>Mumbai aviation corridor view for airfare access, DGCA workspace insights, and route intelligence.</span>
+            </div>
+          </div>
         </div>
 
         <footer className="ap-foot">
           <span>✈ Route intelligence</span>
           <span>◈ Secure role access</span>
-          <span>◎ User, TGC and Admin workspaces</span>
+          <span>◎ User, DGCA and Admin workspaces</span>
         </footer>
       </section>
 
@@ -714,7 +761,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           <div className="ap-mode-toggle" aria-label="Choose auth mode">
             <button type="button" className={authMode === 'login' ? 'active' : ''} onClick={() => { setAuthMode('login'); resetFeedback() }}>Sign in</button>
             {activeRole !== 'ADMIN' && (
-              <button type="button" className={authMode === 'create' ? 'active' : ''} onClick={() => { setAuthMode('create'); setActiveRole('USER'); resetFeedback() }}>Create account</button>
+              <button type="button" className={authMode === 'create' ? 'active' : ''} onClick={() => { setAuthMode('create'); resetFeedback() }}>Create account</button>
             )}
             {activeRole === 'ADMIN' && (
               <button type="button" disabled style={{ opacity: 0.45, cursor: 'not-allowed' }}>Admin by invite</button>
