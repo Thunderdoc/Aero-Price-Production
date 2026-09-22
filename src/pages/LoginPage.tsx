@@ -232,6 +232,18 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
             linear-gradient(90deg, rgba(2,8,23,.72) 0%, rgba(2,8,23,.38) 48%, rgba(239,246,255,.16) 100%),
             radial-gradient(circle at 26% 30%, rgba(37,99,235,.16), transparent 34%);
         }
+        .ap-login::before {
+          content: '';
+          position: absolute;
+          inset: 0;
+          z-index: 1;
+          pointer-events: none;
+          background-image:
+            linear-gradient(rgba(255,255,255,.045) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+          background-size: 72px 72px;
+          mask-image: linear-gradient(90deg, rgba(0,0,0,.65), transparent 68%);
+        }
         .ap-left {
           position: relative;
           z-index: 1;
@@ -289,6 +301,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           text-transform: uppercase;
           backdrop-filter: blur(12px);
           margin-bottom: clamp(12px, 2vh, 20px);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 16px 40px rgba(2,8,23,.22);
         }
         .ap-hero h1 {
           margin: 0;
@@ -307,43 +320,6 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           color: rgba(226,232,240,.9);
           font-size: clamp(16px, 1.2vw, 20px);
           line-height: 1.5;
-        }
-        .ap-airport-card {
-          margin-top: clamp(16px, 3vh, 28px);
-          width: min(520px, 92%);
-          display: grid;
-          grid-template-columns: 50px 1fr;
-          gap: 12px;
-          align-items: center;
-          padding: 12px 14px;
-          border-radius: 18px;
-          background: rgba(15,23,42,.48);
-          border: 1px solid rgba(147,197,253,.24);
-          box-shadow: 0 18px 44px rgba(2,8,23,.24);
-          backdrop-filter: blur(14px);
-        }
-        .ap-airport-mark {
-          width: 50px;
-          height: 50px;
-          border-radius: 15px;
-          display: grid;
-          place-items: center;
-          color: #e0f2fe;
-          background: linear-gradient(135deg, rgba(14,165,233,.95), rgba(37,99,235,.95));
-          box-shadow: 0 12px 28px rgba(14,165,233,.25);
-        }
-        .ap-airport-card strong {
-          display: block;
-          color: #f8fafc;
-          font-size: 14px;
-          letter-spacing: -.01em;
-        }
-        .ap-airport-card span {
-          display: block;
-          margin-top: 3px;
-          color: rgba(219,234,254,.82);
-          font-size: 12px;
-          line-height: 1.35;
         }
         .ap-foot {
           display: flex;
@@ -375,8 +351,24 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           backdrop-filter: blur(22px);
           padding: clamp(20px, 2.2vw, 28px);
           max-height: calc(100vh - 24px);
-          overflow: hidden;
+          overflow-y: auto;
+          scrollbar-width: thin;
+          scrollbar-color: rgba(148,163,184,.55) transparent;
+          position: relative;
         }
+        .ap-card::-webkit-scrollbar { width: 6px; }
+        .ap-card::-webkit-scrollbar-thumb { background: rgba(148,163,184,.55); border-radius: 99px; }
+        .ap-card::before {
+          content: '';
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+          border-radius: inherit;
+          background:
+            radial-gradient(circle at 18% 0%, rgba(59,130,246,.11), transparent 28%),
+            radial-gradient(circle at 100% 8%, rgba(14,165,233,.09), transparent 24%);
+        }
+        .ap-card > * { position: relative; z-index: 1; }
         .ap-ministry {
           display: flex;
           justify-content: space-between;
@@ -385,13 +377,40 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           margin-bottom: clamp(10px, 1.6vh, 18px);
         }
         .ap-ministry-logo {
-          width: clamp(132px, 12vw, 170px);
+          width: clamp(112px, 10vw, 148px);
           height: auto;
           display: block;
           border-radius: 12px;
           object-fit: contain;
           background: rgba(255,255,255,.72);
           border: 1px solid rgba(226,232,240,.8);
+        }
+        .ap-card.is-create {
+          padding: clamp(16px, 1.8vw, 22px);
+        }
+        .ap-card.is-create .ap-ministry {
+          align-items: center;
+          margin-bottom: 10px;
+        }
+        .ap-card.is-create .ap-ministry-logo {
+          width: clamp(90px, 8vw, 118px);
+        }
+        .ap-card.is-create .ap-card-sub {
+          margin-bottom: 10px;
+          font-size: 14px;
+        }
+        .ap-card.is-create .ap-tabs,
+        .ap-card.is-create .ap-mode-toggle {
+          margin-bottom: 9px;
+        }
+        .ap-card.is-create .ap-field {
+          margin-bottom: 8px;
+        }
+        .ap-card.is-create .ap-input {
+          height: 43px;
+        }
+        .ap-card.is-create .ap-security {
+          display: none;
         }
         .ap-prototype {
           font-size: 10px;
@@ -428,6 +447,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           background: #f1f5f9;
           border: 1px solid #e2e8f0;
           margin-bottom: clamp(12px, 2vh, 18px);
+          box-shadow: inset 0 1px 2px rgba(15,23,42,.04);
         }
         .ap-mode-toggle {
           display: grid;
@@ -438,6 +458,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           background: #eef6ff;
           border: 1px solid #bfdbfe;
           margin-bottom: clamp(8px, 1.3vh, 12px);
+          box-shadow: inset 0 1px 2px rgba(37,99,235,.07);
         }
         .ap-mode-toggle button {
           height: 34px;
@@ -574,12 +595,26 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           color: #fff;
           background: linear-gradient(135deg, #0b91ff, #075be8);
           box-shadow: 0 15px 30px rgba(8,124,251,.25);
+          position: relative;
+          overflow: hidden;
+        }
+        .ap-submit::after {
+          content: '';
+          position: absolute;
+          inset: 0;
+          background: linear-gradient(110deg, transparent 15%, rgba(255,255,255,.22), transparent 52%);
+          transform: translateX(-120%);
+          transition: transform .55s ease;
+        }
+        .ap-submit:hover::after {
+          transform: translateX(120%);
         }
         .ap-google {
           border: 1px solid #b9c5e6;
           background: #fff;
           color: #091052;
           margin-top: clamp(8px, 1.4vh, 12px);
+          box-shadow: 0 10px 26px rgba(15,23,42,.08);
         }
         .ap-submit:disabled, .ap-google:disabled {
           opacity: .65;
@@ -634,12 +669,15 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           0%, 100% { transform: translateY(0) rotate(0deg); }
           50% { transform: translateY(-5px) rotate(-2deg); }
         }
+        @keyframes sweep-light {
+          0%, 45% { transform: translateX(-100%); }
+          70%, 100% { transform: translateX(100%); }
+        }
         @media (max-height: 760px) and (min-width: 861px) {
           .ap-foot { padding-top: 10px; font-size: 12px; gap: 12px; }
           .ap-pill { margin-bottom: 10px; padding: 7px 10px; }
           .ap-hero h1 { font-size: clamp(34px, 3.7vw, 56px); }
           .ap-hero p { font-size: 15px; max-width: 560px; }
-          .ap-airport-card { margin-top: 14px; padding: 10px 12px; }
           .ap-card { padding: 18px; }
           .ap-security { grid-template-columns: repeat(3, 1fr); gap: 5px; }
           .ap-security div { justify-content: center; font-size: 10px; }
@@ -649,7 +687,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           .ap-ministry-logo { width: 120px; }
           .ap-card-sub { display: none; }
           .ap-security { display: none; }
-          .ap-brand-sub, .ap-foot, .ap-airport-card { display: none; }
+          .ap-brand-sub, .ap-foot { display: none; }
         }
         @media (prefers-reduced-motion: reduce) {
           .ap-bg-media, .ap-left, .ap-panel, .ap-brand-icon {
@@ -705,7 +743,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
         <div className="ap-hero">
           <div className="ap-pill">
             <Plane size={15} aria-hidden="true" />
-            SIH 2026 Prototype · Aviation Intelligence
+            SIH 2026 · Aviation Intelligence
           </div>
           <h1>
             Smarter airfare<br />
@@ -713,35 +751,26 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
             <span>connected India</span>
           </h1>
           <p>
-            Route-level fare intelligence, aviation data views, and policy-ready analytics for India&apos;s domestic air travel ecosystem.
+            Secure airfare intelligence for users, DGCA analysts, and administrators.
           </p>
-          <div className="ap-airport-card">
-            <div className="ap-airport-mark">
-              <Plane size={24} aria-hidden="true" />
-            </div>
-            <div>
-              <strong>Chhatrapati Shivaji Maharaj International Airport</strong>
-              <span>Mumbai aviation corridor view for airfare access, DGCA workspace insights, and route intelligence.</span>
-            </div>
-          </div>
         </div>
 
         <footer className="ap-foot">
           <span>✈ Route intelligence</span>
-          <span>◈ Secure role access</span>
-          <span>◎ User, DGCA and Admin workspaces</span>
+          <span>◈ Secure access</span>
+          <span>◎ DGCA workspace</span>
         </footer>
       </section>
 
       <section className="ap-panel" aria-label="Authentication panel">
-        <div className="ap-card">
+        <div className={`ap-card${authMode === 'create' ? ' is-create' : ''}`}>
           <div className="ap-ministry">
             <img className="ap-ministry-logo" src="/moca-badge.png" alt="Ministry of Civil Aviation, Government of India" />
             <span className="ap-prototype">SIH Prototype</span>
           </div>
 
           <h2>Welcome back</h2>
-          <p className="ap-card-sub">{authMode === 'login' ? 'Sign in to access your AeroPrice workspace.' : 'Create a user account with Firebase authentication.'}</p>
+          <p className="ap-card-sub">{authMode === 'login' ? 'Sign in to access AeroPrice.' : 'Create your verified AeroPrice account.'}</p>
 
           <div className="ap-tabs" role="tablist" aria-label="Choose workspace role">
             {(Object.keys(ROLE_CONFIG) as AuthRole[]).map((key) => (
@@ -824,7 +853,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
                   id="ap-password"
                   className="ap-input"
                   type={showPass ? 'text' : 'password'}
-                  autoComplete="current-password"
+                  autoComplete={authMode === 'create' ? 'new-password' : 'current-password'}
                   value={pass}
                   onChange={(e) => setPass(e.target.value)}
                   placeholder="Enter your password"
