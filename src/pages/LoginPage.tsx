@@ -187,7 +187,15 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
   }
 
   return (
-    <main className="ap-login" aria-label="AeroPrice secure login">
+    <main
+      className="ap-login"
+      aria-label="AeroPrice secure login"
+      style={{
+        backgroundImage: `linear-gradient(90deg, rgba(2,8,23,.72), rgba(2,8,23,.38)), url(${airportBg})`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center bottom',
+      }}
+    >
       <img className="ap-bg-media" src={airportBg} alt="" aria-hidden="true" />
       <style>{`
         .ap-login {
@@ -199,7 +207,10 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           grid-template-columns: minmax(0, 1.15fr) minmax(360px, 480px);
           color: #fff;
           font-family: var(--font-sans, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
-          background: #061225;
+          background-color: #061225;
+          background-image: linear-gradient(90deg, rgba(2,8,23,.72), rgba(2,8,23,.38)), url(${airportBg});
+          background-size: cover;
+          background-position: center bottom;
         }
         .ap-bg-media {
           position: absolute;
