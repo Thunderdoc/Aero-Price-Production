@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { AlertCircle, ArrowRight, CheckCircle, Eye, EyeOff, Lock, Mail, Plane, ShieldCheck, User, Users } from 'lucide-react'
-import { useAuth, type UserRole } from '../contexts/AuthContext'
+import { useAuth, type AuthWorkspace, type UserRole } from '../contexts/AuthContext'
 import type { Page } from '../components/AppShell'
 
 type AuthRole = 'USER' | 'DGCA' | 'ADMIN'
@@ -70,6 +70,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
   const [notice, setNotice] = useState('')
 
   const role = ROLE_CONFIG[activeRole]
+  const workspace = activeRole as AuthWorkspace
 
   const submitLabel = useMemo(
     () => (loading ? role.loadingLabel : role.buttonLabel),
@@ -109,7 +110,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
         return
       }
       setLoading(true)
-      const result = await createAccount(fullName.trim(), trimmedEmail, pass)
+      const result = await createAccount(fullName.trim(), trimmedEmail, pass, workspace)
       setLoading(false)
       if (!result.success) {
         setError(result.error || 'Unable to create account.')
@@ -149,7 +150,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
   async function handleGoogleAuth() {
     resetFeedback()
     setGoogleLoading(true)
-    const result = await loginWithGoogle()
+    const result = await loginWithGoogle(workspace)
     setGoogleLoading(false)
     if (result.success) {
       const stored = localStorage.getItem('aeroprice_auth')

@@ -2,6 +2,7 @@ import { createContext, useContext, useState, type ReactNode } from 'react'
 
 export type UserRole = 'PUBLIC' | 'ANALYST' | 'ADMIN'
 export type UserPlan = 'FREE' | 'SUBSCRIBER' | 'GOVERNMENT' | 'ADMIN'
+export type AuthWorkspace = 'USER' | 'DGCA' | 'ADMIN'
 
 export interface AuthUser {
   name: string
@@ -16,8 +17,8 @@ interface AuthContextValue {
   user: AuthUser | null
   token: string | null
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>
-  loginWithGoogle: () => Promise<{ success: boolean; error?: string }>
-  createAccount: (name: string, email: string, password: string) => Promise<{ success: boolean; error?: string }>
+  loginWithGoogle: (workspace?: AuthWorkspace) => Promise<{ success: boolean; error?: string }>
+  createAccount: (name: string, email: string, password: string, workspace?: AuthWorkspace) => Promise<{ success: boolean; error?: string }>
   resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>
   logout: () => void
 }
@@ -40,10 +41,25 @@ function roleForFirebaseEmail(email: string): Pick<AuthUser, 'role' | 'plan'> {
   if (FIREBASE_ADMIN_EMAILS.includes(normalized)) {
     return { role: 'ADMIN', plan: 'ADMIN' }
   }
+  try {
+    const pending = JSON.parse(localStorage.getItem('aeroprice_pending_workspace') || 'null') as { email?: string; workspace?: AuthWorkspace } | null
+    if (pending?.email === normalized && pending.workspace === 'DGCA') {
+      return { role: 'ANALYST', plan: 'GOVERNMENT' }
+    }
+  } catch {
+    // Ignore malformed local registration metadata and use the configured lists.
+  }
   if (FIREBASE_ANALYST_EMAILS.includes(normalized)) {
     return { role: 'ANALYST', plan: 'GOVERNMENT' }
   }
   return { role: 'PUBLIC', plan: 'FREE' }
+}
+
+function roleForWorkspace(email: string, workspace?: AuthWorkspace): Pick<AuthUser, 'role' | 'plan'> {
+  const normalized = email.trim().toLowerCase()
+  if (FIREBASE_ADMIN_EMAILS.includes(normalized)) return { role: 'ADMIN', plan: 'ADMIN' }
+  if (workspace === 'DGCA') return { role: 'ANALYST', plan: 'GOVERNMENT' }
+  return roleForFirebaseEmail(normalized)
 }
 
 function loadStoredUser(): AuthUser | null {
@@ -90,6 +106,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       setUser(authedUser)
       setToken(null)
+      localStorage.removeItem('aeroprice_pending_workspace')
       localStorage.setItem(STORAGE_KEY, JSON.stringify(authedUser))
       localStorage.removeItem(TOKEN_KEY)
       return { success: true }
@@ -108,13 +125,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function loginWithGoogle(): Promise<{ success: boolean; error?: string }> {
+  async function loginWithGoogle(workspace?: AuthWorkspace): Promise<{ success: boolean; error?: string }> {
     try {
       const { signInWithGooglePopup } = await import('../services/firebase')
       const credential = await signInWithGooglePopup()
       const firebaseUser = credential.user
       const email = firebaseUser.email || ''
-      const mappedAccess = roleForFirebaseEmail(email)
+      const mappedAccess = roleForWorkspace(email, workspace)
       const displayName = firebaseUser.displayName || firebaseUser.email || 'Google User'
       const authedUser: AuthUser = {
         name: displayName,
@@ -140,10 +157,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function createAccount(name: string, email: string, password: string): Promise<{ success: boolean; error?: string }> {
+  async function createAccount(name: string, email: string, password: string, workspace?: AuthWorkspace): Promise<{ success: boolean; error?: string }> {
     try {
       const { createFirebaseEmailUser } = await import('../services/firebase')
       const credential = await createFirebaseEmailUser(email.trim().toLowerCase(), password, name)
+      if (workspace === 'DGCA') {
+        localStorage.setItem('aeroprice_pending_workspace', JSON.stringify({ email: email.trim().toLowerCase(), workspace }))
+      }
       await credential.user.reload()
       setUser(null)
       setToken(null)

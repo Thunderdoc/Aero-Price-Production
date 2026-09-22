@@ -152,3 +152,20 @@ public/airport-login-bg.jpg -filter -diff -merge -text
 # GitHub LFS objects are unavailable for this repository. Store project
 # assets as ordinary Git blobs so hosted builds can clone the repository.
 * -filter -diff -merge
+
+# Keep source and configuration files reviewable as text.
+.gitattributes diff
+*.ts diff
+*.tsx diff
+*.css diff
+*.html diff
+*.json diff
+*.md diff
+*.py diff
+*.toml diff
+*.ini diff
+*.txt diff
+*.yml diff
+*.yaml diff
+*.sql diff
+*.ps1 diff
