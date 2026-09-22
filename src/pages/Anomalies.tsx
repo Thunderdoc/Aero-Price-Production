@@ -230,22 +230,22 @@ export default function Anomalies() {
       <div
         className="ap-card"
         style={{
-          padding: 'var(--space-2xl) var(--space-3xl)',
+          padding: '18px 22px',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          gap: 16,
+          gap: 18,
           flexWrap: 'wrap',
           background: 'var(--color-surface-bg)',
           borderRadius: 'var(--radius-xl)',
           boxShadow: 'var(--shadow-sm)',
         }}
       >
-        <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 14, alignItems: 'center', minWidth: 300, flex: 1 }}>
           <div
             style={{
-              width: 48,
-              height: 48,
+              width: 44,
+              height: 44,
               borderRadius: 12,
               background: 'linear-gradient(135deg, #ef4444, #dc2626)',
               display: 'flex',
@@ -254,27 +254,27 @@ export default function Anomalies() {
               boxShadow: '0 4px 16px rgba(239,68,68,0.3)',
             }}
           >
-            <Activity size={24} color="white" />
+            <Activity size={22} color="white" />
           </div>
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: 'var(--color-text-primary)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <h1 style={{ margin: 0, fontSize: 22, fontWeight: 850, color: 'var(--color-text-primary)', letterSpacing: '-0.02em' }}>
                 Airfare Anomaly Detection
               </h1>
               <span className="ap-badge ap-badge-real">ISOLATION FOREST · ACTIVE</span>
             </div>
             <p style={{ margin: '4px 0 0', color: 'var(--color-text-secondary)', fontSize: 13 }}>
-              Real-time statistical outlier detection flagging predatory surges, pricing errors, and flash discounts.
+              Flags unusual fare jumps, suspected pricing errors, and corridor-level outliers.
             </p>
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <button
             className="ap-button ap-button-secondary"
             onClick={load}
             disabled={loading}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, minHeight: 36 }}
           >
             <RefreshCw size={13} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
             Refresh
@@ -283,15 +283,15 @@ export default function Anomalies() {
             className="ap-button ap-button-primary"
             onClick={runDetection}
             disabled={running}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, minHeight: 36 }}
           >
             <Zap size={14} style={{ animation: running ? 'pulse 1s infinite' : 'none' }} />
-            {running ? 'Running ML Engine…' : 'Run Anomaly Scan'}
+            {running ? 'Scanning…' : 'Run Scan'}
           </button>
           <button
             className="ap-button ap-button-secondary"
             onClick={exportCsv}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, minHeight: 36 }}
           >
             <Download size={13} />
             Export CSV ({anomalies.length})

@@ -99,23 +99,23 @@ export default function PriceAlerts() {
   // FREE users — full-screen gate
   if (isFree) {
     return (
-      <div style={{ maxWidth: 640, margin: '60px auto', padding: '0 24px', fontFamily: 'var(--font-sans)', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 28, animation: 'fade-in 300ms ease' }}>
-        <div style={{ width: 72, height: 72, borderRadius: '50%', background: 'var(--color-surface-secondary)', border: '2px dashed var(--color-border-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: 'var(--shadow-sm)' }}>
-          <Lock size={30} style={{ color: 'var(--color-text-tertiary)' }} />
+      <div style={{ maxWidth: 760, margin: '44px auto', padding: '0 24px', fontFamily: 'var(--font-sans)', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 22, animation: 'fade-in 300ms ease' }}>
+        <div style={{ width: 64, height: 64, borderRadius: 20, background: 'var(--color-brand-muted)', border: '1px solid rgba(37,99,235,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: 'var(--shadow-sm)' }}>
+          <Lock size={28} style={{ color: 'var(--color-brand-primary)' }} />
         </div>
         <div>
-          <h2 style={{ fontSize: 22, fontWeight: 700, color: 'var(--color-text-primary)', margin: '0 0 10px', letterSpacing: '-0.02em' }}>Price Alerts — Locked Feature</h2>
-          <p style={{ fontSize: 14, color: 'var(--color-text-secondary)', margin: 0, lineHeight: 1.65, maxWidth: 440 }}>
-            Set fare thresholds on any corridor and get notified the moment prices drop. This unlocks after payment, a subscription grant, or an approved access code.
+          <h2 style={{ fontSize: 24, fontWeight: 850, color: 'var(--color-text-primary)', margin: '0 0 10px', letterSpacing: '-0.03em' }}>Price Alerts</h2>
+          <p style={{ fontSize: 14, color: 'var(--color-text-secondary)', margin: 0, lineHeight: 1.6, maxWidth: 520 }}>
+            Track a route and get notified when fares drop below your target. This feature unlocks with a subscription or access code.
           </p>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, width: '100%', maxWidth: 500 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12, width: '100%', maxWidth: 560 }}>
           {[
             { icon: Mail, label: 'Email alerts when fare drops' },
             { icon: BarChart3, label: 'Booking window optimizer' },
             { icon: FileDown, label: 'Historical fare export' },
           ].map(({ icon: Icon, label }) => (
-            <div key={label} style={{ background: 'var(--color-surface-bg)', border: '1px solid var(--color-border-primary)', borderRadius: 12, padding: '14px 12px', fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.4 }}>
+            <div key={label} style={{ background: 'var(--color-surface-bg)', border: '1px solid var(--color-border-primary)', borderRadius: 14, padding: '16px 12px', fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.4, boxShadow: 'var(--shadow-sm)' }}>
               <div style={{ width: 30, height: 30, borderRadius: 8, background: 'var(--color-brand-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px' }}>
                 <Icon size={15} style={{ color: 'var(--color-brand-primary)' }} />
               </div>
@@ -124,7 +124,7 @@ export default function PriceAlerts() {
           ))}
         </div>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center' }}>
-          <Button variant="ghost" onClick={() => setUpgradeOpen(false)}>Continue free</Button>
+          <Button variant="ghost" onClick={() => setUpgradeOpen(false)}>Back to dashboard</Button>
           <Button variant="primary" onClick={() => setUpgradeOpen(true)}>
             View access options
           </Button>

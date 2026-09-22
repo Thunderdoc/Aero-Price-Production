@@ -139,6 +139,8 @@ const PAGE_PORTAL: Partial<Record<Page, Portal>> = {
   aviationlive:'aviation', aviationflights:'aviation', aviationairports:'aviation',
 }
 
+const PUBLIC_USER_PAGES: Page[] = ['overview', 'routes', 'insights', 'map', 'alerts']
+
 export default function AppShell({ currentPage, onNavigate, children }: AppShellProps) {
   const { user, logout } = useAuth()
   const govData = useGovData()
@@ -190,6 +192,7 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
   }
 
   function isVisible(item: NavItem): boolean {
+    if (role === 'PUBLIC' && plan === 'FREE' && !PUBLIC_USER_PAGES.includes(item.page)) return false
     if (!item.minRole) return true
     if (item.minRole === 'ADMIN') return role === 'ADMIN'
     if (item.minRole === 'ANALYST') return role === 'ANALYST' || role === 'ADMIN'
@@ -253,10 +256,14 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
         {/* ── Portal tabs ── */}
         <div style={{ borderBottom: '1px solid var(--color-border-primary)', padding: '6px 8px' }}>
           {[
-            { id:'gov',      label:'GOV',      title:'Government Portal' },
+            { id:'gov',      label: role === 'PUBLIC' && plan === 'FREE' ? 'USER' : 'GOV',      title: role === 'PUBLIC' && plan === 'FREE' ? 'User Dashboard' : 'Government Portal' },
             { id:'admin',    label:'ADMIN',     title:'Admin Control Center', minRole:'ADMIN' as const },
             { id:'aviation', label:'AVIATION',  title:'Aviation Intelligence' },
-          ].filter(p => !p.minRole || role === 'ADMIN').map(p => (
+          ].filter(p => {
+            if (p.minRole && role !== 'ADMIN') return false
+            if (p.id === 'aviation' && role === 'PUBLIC' && plan === 'FREE') return false
+            return true
+          }).map(p => (
             <button key={p.id} title={p.title}
               onClick={() => switchPortal(p.id as Portal)}
               style={{
@@ -275,7 +282,8 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
         <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
           <div style={{ padding: '4px 14px 4px', marginTop: 4 }}>
             <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-text-tertiary)', letterSpacing: '0.12em' }}>
-              {derivedPortal === 'gov' ? 'GOVERNMENT PORTAL'
+              {role === 'PUBLIC' && plan === 'FREE' ? 'USER DASHBOARD'
+                : derivedPortal === 'gov' ? 'GOVERNMENT PORTAL'
                 : derivedPortal === 'admin' ? 'ADMIN CONTROL CENTER'
                 : 'AVIATION INTELLIGENCE'}
             </span>
@@ -449,7 +457,7 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
                 animation: govData.anyConnected ? 'pulse-dot 2s ease-in-out infinite' : 'none',
               }} />
               <span style={{ fontSize: 10, fontWeight: 700, color: govData.anyConnected ? '#15803d' : '#b45309', letterSpacing: '0.06em' }}>
-                {govData.anyConnected ? 'GOV DATA CONNECTED' : 'DEMO/CACHE MODE'}
+                {govData.anyConnected ? (role === 'PUBLIC' && plan === 'FREE' ? 'MARKET DATA CONNECTED' : 'GOV DATA CONNECTED') : 'DEMO/CACHE MODE'}
               </span>
             </div>
           </div>

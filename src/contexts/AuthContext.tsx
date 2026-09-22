@@ -1,5 +1,4 @@
 import { createContext, useContext, useState, type ReactNode } from 'react'
-import { apiLogin } from '../services/api'
 
 export type UserRole = 'PUBLIC' | 'ANALYST' | 'ADMIN'
 export type UserPlan = 'FREE' | 'SUBSCRIBER' | 'GOVERNMENT' | 'ADMIN'
@@ -18,6 +17,8 @@ interface AuthContextValue {
   token: string | null
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>
   loginWithGoogle: () => Promise<{ success: boolean; error?: string }>
+  createAccount: (name: string, email: string, password: string) => Promise<{ success: boolean; error?: string }>
+  resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>
   logout: () => void
 }
 
@@ -45,21 +46,6 @@ function roleForFirebaseEmail(email: string): Pick<AuthUser, 'role' | 'plan'> {
   return { role: 'PUBLIC', plan: 'FREE' }
 }
 
-const DEMO_USERS: Record<string, { password: string; user: AuthUser }> = {
-  'admin@aeroprice.in': {
-    password: 'aeroadmin',
-    user: { name: 'Admin User', email: 'admin@aeroprice.in', role: 'ADMIN', plan: 'ADMIN', initials: 'AU' },
-  },
-  'dgca@gov.in': {
-    password: 'dgca2026',
-    user: { name: 'DGCA Analyst', email: 'dgca@gov.in', role: 'ANALYST', plan: 'GOVERNMENT', initials: 'DA' },
-  },
-  'user@aeroprice.in': {
-    password: 'aero123',
-    user: { name: 'User Account', email: 'user@aeroprice.in', role: 'PUBLIC', plan: 'FREE', initials: 'UA' },
-  },
-}
-
 function loadStoredUser(): AuthUser | null {
   localStorage.removeItem(STORAGE_KEY)
   localStorage.removeItem(TOKEN_KEY)
@@ -79,32 +65,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function login(email: string, password: string): Promise<{ success: boolean; error?: string }> {
     const emailLower = email.trim().toLowerCase()
 
-    // Try real backend JWT first
     try {
-      const resp = await apiLogin(emailLower, password)
-      const initials = (resp.user.name ?? emailLower).slice(0, 2).toUpperCase()
+      const { signInFirebaseEmailUser } = await import('../services/firebase')
+      const credential = await signInFirebaseEmailUser(emailLower, password)
+      const firebaseUser = credential.user
+      if (!firebaseUser.emailVerified) {
+        await firebaseUser.reload()
+      }
+      if (!firebaseUser.emailVerified) {
+        setUser(null)
+        setToken(null)
+        localStorage.removeItem(STORAGE_KEY)
+        localStorage.removeItem(TOKEN_KEY)
+        return { success: false, error: 'Email is not verified. Please verify your Firebase email before signing in.' }
+      }
+      const mappedAccess = roleForFirebaseEmail(firebaseUser.email || emailLower)
+      const displayName = firebaseUser.displayName || firebaseUser.email || emailLower
       const authedUser: AuthUser = {
-        name: resp.user.name ?? emailLower,
-        email: resp.user.email,
-        role: resp.user.role,
-        plan: resp.user.plan,
-        initials,
+        name: displayName,
+        email: firebaseUser.email || emailLower,
+        role: mappedAccess.role,
+        plan: mappedAccess.plan,
+        initials: displayName.slice(0, 2).toUpperCase(),
       }
       setUser(authedUser)
-      setToken(resp.access_token)
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(authedUser))
-      localStorage.setItem(TOKEN_KEY, resp.access_token)
-      return { success: true }
-    } catch {
-      const demo = DEMO_USERS[emailLower]
-      if (!demo) return { success: false, error: 'Invalid email or password.' }
-      if (demo.password !== password) return { success: false, error: 'Incorrect password for this demo account.' }
-
-      setUser(demo.user)
       setToken(null)
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(demo.user))
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(authedUser))
       localStorage.removeItem(TOKEN_KEY)
       return { success: true }
+    } catch (firebaseErr) {
+      const code = typeof firebaseErr === 'object' && firebaseErr && 'code' in firebaseErr ? String((firebaseErr as { code?: string }).code) : ''
+      if (code.includes('invalid-credential') || code.includes('wrong-password') || code.includes('user-not-found')) {
+        return { success: false, error: 'Invalid Firebase email or password.' }
+      }
+      if (code.includes('operation-not-allowed')) {
+        return { success: false, error: 'Firebase Email/Password sign-in is not enabled yet.' }
+      }
+      if (code.includes('unauthorized-domain')) {
+        return { success: false, error: 'This domain is not authorized in Firebase Authentication.' }
+      }
+      return { success: false, error: 'Invalid email or password.' }
     }
   }
 
@@ -140,6 +140,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  async function createAccount(name: string, email: string, password: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const { createFirebaseEmailUser } = await import('../services/firebase')
+      const credential = await createFirebaseEmailUser(email.trim().toLowerCase(), password, name)
+      await credential.user.reload()
+      setUser(null)
+      setToken(null)
+      localStorage.removeItem(STORAGE_KEY)
+      localStorage.removeItem(TOKEN_KEY)
+      return { success: true }
+    } catch (err) {
+      const code = typeof err === 'object' && err && 'code' in err ? String((err as { code?: string }).code) : ''
+      if (code.includes('email-already-in-use')) return { success: false, error: 'This email already has an account. Use sign in or forgot password.' }
+      if (code.includes('weak-password')) return { success: false, error: 'Password should be at least 6 characters.' }
+      if (code.includes('operation-not-allowed')) return { success: false, error: 'Firebase Email/Password sign-up is not enabled yet.' }
+      if (code.includes('unauthorized-domain')) return { success: false, error: 'This domain is not authorized in Firebase Authentication.' }
+      return { success: false, error: 'Unable to create account. Check Firebase Auth settings and try again.' }
+    }
+  }
+
+  async function resetPassword(email: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const { sendFirebasePasswordReset } = await import('../services/firebase')
+      await sendFirebasePasswordReset(email.trim().toLowerCase())
+      return { success: true }
+    } catch (err) {
+      const code = typeof err === 'object' && err && 'code' in err ? String((err as { code?: string }).code) : ''
+      if (code.includes('user-not-found')) return { success: false, error: 'No Firebase account exists for this email yet. Create an account first.' }
+      if (code.includes('no-password-provider')) return { success: false, error: 'This email uses Google sign-in, so there is no password to reset. Continue with Google instead.' }
+      if (code.includes('operation-not-allowed')) return { success: false, error: 'Firebase Email/Password authentication is not enabled yet.' }
+      if (code.includes('unauthorized-domain')) return { success: false, error: 'This domain is not authorized in Firebase Authentication.' }
+      return { success: false, error: 'Unable to send reset email. Check Firebase Auth settings and try again.' }
+    }
+  }
+
   function logout() {
     setUser(null)
     setToken(null)
@@ -147,7 +182,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(TOKEN_KEY)
   }
 
-  return <AuthContext.Provider value={{ user, token, login, loginWithGoogle, logout }}>{children}</AuthContext.Provider>
+  return <AuthContext.Provider value={{ user, token, login, loginWithGoogle, createAccount, resetPassword, logout }}>{children}</AuthContext.Provider>
 }
 
 export function useAuth(): AuthContextValue {
@@ -161,7 +196,9 @@ export function canAccess(role: UserRole, plan: UserPlan, page: string): boolean
   const adminOnly = ['collection', 'admin']
   const analystPlus = ['government', 'methodology', 'exports', 'sources']
   const subscriberPlus: string[] = []
+  const publicFreePages = ['overview', 'routes', 'insights', 'map', 'alerts']
 
+  if (role === 'PUBLIC' && plan === 'FREE' && !publicFreePages.includes(page)) return false
   if (adminOnly.includes(page)) return role === 'ADMIN'
   if (analystPlus.includes(page)) return role === 'ANALYST' || role === 'ADMIN'
   if (subscriberPlus.includes(page)) return plan !== 'FREE'

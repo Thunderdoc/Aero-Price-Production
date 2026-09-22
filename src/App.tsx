@@ -58,7 +58,11 @@ function AppContent() {
   }
 
   if (!canAccess(user.role, user.plan, currentPage)) {
-    return null
+    return (
+      <AppShell currentPage="overview" onNavigate={setCurrentPage}>
+        <Overview onNavigate={setCurrentPage} />
+      </AppShell>
+    )
   }
 
   function renderPage() {

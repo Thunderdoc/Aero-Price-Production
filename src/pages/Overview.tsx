@@ -66,6 +66,7 @@ export default function Overview({ onNavigate }: Props) {
   const [realObs, setRealObs] = useState<number | null>(10875)
   const [indexStatus, setIndexStatus] = useState<string | null>("PUBLISHED · JEVONS")
   const [indexValue, setIndexValue] = useState<number | null>(108.45)
+  const isFreePublicUser = user?.role === 'PUBLIC' && user.plan === 'FREE'
 
   useEffect(() => {
     isBackendAvailable().then(up => {
@@ -156,8 +157,8 @@ export default function Overview({ onNavigate }: Props) {
               <Database size={13} style={{ color: 'var(--color-text-tertiary)' }} />
               <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-tertiary)', letterSpacing: '0.06em', fontFamily: 'var(--font-sans)' }}>USER ACCESS</span>
             </div>
-            <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>Price alerts and exports unlock after subscription or access-code approval</span>
-            <button onClick={() => setShowUpgrade(true)} style={{ fontSize: 11, color: 'var(--color-brand-primary)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontWeight: 600, marginLeft: 'auto' }}>Access Options →</button>
+            <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>Compare routes for free. Price alerts unlock with subscription or an approved access code.</span>
+            <button onClick={() => setShowUpgrade(true)} style={{ fontSize: 11, color: 'var(--color-brand-primary)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontWeight: 700, marginLeft: 'auto' }}>Get Alerts →</button>
           </>
         )}
       </div>
@@ -238,7 +239,7 @@ export default function Overview({ onNavigate }: Props) {
           {/* DGCA official ref strip */}
           {govData.dgcaMonthly.length > 0 && (
             <div style={{ padding:'12px 16px',borderRadius:9,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.09)',marginBottom:20,display:'flex',alignItems:'center',gap:20,flexWrap:'wrap' }}>
-              <div style={{ fontSize:9,fontWeight:700,color:'rgba(147,197,253,0.7)',letterSpacing:'0.1em',fontFamily:'var(--font-mono)',flexShrink:0 }}>OFFICIAL · DGCA</div>
+            <div style={{ fontSize:9,fontWeight:700,color:'rgba(147,197,253,0.7)',letterSpacing:'0.1em',fontFamily:'var(--font-mono)',flexShrink:0 }}>{isFreePublicUser ? 'MARKET SNAPSHOT' : 'OFFICIAL · DGCA'}</div>
               {govData.dgcaMonthly.slice(0,3).map(m=>(
                 <div key={m.month} style={{ display:'flex',alignItems:'center',gap:8 }}>
                   <span style={{ fontSize:9,color:'rgba(255,255,255,0.35)',fontFamily:'var(--font-mono)' }}>{m.month}</span>
@@ -342,16 +343,52 @@ export default function Overview({ onNavigate }: Props) {
                 No fare data available for this corridor.
               </div>
             )}
-            <div style={{ display: 'flex', gap: 8 }}>
-              <Button variant="subtle" onClick={() => onNavigate('sources')}>View Source Status</Button>
-              <Button variant="subtle" onClick={() => onNavigate('livefares')}>Live Fares Table</Button>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {isFreePublicUser ? (
+                <>
+                  <Button variant="subtle" onClick={() => onNavigate('routes')}>Open Route Explorer</Button>
+                  <Button variant="primary" onClick={() => setShowUpgrade(true)}>Track this route</Button>
+                </>
+              ) : (
+                <>
+                  <Button variant="subtle" onClick={() => onNavigate('sources')}>View Source Status</Button>
+                  <Button variant="subtle" onClick={() => onNavigate('livefares')}>Live Fares Table</Button>
+                </>
+              )}
             </div>
           </div>
         )}
       </div>
 
+      {isFreePublicUser && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'var(--space-md)' }}>
+          {[
+            { icon: Bell, title: 'Never miss fare drops', text: 'Unlock alerts for routes you care about and get notified when prices move.', action: 'Request subscription' },
+            { icon: MapIcon, title: 'Compare Indian routes', text: 'See corridor-level airfare context before you book or plan travel.', action: 'Open map' },
+            { icon: Shield, title: 'Access by approval', text: 'Paid features are enabled through subscription approval or an access code.', action: 'Enter code' },
+          ].map(({ icon: Icon, title, text, action }) => (
+            <button
+              key={title}
+              onClick={() => action === 'Open map' ? onNavigate('map') : setShowUpgrade(true)}
+              style={{ ...card, textAlign: 'left', cursor: 'pointer', padding: 18, display: 'flex', gap: 14, alignItems: 'flex-start', transition: 'transform 150ms, box-shadow 150ms' }}
+              onMouseOver={e => { (e.currentTarget as HTMLElement).style.transform = 'translateY(-2px)'; (e.currentTarget as HTMLElement).style.boxShadow = 'var(--shadow-md)' }}
+              onMouseOut={e => { (e.currentTarget as HTMLElement).style.transform = 'none'; (e.currentTarget as HTMLElement).style.boxShadow = 'var(--shadow-sm)' }}
+            >
+              <div style={{ width: 38, height: 38, borderRadius: 12, background: 'var(--color-brand-muted)', display: 'grid', placeItems: 'center', color: 'var(--color-brand-primary)', flex: '0 0 auto' }}>
+                <Icon size={18} />
+              </div>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 850, color: 'var(--color-text-primary)', marginBottom: 4 }}>{title}</div>
+                <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.45, marginBottom: 10 }}>{text}</div>
+                <span style={{ fontSize: 11, fontWeight: 800, color: 'var(--color-brand-primary)' }}>{action} →</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Trends are withheld until two verified collection periods exist. */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-lg)' }}>
+      {!isFreePublicUser && <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-lg)' }}>
         {[
           { title: 'RISING FARES', accent: 'var(--color-danger)', accentBg: 'var(--color-danger-bg)', icon: TrendingUp },
           { title: 'FALLING FARES', accent: 'var(--color-success)', accentBg: 'var(--color-success-bg)', icon: TrendingDown },
@@ -393,10 +430,10 @@ export default function Overview({ onNavigate }: Props) {
             </div>
           </div>
         ))}
-      </div>
+      </div>}
 
       {/* Booking window mini chart */}
-      <div style={card}>
+      {!isFreePublicUser && <div style={card}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-lg)', flexWrap: 'wrap', gap: 'var(--space-md)' }}>
           <div>
             <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', marginBottom: 4, fontFamily: 'var(--font-sans)' }}>BOOKING WINDOW PATTERN</div>
@@ -414,10 +451,10 @@ export default function Overview({ onNavigate }: Props) {
         <div style={{ marginTop: 12, padding: '8px 12px', borderRadius: 'var(--radius-sm)', background: 'var(--color-info-bg)', fontSize: 11, color: 'var(--color-info)', fontFamily: 'var(--font-sans)' }}>
           Live advance-purchase curve calibrated across 24 high-density domestic corridors from DGCA &amp; MoSPI multi-decade data.
         </div>
-      </div>
+      </div>}
 
       {/* Recent anomalies */}
-      <div style={card}>
+      {!isFreePublicUser && <div style={card}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--space-lg)' }}>
           <AlertTriangle size={14} style={{ color: 'var(--color-warning)' }} />
           <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>RECENT ANOMALIES</span>
@@ -438,15 +475,15 @@ export default function Overview({ onNavigate }: Props) {
             <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 4 }}>Observed ₹9,800 vs ₹6,750 base (Holiday demand)</div>
           </div>
         </div>
-      </div>
+      </div>}
 
       {/* Quick nav cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--space-md)' }}>
         {[
-          { page: 'map' as Page, icon: MapIcon, label: 'India Map', sub: 'Route corridors + flight positions', color: 'var(--color-brand-primary)' },
-          { page: 'routes' as Page, icon: Plane, label: 'Route Explorer', sub: 'Per-corridor fare intelligence', color: 'var(--color-teal)' },
-          { page: 'insights' as Page, icon: BarChart2, label: 'Market Insights', sub: 'Carriers, price history, trends', color: 'var(--color-indigo)' },
-          { page: 'livefares' as Page, icon: Radio, label: 'Live Fares', sub: 'Real-time multi-carrier feed', color: 'var(--color-success)' },
+          { page: 'map' as Page, icon: MapIcon, label: 'India Map', sub: 'Route corridors and key airports', color: 'var(--color-brand-primary)' },
+          { page: 'routes' as Page, icon: Plane, label: 'Route Explorer', sub: 'Check fares by route', color: 'var(--color-teal)' },
+          { page: 'insights' as Page, icon: BarChart2, label: 'Market Insights', sub: 'Simple market overview', color: 'var(--color-indigo)' },
+          ...(!isFreePublicUser ? [{ page: 'livefares' as Page, icon: Radio, label: 'Live Fares', sub: 'Real-time multi-carrier feed', color: 'var(--color-success)' }] : []),
         ].map(({ page, icon: Icon, label, sub, color }) => (
           <button
             key={page}

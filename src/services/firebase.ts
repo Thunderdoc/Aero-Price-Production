@@ -1,5 +1,16 @@
 import { initializeApp, getApps, type FirebaseApp } from 'firebase/app'
-import { getAuth, GoogleAuthProvider, signInWithPopup, type Auth } from 'firebase/auth'
+import {
+  createUserWithEmailAndPassword,
+  fetchSignInMethodsForEmail,
+  getAuth,
+  GoogleAuthProvider,
+  sendEmailVerification,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  updateProfile,
+  type Auth,
+} from 'firebase/auth'
 import { getAnalytics, isSupported, type Analytics } from 'firebase/analytics'
 
 const firebaseConfig = {
@@ -55,4 +66,44 @@ export async function signInWithGooglePopup() {
   const provider = new GoogleAuthProvider()
   provider.setCustomParameters({ prompt: 'select_account' })
   return signInWithPopup(firebaseAuth, provider)
+}
+
+export async function sendFirebasePasswordReset(email: string) {
+  const firebaseAuth = getFirebaseAuth()
+  if (!firebaseAuth) {
+    throw new Error('Firebase authentication is not configured.')
+  }
+  const methods = await fetchSignInMethodsForEmail(firebaseAuth, email)
+  if (methods.length === 0) {
+    const err = new Error('No Firebase account exists for this email.')
+    Object.assign(err, { code: 'auth/user-not-found' })
+    throw err
+  }
+  if (!methods.includes('password')) {
+    const err = new Error('This account uses Google sign-in and has no password to reset.')
+    Object.assign(err, { code: 'auth/no-password-provider' })
+    throw err
+  }
+  return sendPasswordResetEmail(firebaseAuth, email)
+}
+
+export async function createFirebaseEmailUser(email: string, password: string, name: string) {
+  const firebaseAuth = getFirebaseAuth()
+  if (!firebaseAuth) {
+    throw new Error('Firebase authentication is not configured.')
+  }
+  const credential = await createUserWithEmailAndPassword(firebaseAuth, email, password)
+  if (name.trim()) {
+    await updateProfile(credential.user, { displayName: name.trim() })
+  }
+  await sendEmailVerification(credential.user)
+  return credential
+}
+
+export async function signInFirebaseEmailUser(email: string, password: string) {
+  const firebaseAuth = getFirebaseAuth()
+  if (!firebaseAuth) {
+    throw new Error('Firebase authentication is not configured.')
+  }
+  return signInWithEmailAndPassword(firebaseAuth, email, password)
 }

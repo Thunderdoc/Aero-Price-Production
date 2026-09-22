@@ -17,7 +17,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
 DEMO_USERS = {
     "admin@aeroprice.in":  {"password": "aeroadmin",  "role": "ADMIN",   "plan": "ADMIN",      "name": "Admin User"},
     "dgca@gov.in":         {"password": "dgca2026",   "role": "ANALYST", "plan": "GOVERNMENT", "name": "DGCA Analyst"},
-    "user@aeroprice.in":   {"password": "aero123",    "role": "PUBLIC",  "plan": "SUBSCRIBER", "name": "Demo User"},
+    "user@aeroprice.in":   {"password": "aero123",    "role": "PUBLIC",  "plan": "FREE",       "name": "User Account"},
     "visitor@example.com": {"password": "demo",       "role": "PUBLIC",  "plan": "FREE",       "name": "Free User"},
 }
 

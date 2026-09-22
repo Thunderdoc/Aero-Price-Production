@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { AlertCircle, ArrowRight, Eye, EyeOff, Lock, Mail, Plane, ShieldCheck, User, Users } from 'lucide-react'
+import { AlertCircle, ArrowRight, CheckCircle, Eye, EyeOff, Lock, Mail, Plane, ShieldCheck, User, Users } from 'lucide-react'
 import { useAuth, type UserRole } from '../contexts/AuthContext'
 import type { Page } from '../components/AppShell'
 import airportBg from '../assets/airport_login_bg.jpg'
@@ -56,8 +56,10 @@ function safeAuthError(message?: string) {
 }
 
 export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void }) {
-  const { login, loginWithGoogle, logout } = useAuth()
+  const { login, loginWithGoogle, createAccount, resetPassword, logout } = useAuth()
   const [activeRole, setActiveRole] = useState<AuthRole>('USER')
+  const [authMode, setAuthMode] = useState<'login' | 'create'>('login')
+  const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
   const [pass, setPass] = useState('')
   const [rememberMe, setRememberMe] = useState(false)
@@ -98,12 +100,34 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
       return
     }
 
+    if (authMode === 'create') {
+      if (!fullName.trim()) {
+        setError('Full name is required.')
+        return
+      }
+      if (pass.length < 6) {
+        setError('Password should be at least 6 characters.')
+        return
+      }
+      setLoading(true)
+      const result = await createAccount(fullName.trim(), trimmedEmail, pass)
+      setLoading(false)
+      if (!result.success) {
+        setError(result.error || 'Unable to create account.')
+        return
+      }
+      setAuthMode('login')
+      setPass('')
+      setNotice(`Verification email sent to ${trimmedEmail}. Verify your Firebase email first, then sign in.`)
+      return
+    }
+
     setLoading(true)
     const result = await login(trimmedEmail, pass)
     setLoading(false)
 
     if (!result.success) {
-      setError(safeAuthError(result.error))
+      setError(result.error?.includes('verified') || result.error?.includes('Firebase') ? result.error : safeAuthError(result.error))
       return
     }
 
@@ -154,21 +178,25 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
       return
     }
     setResetLoading(true)
-    await new Promise((resolve) => setTimeout(resolve, 350))
+    const result = await resetPassword(email)
     setResetLoading(false)
-    setNotice('Password reset is not connected yet. Ask the project admin to reset this account.')
+    if (!result.success) {
+      setError(result.error || 'Unable to send reset email.')
+      return
+    }
+    setNotice(`Account found for ${email.trim()}. A secure password reset email has been sent to that inbox.`)
   }
 
   return (
     <main className="ap-login" aria-label="AeroPrice secure login">
       <style>{`
         .ap-login {
-          min-height: 100vh;
+          height: 100vh;
           width: 100vw;
           overflow: hidden;
           position: relative;
           display: grid;
-          grid-template-columns: minmax(0, 1fr) minmax(380px, 500px);
+          grid-template-columns: minmax(0, 1.15fr) minmax(360px, 480px);
           color: #fff;
           font-family: var(--font-sans, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
           background: #061225;
@@ -182,6 +210,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           background-position: center bottom;
           filter: brightness(.72) saturate(1.12) contrast(1.06);
           transform: scale(1.015);
+          animation: bg-kenburns 18s ease-in-out infinite alternate;
         }
         .ap-login::after {
           content: '';
@@ -194,11 +223,13 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
         .ap-left {
           position: relative;
           z-index: 1;
-          padding: clamp(28px, 4vw, 64px);
+          padding: clamp(22px, 3.2vw, 54px);
           display: flex;
           flex-direction: column;
           justify-content: space-between;
-          min-height: 100vh;
+          min-height: 0;
+          height: 100vh;
+          animation: login-rise .7s ease both;
         }
         .ap-brand {
           display: flex;
@@ -213,9 +244,10 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           border-radius: 14px;
           background: linear-gradient(135deg, #087cfb, #16b9ff);
           box-shadow: 0 16px 40px rgba(8,124,251,.35);
+          animation: float-badge 4.8s ease-in-out infinite;
         }
         .ap-brand-name {
-          font-size: 30px;
+          font-size: clamp(26px, 2vw, 30px);
           font-weight: 950;
           letter-spacing: -.045em;
           line-height: .95;
@@ -244,11 +276,11 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           letter-spacing: .08em;
           text-transform: uppercase;
           backdrop-filter: blur(12px);
-          margin-bottom: 20px;
+          margin-bottom: clamp(12px, 2vh, 20px);
         }
         .ap-hero h1 {
           margin: 0;
-          font-size: clamp(42px, 5vw, 78px);
+          font-size: clamp(36px, 4.2vw, 66px);
           line-height: 1.02;
           letter-spacing: -.06em;
           font-weight: 950;
@@ -259,7 +291,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
         }
         .ap-hero p {
           max-width: 620px;
-          margin: 18px 0 0;
+          margin: 14px 0 0;
           color: rgba(226,232,240,.9);
           font-size: clamp(16px, 1.2vw, 20px);
           line-height: 1.5;
@@ -276,31 +308,35 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
         .ap-panel {
           position: relative;
           z-index: 1;
-          min-height: 100vh;
+          min-height: 0;
+          height: 100vh;
           display: flex;
           align-items: center;
           justify-content: center;
-          padding: clamp(18px, 3vw, 40px);
+          padding: clamp(14px, 2.4vw, 34px);
+          animation: panel-slide .65s ease both;
         }
         .ap-card {
           width: 100%;
-          border-radius: 24px;
+          border-radius: 26px;
           background: rgba(255,255,255,.94);
           color: #0f172a;
           border: 1px solid rgba(255,255,255,.65);
           box-shadow: 0 34px 90px rgba(2,8,23,.28);
           backdrop-filter: blur(22px);
-          padding: 28px;
+          padding: clamp(20px, 2.2vw, 28px);
+          max-height: calc(100vh - 24px);
+          overflow: hidden;
         }
         .ap-ministry {
           display: flex;
           justify-content: space-between;
           align-items: flex-start;
           gap: 12px;
-          margin-bottom: 26px;
+          margin-bottom: clamp(10px, 1.6vh, 18px);
         }
         .ap-ministry img {
-          height: 48px;
+          height: clamp(34px, 5.2vh, 48px);
           object-fit: contain;
         }
         .ap-prototype {
@@ -318,13 +354,13 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
         .ap-card h2 {
           margin: 0;
           color: #050816;
-          font-size: 34px;
+          font-size: clamp(26px, 3.6vh, 32px);
           line-height: 1.05;
           letter-spacing: -.045em;
           font-weight: 950;
         }
         .ap-card-sub {
-          margin: 8px 0 22px;
+          margin: 5px 0 clamp(10px, 1.6vh, 16px);
           color: #526079;
           font-size: 15px;
           line-height: 1.42;
@@ -337,10 +373,34 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           border-radius: 14px;
           background: #f1f5f9;
           border: 1px solid #e2e8f0;
-          margin-bottom: 20px;
+          margin-bottom: clamp(12px, 2vh, 18px);
+        }
+        .ap-mode-toggle {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 6px;
+          padding: 5px;
+          border-radius: 14px;
+          background: #eef6ff;
+          border: 1px solid #bfdbfe;
+          margin-bottom: clamp(8px, 1.3vh, 12px);
+        }
+        .ap-mode-toggle button {
+          height: 34px;
+          border: 0;
+          border-radius: 10px;
+          background: transparent;
+          color: #475569;
+          font-weight: 850;
+          cursor: pointer;
+        }
+        .ap-mode-toggle button.active {
+          background: #fff;
+          color: #075be8;
+          box-shadow: 0 8px 18px rgba(15,23,42,.08);
         }
         .ap-tab {
-          height: 42px;
+          height: clamp(34px, 4.6vh, 40px);
           border: 0;
           border-radius: 10px;
           background: transparent;
@@ -360,7 +420,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           border-radius: 12px;
           font-size: 13px;
           line-height: 1.4;
-          margin-bottom: 14px;
+          margin-bottom: clamp(8px, 1.3vh, 12px);
         }
         .ap-message.error {
           background: #fef2f2;
@@ -373,11 +433,11 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           color: #1d4ed8;
         }
         .ap-field {
-          margin-bottom: 15px;
+          margin-bottom: clamp(8px, 1.2vh, 12px);
         }
         .ap-field label {
           display: block;
-          margin-bottom: 8px;
+          margin-bottom: 6px;
           color: #0f1b46;
           font-size: 13px;
           font-weight: 850;
@@ -394,7 +454,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
         }
         .ap-input {
           width: 100%;
-          height: 50px;
+          height: clamp(42px, 5.6vh, 48px);
           border-radius: 13px;
           border: 1px solid #cbd5e1;
           background: #fff;
@@ -424,7 +484,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           justify-content: space-between;
           align-items: center;
           gap: 12px;
-          margin: 2px 0 18px;
+          margin: 2px 0 clamp(8px, 1.5vh, 14px);
           color: #526079;
           font-size: 13px;
         }
@@ -445,7 +505,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
         }
         .ap-submit, .ap-google {
           width: 100%;
-          min-height: 52px;
+          min-height: clamp(44px, 5.8vh, 50px);
           border-radius: 13px;
           font-weight: 850;
           font-size: 16px;
@@ -465,7 +525,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           border: 1px solid #b9c5e6;
           background: #fff;
           color: #091052;
-          margin-top: 14px;
+          margin-top: clamp(8px, 1.4vh, 12px);
         }
         .ap-submit:disabled, .ap-google:disabled {
           opacity: .65;
@@ -474,9 +534,9 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
         .ap-security {
           display: grid;
           grid-template-columns: repeat(3, 1fr);
-          gap: 10px;
-          margin-top: 20px;
-          padding-top: 18px;
+          gap: 8px;
+          margin-top: clamp(8px, 1.5vh, 14px);
+          padding-top: clamp(8px, 1.4vh, 12px);
           border-top: 1px solid #e2e8f0;
           color: #526079;
           font-size: 11px;
@@ -486,6 +546,12 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           display: flex;
           gap: 7px;
           align-items: center;
+          justify-content: center;
+          text-align: left;
+          min-width: 0;
+        }
+        .ap-security span {
+          white-space: normal;
         }
         .ap-security svg {
           color: #087cfb;
@@ -495,11 +561,56 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           outline: 3px solid rgba(8,124,251,.35);
           outline-offset: 2px;
         }
+        .ap-submit:hover, .ap-google:hover, .ap-tab:hover {
+          transform: translateY(-1px);
+        }
+        @keyframes bg-kenburns {
+          from { transform: scale(1.015) translate3d(0,0,0); }
+          to { transform: scale(1.055) translate3d(-10px,-6px,0); }
+        }
+        @keyframes login-rise {
+          from { opacity: 0; transform: translateY(14px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes panel-slide {
+          from { opacity: 0; transform: translateX(18px); }
+          to { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes float-badge {
+          0%, 100% { transform: translateY(0) rotate(0deg); }
+          50% { transform: translateY(-5px) rotate(-2deg); }
+        }
+        @media (max-height: 760px) and (min-width: 861px) {
+          .ap-foot { padding-top: 10px; font-size: 12px; gap: 12px; }
+          .ap-pill { margin-bottom: 10px; padding: 7px 10px; }
+          .ap-hero h1 { font-size: clamp(34px, 3.7vw, 56px); }
+          .ap-hero p { font-size: 15px; max-width: 560px; }
+          .ap-card { padding: 18px; }
+          .ap-security { grid-template-columns: repeat(3, 1fr); gap: 5px; }
+          .ap-security div { justify-content: center; font-size: 10px; }
+          .ap-security span br { display: none; }
+        }
+        @media (max-height: 660px) and (min-width: 861px) {
+          .ap-ministry img { height: 28px; }
+          .ap-card-sub { display: none; }
+          .ap-security { display: none; }
+          .ap-brand-sub, .ap-foot { display: none; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .ap-login::before, .ap-left, .ap-panel, .ap-brand-icon {
+            animation: none !important;
+          }
+          .ap-submit:hover, .ap-google:hover, .ap-tab:hover {
+            transform: none;
+          }
+        }
         @media (max-width: 860px) {
           .ap-login {
             display: flex;
             flex-direction: column;
             overflow-y: auto;
+            height: auto;
+            min-height: 100vh;
           }
           .ap-panel {
             order: 1;
@@ -566,7 +677,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           </div>
 
           <h2>Welcome back</h2>
-          <p className="ap-card-sub">Sign in to access your AeroPrice workspace.</p>
+          <p className="ap-card-sub">{authMode === 'login' ? 'Sign in to access your AeroPrice workspace.' : 'Create a user account with Firebase authentication.'}</p>
 
           <div className="ap-tabs" role="tablist" aria-label="Choose workspace role">
             {(Object.keys(ROLE_CONFIG) as AuthRole[]).map((key) => (
@@ -576,11 +687,21 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
                 role="tab"
                 aria-selected={activeRole === key}
                 className={`ap-tab${activeRole === key ? ' active' : ''}`}
-                onClick={() => { setActiveRole(key); resetFeedback() }}
+                onClick={() => { setActiveRole(key); if (key === 'ADMIN') setAuthMode('login'); resetFeedback() }}
               >
                 {ROLE_CONFIG[key].label}
               </button>
             ))}
+          </div>
+
+          <div className="ap-mode-toggle" aria-label="Choose auth mode">
+            <button type="button" className={authMode === 'login' ? 'active' : ''} onClick={() => { setAuthMode('login'); resetFeedback() }}>Sign in</button>
+            {activeRole !== 'ADMIN' && (
+              <button type="button" className={authMode === 'create' ? 'active' : ''} onClick={() => { setAuthMode('create'); setActiveRole('USER'); resetFeedback() }}>Create account</button>
+            )}
+            {activeRole === 'ADMIN' && (
+              <button type="button" disabled style={{ opacity: 0.45, cursor: 'not-allowed' }}>Admin by invite</button>
+            )}
           </div>
 
           {error && (
@@ -591,12 +712,29 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           )}
           {notice && (
             <div className="ap-message notice" role="status">
-              <AlertCircle size={17} aria-hidden="true" />
+              <CheckCircle size={17} aria-hidden="true" />
               <span>{notice}</span>
             </div>
           )}
 
           <form onSubmit={handleSubmit} noValidate>
+            {authMode === 'create' && (
+              <div className="ap-field">
+                <label htmlFor="ap-name">Full Name</label>
+                <div className="ap-input-wrap">
+                  <User size={18} aria-hidden="true" />
+                  <input
+                    id="ap-name"
+                    className="ap-input"
+                    type="text"
+                    autoComplete="name"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    placeholder="Your name"
+                  />
+                </div>
+              </div>
+            )}
             <div className="ap-field">
               <label htmlFor="ap-email">{role.emailLabel}</label>
               <div className="ap-input-wrap">
@@ -643,13 +781,13 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
                 <input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} />
                 Remember me
               </label>
-              <a href="#forgot-password" onClick={handleForgotPassword}>
+              {authMode === 'login' ? <a href="#forgot-password" onClick={handleForgotPassword}>
                 {resetLoading ? 'Checking...' : 'Forgot password?'}
-              </a>
+              </a> : <button type="button" onClick={() => { setAuthMode('login'); resetFeedback() }} style={{ border: 0, background: 'transparent', color: '#075be8', fontWeight: 750, cursor: 'pointer', padding: 0 }}>Have an account?</button>}
             </div>
 
             <button className="ap-submit" type="submit" disabled={loading}>
-              {submitLabel}
+              {authMode === 'create' ? (loading ? 'Creating account...' : 'Create Account') : submitLabel}
               {!loading && <ArrowRight size={19} aria-hidden="true" />}
             </button>
           </form>
@@ -665,9 +803,9 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           </button>
 
           <div className="ap-security" aria-label="Security notes">
-            <div><ShieldCheck size={22} /><span>Secure<br />access</span></div>
-            <div><Users size={22} /><span>Role-based<br />workspaces</span></div>
-            <div><User size={22} /><span>Public user<br />registration</span></div>
+            <div><ShieldCheck size={22} /><span>Secure access</span></div>
+            <div><Users size={22} /><span>Role-based workspaces</span></div>
+            <div><User size={22} /><span>Public user registration</span></div>
           </div>
         </div>
       </section>
