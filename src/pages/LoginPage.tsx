@@ -3,7 +3,6 @@ import { AlertCircle, ArrowRight, CheckCircle, Eye, EyeOff, Lock, Mail, Plane, S
 import { useAuth, type UserRole } from '../contexts/AuthContext'
 import type { Page } from '../components/AppShell'
 import airportBg from '../assets/airport_login_bg.jpg'
-import mocaLogo from '../assets/moca_logo.png'
 
 type AuthRole = 'USER' | 'TGC' | 'ADMIN'
 
@@ -208,7 +207,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           background-image: url(${airportBg});
           background-size: cover;
           background-position: center bottom;
-          filter: brightness(.72) saturate(1.12) contrast(1.06);
+          filter: brightness(.92) saturate(1.18) contrast(1.08);
           transform: scale(1.015);
           animation: bg-kenburns 18s ease-in-out infinite alternate;
         }
@@ -217,8 +216,8 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           position: absolute;
           inset: 0;
           background:
-            linear-gradient(90deg, rgba(2,8,23,.86) 0%, rgba(2,8,23,.55) 48%, rgba(239,246,255,.22) 100%),
-            radial-gradient(circle at 26% 30%, rgba(37,99,235,.22), transparent 34%);
+            linear-gradient(90deg, rgba(2,8,23,.72) 0%, rgba(2,8,23,.38) 48%, rgba(239,246,255,.16) 100%),
+            radial-gradient(circle at 26% 30%, rgba(37,99,235,.16), transparent 34%);
         }
         .ap-left {
           position: relative;
@@ -335,9 +334,37 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           gap: 12px;
           margin-bottom: clamp(10px, 1.6vh, 18px);
         }
-        .ap-ministry img {
-          height: clamp(34px, 5.2vh, 48px);
-          object-fit: contain;
+        .ap-ministry-badge {
+          display: flex;
+          align-items: center;
+          gap: 9px;
+          min-width: 0;
+        }
+        .ap-emblem {
+          width: 34px;
+          height: 34px;
+          border-radius: 11px;
+          display: grid;
+          place-items: center;
+          color: #0f3b7a;
+          background: linear-gradient(135deg, #eff6ff, #ffffff);
+          border: 1px solid #dbeafe;
+          box-shadow: 0 8px 18px rgba(15,23,42,.08);
+          font-size: 18px;
+          flex: 0 0 auto;
+        }
+        .ap-ministry-text {
+          display: grid;
+          gap: 1px;
+          color: #0f172a;
+          font-size: 11px;
+          font-weight: 850;
+          line-height: 1.18;
+        }
+        .ap-ministry-text small {
+          color: #64748b;
+          font-size: 10px;
+          font-weight: 750;
         }
         .ap-prototype {
           font-size: 10px;
@@ -591,7 +618,9 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           .ap-security span br { display: none; }
         }
         @media (max-height: 660px) and (min-width: 861px) {
-          .ap-ministry img { height: 28px; }
+          .ap-emblem { width: 28px; height: 28px; font-size: 15px; }
+          .ap-ministry-text { font-size: 10px; }
+          .ap-ministry-text small { font-size: 9px; }
           .ap-card-sub { display: none; }
           .ap-security { display: none; }
           .ap-brand-sub, .ap-foot { display: none; }
@@ -672,7 +701,13 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
       <section className="ap-panel" aria-label="Authentication panel">
         <div className="ap-card">
           <div className="ap-ministry">
-            <img src={mocaLogo} alt="Ministry of Civil Aviation, Government of India" />
+            <div className="ap-ministry-badge" aria-label="Ministry of Civil Aviation, Government of India">
+              <span className="ap-emblem">✦</span>
+              <span className="ap-ministry-text">
+                Ministry of Civil Aviation
+                <small>Government of India</small>
+              </span>
+            </div>
             <span className="ap-prototype">SIH Prototype</span>
           </div>
 
