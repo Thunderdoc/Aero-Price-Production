@@ -91,6 +91,15 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.ALLOWED_ORIGINS.split(",")]
 
     @property
+    def sqlalchemy_database_url(self) -> str:
+        """Use an async SQLAlchemy driver for Render/Postgres URLs."""
+        if self.DATABASE_URL.startswith("postgres://"):
+            return self.DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
+        if self.DATABASE_URL.startswith("postgresql://"):
+            return self.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return self.DATABASE_URL
+
+    @property
     def is_production(self) -> bool:
         return self.ENVIRONMENT == "production"
 
