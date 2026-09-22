@@ -349,15 +349,11 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           border: 1px solid rgba(255,255,255,.65);
           box-shadow: 0 34px 90px rgba(2,8,23,.28);
           backdrop-filter: blur(22px);
-          padding: clamp(20px, 2.2vw, 28px);
-          max-height: calc(100vh - 24px);
-          overflow-y: auto;
-          scrollbar-width: thin;
-          scrollbar-color: rgba(148,163,184,.55) transparent;
+          padding: clamp(16px, 1.8vw, 22px);
+          max-height: calc(100vh - 28px);
+          overflow: hidden;
           position: relative;
         }
-        .ap-card::-webkit-scrollbar { width: 6px; }
-        .ap-card::-webkit-scrollbar-thumb { background: rgba(148,163,184,.55); border-radius: 99px; }
         .ap-card::before {
           content: '';
           position: absolute;
@@ -374,26 +370,28 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           justify-content: space-between;
           align-items: flex-start;
           gap: 12px;
-          margin-bottom: clamp(10px, 1.6vh, 18px);
+          margin-bottom: 10px;
         }
         .ap-ministry-logo {
-          width: clamp(112px, 10vw, 148px);
-          height: auto;
+          width: clamp(96px, 8vw, 122px);
+          height: 98px;
           display: block;
           border-radius: 12px;
-          object-fit: contain;
+          object-fit: cover;
+          object-position: center 28%;
           background: rgba(255,255,255,.72);
           border: 1px solid rgba(226,232,240,.8);
         }
         .ap-card.is-create {
-          padding: clamp(16px, 1.8vw, 22px);
+          padding: 14px 18px;
         }
         .ap-card.is-create .ap-ministry {
           align-items: center;
           margin-bottom: 10px;
         }
         .ap-card.is-create .ap-ministry-logo {
-          width: clamp(90px, 8vw, 118px);
+          width: 88px;
+          height: 74px;
         }
         .ap-card.is-create .ap-card-sub {
           margin-bottom: 10px;
@@ -427,13 +425,13 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
         .ap-card h2 {
           margin: 0;
           color: #050816;
-          font-size: clamp(26px, 3.6vh, 32px);
+          font-size: clamp(24px, 3.2vh, 30px);
           line-height: 1.05;
           letter-spacing: -.045em;
           font-weight: 950;
         }
         .ap-card-sub {
-          margin: 5px 0 clamp(10px, 1.6vh, 16px);
+          margin: 4px 0 10px;
           color: #526079;
           font-size: 15px;
           line-height: 1.42;
@@ -446,7 +444,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           border-radius: 14px;
           background: #f1f5f9;
           border: 1px solid #e2e8f0;
-          margin-bottom: clamp(12px, 2vh, 18px);
+          margin-bottom: 10px;
           box-shadow: inset 0 1px 2px rgba(15,23,42,.04);
         }
         .ap-mode-toggle {
@@ -457,7 +455,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           border-radius: 14px;
           background: #eef6ff;
           border: 1px solid #bfdbfe;
-          margin-bottom: clamp(8px, 1.3vh, 12px);
+          margin-bottom: 10px;
           box-shadow: inset 0 1px 2px rgba(37,99,235,.07);
         }
         .ap-mode-toggle button {
@@ -508,7 +506,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           color: #1d4ed8;
         }
         .ap-field {
-          margin-bottom: clamp(8px, 1.2vh, 12px);
+          margin-bottom: 8px;
         }
         .ap-field label {
           display: block;
@@ -529,7 +527,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
         }
         .ap-input {
           width: 100%;
-          height: clamp(42px, 5.6vh, 48px);
+          height: 43px;
           border-radius: 13px;
           border: 1px solid #cbd5e1;
           background: #fff;
@@ -559,7 +557,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           justify-content: space-between;
           align-items: center;
           gap: 12px;
-          margin: 2px 0 clamp(8px, 1.5vh, 14px);
+          margin: 2px 0 10px;
           color: #526079;
           font-size: 13px;
         }
@@ -580,7 +578,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
         }
         .ap-submit, .ap-google {
           width: 100%;
-          min-height: clamp(44px, 5.8vh, 50px);
+          min-height: 45px;
           border-radius: 13px;
           font-weight: 850;
           font-size: 16px;
@@ -613,7 +611,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           border: 1px solid #b9c5e6;
           background: #fff;
           color: #091052;
-          margin-top: clamp(8px, 1.4vh, 12px);
+          margin-top: 9px;
           box-shadow: 0 10px 26px rgba(15,23,42,.08);
         }
         .ap-submit:disabled, .ap-google:disabled {
@@ -621,7 +619,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           cursor: not-allowed;
         }
         .ap-security {
-          display: grid;
+          display: none;
           grid-template-columns: repeat(3, 1fr);
           gap: 8px;
           margin-top: clamp(8px, 1.5vh, 14px);
