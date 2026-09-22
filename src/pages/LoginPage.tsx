@@ -188,6 +188,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
 
   return (
     <main className="ap-login" aria-label="AeroPrice secure login">
+      <img className="ap-bg-media" src={airportBg} alt="" aria-hidden="true" />
       <style>{`
         .ap-login {
           height: 100vh;
@@ -200,16 +201,17 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           font-family: var(--font-sans, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
           background: #061225;
         }
-        .ap-login::before {
-          content: '';
+        .ap-bg-media {
           position: absolute;
           inset: 0;
-          background-image: url(${airportBg});
-          background-size: cover;
-          background-position: center bottom;
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          object-position: center bottom;
           filter: brightness(.92) saturate(1.18) contrast(1.08);
           transform: scale(1.015);
           animation: bg-kenburns 18s ease-in-out infinite alternate;
+          pointer-events: none;
         }
         .ap-login::after {
           content: '';
@@ -626,7 +628,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           .ap-brand-sub, .ap-foot { display: none; }
         }
         @media (prefers-reduced-motion: reduce) {
-          .ap-login::before, .ap-left, .ap-panel, .ap-brand-icon {
+          .ap-bg-media, .ap-left, .ap-panel, .ap-brand-icon {
             animation: none !important;
           }
           .ap-submit:hover, .ap-google:hover, .ap-tab:hover {
