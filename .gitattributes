@@ -148,3 +148,7 @@ public/airport-login-bg.jpg -filter -diff -merge -text
 *.stl                filter=lfs diff=lfs merge=lfs -text
 *.nc                 filter=lfs diff=lfs merge=lfs -text
 *.mat                filter=lfs diff=lfs merge=lfs -text
+
+# GitHub LFS objects are unavailable for this repository. Store project
+# assets as ordinary Git blobs so hosted builds can clone the repository.
+* -filter -diff -merge
