@@ -2,9 +2,9 @@ import { useMemo, useState } from 'react'
 import { AlertCircle, ArrowRight, CheckCircle, Eye, EyeOff, Lock, Mail, Plane, ShieldCheck, User, Users } from 'lucide-react'
 import { useAuth, type UserRole } from '../contexts/AuthContext'
 import type { Page } from '../components/AppShell'
-import airportBg from '../assets/airport_login_bg.jpg'
 
 type AuthRole = 'USER' | 'TGC' | 'ADMIN'
+const airportBg = '/airport-login-bg.jpg'
 
 const ROLE_CONFIG: Record<AuthRole, {
   label: string
