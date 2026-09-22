@@ -715,7 +715,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
         <div className="ap-card">
           <div className="ap-ministry">
             <div className="ap-ministry-badge" aria-label="Ministry of Civil Aviation, Government of India">
-              <span className="ap-emblem">✦</span>
+              <span className="ap-emblem"><Plane size={18} aria-hidden="true" /></span>
               <span className="ap-ministry-text">
                 Ministry of Civil Aviation
                 <small>Government of India</small>
