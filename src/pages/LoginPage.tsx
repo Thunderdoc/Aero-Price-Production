@@ -347,37 +347,14 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           gap: 12px;
           margin-bottom: clamp(10px, 1.6vh, 18px);
         }
-        .ap-ministry-badge {
-          display: flex;
-          align-items: center;
-          gap: 9px;
-          min-width: 0;
-        }
-        .ap-emblem {
-          width: 34px;
-          height: 34px;
-          border-radius: 11px;
-          display: grid;
-          place-items: center;
-          color: #0f3b7a;
-          background: linear-gradient(135deg, #eff6ff, #ffffff);
-          border: 1px solid #dbeafe;
-          box-shadow: 0 8px 18px rgba(15,23,42,.08);
-          font-size: 18px;
-          flex: 0 0 auto;
-        }
-        .ap-ministry-text {
-          display: grid;
-          gap: 1px;
-          color: #0f172a;
-          font-size: 11px;
-          font-weight: 850;
-          line-height: 1.18;
-        }
-        .ap-ministry-text small {
-          color: #64748b;
-          font-size: 10px;
-          font-weight: 750;
+        .ap-ministry-logo {
+          width: clamp(132px, 12vw, 170px);
+          height: auto;
+          display: block;
+          border-radius: 12px;
+          object-fit: contain;
+          background: rgba(255,255,255,.72);
+          border: 1px solid rgba(226,232,240,.8);
         }
         .ap-prototype {
           font-size: 10px;
@@ -631,9 +608,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           .ap-security span br { display: none; }
         }
         @media (max-height: 660px) and (min-width: 861px) {
-          .ap-emblem { width: 28px; height: 28px; font-size: 15px; }
-          .ap-ministry-text { font-size: 10px; }
-          .ap-ministry-text small { font-size: 9px; }
+          .ap-ministry-logo { width: 120px; }
           .ap-card-sub { display: none; }
           .ap-security { display: none; }
           .ap-brand-sub, .ap-foot { display: none; }
@@ -714,13 +689,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
       <section className="ap-panel" aria-label="Authentication panel">
         <div className="ap-card">
           <div className="ap-ministry">
-            <div className="ap-ministry-badge" aria-label="Ministry of Civil Aviation, Government of India">
-              <span className="ap-emblem"><Plane size={18} aria-hidden="true" /></span>
-              <span className="ap-ministry-text">
-                Ministry of Civil Aviation
-                <small>Government of India</small>
-              </span>
-            </div>
+            <img className="ap-ministry-logo" src="/moca-badge.png" alt="Ministry of Civil Aviation, Government of India" />
             <span className="ap-prototype">SIH Prototype</span>
           </div>
 

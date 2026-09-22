@@ -5,6 +5,7 @@
 # Images & Graphics
 # ---------------------------------------------------------------------------
 *.png                filter=lfs diff=lfs merge=lfs -text
+public/moca-badge.png -filter -diff -merge -text
 *.jpg                filter=lfs diff=lfs merge=lfs -text
 public/airport-login-bg.jpg -filter -diff -merge -text
 *.jpeg               filter=lfs diff=lfs merge=lfs -text
