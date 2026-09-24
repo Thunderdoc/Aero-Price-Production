@@ -33,6 +33,7 @@ from app.collectors.challenge import (
 from app.collectors.aggregators.amadeus import AmadeusAdapter
 from app.collectors.aggregators.serpapi_google_flights import SerpApiGoogleFlightsAdapter
 from app.collectors.google_flights import GoogleFlightsAdapter
+from app.collectors.google_flights_playwright import GoogleFlightsPlaywrightAdapter
 from app.collectors.duffel import DuffelAdapter, SOURCE_ID as DUFFEL_SOURCE_ID
 
 logger = logging.getLogger(__name__)
@@ -216,6 +217,12 @@ OPEN_SOURCE_FLIGHTS_SOURCE = {
     "credential_vars": [],
 }
 AIRFARE_SOURCE_REGISTRY.append(OPEN_SOURCE_FLIGHTS_SOURCE)
+PLAYWRIGHT_SOURCE = {
+    "id": "google-flights-playwright", "name": "Google Flights (Playwright public UI)", "type": "AGGREGATOR",
+    "status": "CONFIGURED", "robots_txt": "UNKNOWN", "captcha_detected": False, "api_available": True,
+    "note": "Low-volume public UI collector; may be BLOCKED by Google without bypassing controls.", "credential_vars": [],
+}
+AIRFARE_SOURCE_REGISTRY.append(PLAYWRIGHT_SOURCE)
 
 
 def _make_adapters() -> list[FareSourceAdapter]:
@@ -241,6 +248,7 @@ def _make_adapters() -> list[FareSourceAdapter]:
     serpapi_cfg = {"SERPAPI_API_KEY": settings.SERPAPI_API_KEY}
 
     adapters: list[FareSourceAdapter] = [
+        GoogleFlightsPlaywrightAdapter(),
         GoogleFlightsAdapter({"GOOGLE_FLIGHTS_ENABLED": True}),
         SerpApiGoogleFlightsAdapter(serpapi_cfg),
         DuffelAdapter(duffel_cfg),     # authorized Duffel REST API — REAL or SANDBOX_TEST
