@@ -147,8 +147,8 @@ export default function AviationFlights() {
                     {f.airline_name || f.airline_iata || '—'}
                   </td>
                   <td style={{ padding:'10px 16px', fontSize:11, fontFamily:'var(--font-mono)', color:'var(--color-text-secondary)' }}>
-                    <div>{f.aircraft_type || 'A320neo'}</div>
-                    <div style={{ fontSize:10, color:'var(--color-text-tertiary)' }}>{f.registration || 'VT-DOM'}</div>
+                    <div>{f.aircraft_type || 'Type unavailable'}</div>
+                    <div style={{ fontSize:10, color:'var(--color-text-tertiary)' }}>{f.registration || 'Registration unavailable'}</div>
                   </td>
                   <td style={{ padding:'10px 16px', fontSize:12, fontFamily:'var(--font-mono)',
                     color:'var(--color-text-primary)', fontWeight:700 }}>
@@ -156,9 +156,9 @@ export default function AviationFlights() {
                   </td>
                   <td style={{ padding:'10px 16px', fontSize:11, fontFamily:'var(--font-mono)',
                     color:'var(--color-text-secondary)' }}>
-                    <div>{f.altitude_ft != null ? `${Math.round(f.altitude_ft).toLocaleString()} ft` : 'FL340'}</div>
+                    <div>{f.altitude_ft != null ? `${Math.round(f.altitude_ft).toLocaleString()} ft` : 'Altitude unavailable'}</div>
                     <div style={{ fontSize:10, color:'var(--color-text-tertiary)' }}>
-                      {f.ground_speed_kts != null ? `${Math.round(f.ground_speed_kts)} kts` : '440 kts'}
+                      {f.ground_speed_kts != null ? `${Math.round(f.ground_speed_kts)} kts` : 'Speed unavailable'}
                     </div>
                   </td>
                   <td style={{ padding:'10px 16px', fontSize:11, fontFamily:'var(--font-mono)',

@@ -6,7 +6,8 @@ Start: uvicorn main:app --reload --port 8000
 """
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -21,6 +22,9 @@ from app.api.routes.compare import router as compare_router
 from app.services.collector import run_collection
 from app.services.gov_fetcher import run_gov_fetches, ensure_gov_dataset_registry
 from app.seed.routes import seed_route_basket
+from app.models.feedback import UserFeedback  # noqa: F401 - register table metadata
+from app.models.access import FeatureAccessRequest, UserFeatureAccess, UserNotification  # noqa: F401 - register table metadata
+from app.core.rate_limit import limiter, policy_for
 
 logging.basicConfig(
     level=getattr(logging, settings.LOG_LEVEL),
@@ -91,13 +95,32 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+@app.exception_handler(Exception)
+async def unhandled_exception(request: Request, exc: Exception):
+    """Keep internal exception details out of production API responses."""
+    logger.exception("Unhandled request error: %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Something went wrong. Please try again later."},
+    )
+
 @app.middleware("http")
 async def security_headers(request, call_next):
+    policy = policy_for(request.url.path, request.method)
+    if policy:
+        name, limit, window = policy
+        client = request.client.host if request.client else "unknown"
+        allowed, retry_after = limiter.allow(client, name, limit, window)
+        if not allowed:
+            return JSONResponse(status_code=429, content={"detail": "Too many requests. Please try again later."}, headers={"Retry-After": str(retry_after)})
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if settings.is_production:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
 
 app.add_middleware(

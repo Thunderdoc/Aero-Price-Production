@@ -64,6 +64,7 @@ async def current_index(
     latest = await db.scalar(
         select(IndexObservation)
         .where(IndexObservation.status == "PUBLISHED")
+        .where(IndexObservation.data_origin.in_(["REAL", "OFFICIAL", "DERIVED"]))
         .order_by(IndexObservation.calculation_ts.desc())
         .limit(1)
     )

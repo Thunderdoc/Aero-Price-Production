@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { AlertTriangle, CheckCircle2, Globe, RefreshCw, Server, Shield, XCircle, Zap, ShieldCheck, Database } from 'lucide-react'
-import { StatusBadge } from '../components/StatusBadge'
+import StatusBadge from '../components/StatusBadge'
 import { GovSourceCard } from '../components/SourceCard'
 import { useGovData } from '../hooks/useGovData'
 import { isBackendAvailable, apiSourceHealth } from '../services/api'
@@ -151,8 +151,8 @@ export default function DataSources() {
     return s
   })
 
-  const connectedAirfare = displaySources.filter(s => s.status === 'CONNECTED' || s.status === 'HEALTHY').length
-  const govConnected = datasets.filter(d => d.status === 'CONNECTED' || d.status === 'HEALTHY' || d.status === 'STALE').length
+  const connectedAirfare = displaySources.filter(s => ['CONNECTED', 'HEALTHY'].includes(s.status as string)).length
+  const govConnected = datasets.filter(d => ['CONNECTED', 'HEALTHY', 'STALE'].includes(d.status)).length
   const totalRecords = displaySources.reduce((acc, s) => acc + (s.records_received ?? 0), 0) + 10875
 
   const summaryItems = [

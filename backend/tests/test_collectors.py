@@ -47,9 +47,9 @@ def test_is_configured_false_with_empty_keys(AdapterClass):
     assert adapter.is_configured() is False
 
 
-def test_route_basket_has_12_routes():
+def test_route_basket_has_19_routes():
     from app.services.collector import ROUTE_BASKET
-    assert len(ROUTE_BASKET) == 12
+    assert len(ROUTE_BASKET) == 19
 
 
 def test_advance_windows():

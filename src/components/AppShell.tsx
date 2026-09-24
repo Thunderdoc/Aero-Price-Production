@@ -3,12 +3,17 @@ import {
   Home, Map, Plane, Building2, Database,
   Settings, Shield, Bell, BarChart2, BookOpen,
   Download, Activity, LogOut, ChevronDown, Table2, Search, X, TrendingUp, History,
-  LineChart, CalendarDays, AlertCircle, Landmark, Users, Globe
+  LineChart, CalendarDays, AlertCircle, Landmark, Users, Globe, Bookmark, MessageSquare, Moon, Sun,
+  TowerControl, Route, CloudSun, Fuel, Radio
 } from 'lucide-react'
 import DataStatusBanner from './DataStatusBanner'
 import { useAuth, canAccess, type UserRole, type UserPlan } from '../contexts/AuthContext'
 import { useGovData } from '../hooks/useGovData'
 import { corridors } from '../data/sampleData'
+import UserSupportModal from './UserSupportModal'
+import { apiHealth, apiNotifications } from '../services/api'
+import { useAviationRadar } from '../services/aviationRadar'
+import type { AviationPanel } from '../pages/AviationLive'
 
 export type Page =
   | 'overview' | 'map' | 'routes' | 'government' | 'insights'
@@ -20,7 +25,9 @@ export type Page =
 // ── Portal definitions ─────────────────────────────────────────────────────
 export type Portal = 'gov' | 'admin' | 'aviation'
 
-interface NavItem { page: Page; icon: typeof Home; label: string; badge?: string; minRole?: 'ANALYST' | 'ADMIN' | 'SUBSCRIBER' }
+export type AdminTab = 'pipeline' | 'users' | 'access' | 'feedback' | 'audit' | 'config'
+interface NavItem { page: Page; icon: typeof Home; label: string; badge?: string; minRole?: 'ANALYST' | 'ADMIN' | 'SUBSCRIBER'; supportAction?: 'settings' | 'help' | 'feedback'; section?: string; aviationAction?: AviationPanel; adminTab?: AdminTab }
+interface LocalNotification { id: string; email?: string; title: string; message: string; createdAt: string; read?: boolean }
 
 // Government Portal
 const govNav: NavItem[] = [
@@ -43,10 +50,16 @@ const govNav: NavItem[] = [
 
 // Admin Control Center
 const adminNav: NavItem[] = [
-  { page: 'admin',      icon: Shield,    label: 'Overview',        minRole: 'ADMIN' },
-  { page: 'sources',    icon: Database,  label: 'Data Sources',    minRole: 'ANALYST' },
-  { page: 'collection', icon: Activity,  label: 'Collection Jobs', minRole: 'ADMIN' },
-  { page: 'sources',    icon: Settings,  label: 'System Config',   minRole: 'ADMIN' },
+  { page: 'admin',      icon: Shield,    label: 'Overview',          minRole: 'ADMIN', adminTab: 'pipeline' },
+  { page: 'sources',    icon: Database,  label: 'Data Sources',      minRole: 'ADMIN' },
+  { page: 'collection', icon: Activity,  label: 'Collection Jobs',   minRole: 'ADMIN' },
+  { page: 'collection', icon: Route,     label: 'Data Pipelines',    minRole: 'ADMIN' },
+  { page: 'admin',      icon: Users,     label: 'User Management',   minRole: 'ADMIN', adminTab: 'users' },
+  { page: 'admin',      icon: Shield,    label: 'Access Requests',   minRole: 'ADMIN', adminTab: 'access' },
+  { page: 'admin',      icon: BookOpen,  label: 'Audit Trail',       minRole: 'ADMIN', adminTab: 'audit' },
+  { page: 'admin',      icon: Settings,  label: 'System Parameters', minRole: 'ADMIN', adminTab: 'config' },
+  { page: 'exports',    icon: Download,  label: 'Reports & Exports', minRole: 'ADMIN' },
+  { page: 'admin',      icon: Activity,  label: 'System Health',     minRole: 'ADMIN', adminTab: 'pipeline' },
 ]
 
 // Aviation Intelligence
@@ -54,6 +67,29 @@ const aviationNav: NavItem[] = [
   { page: 'aviationlive',     icon: Map,       label: 'Live Flight Map' },
   { page: 'aviationflights',  icon: Plane,     label: 'Flights' },
   { page: 'aviationairports', icon: Building2, label: 'Airports' },
+  { page: 'aviationlive', icon: Plane, label: 'Airlines', aviationAction: 'Airlines' },
+  { page: 'aviationlive', icon: TowerControl, label: 'ATC Activity', aviationAction: 'ATC Activity' },
+  { page: 'aviationlive', icon: Route, label: 'Corridor Analysis', aviationAction: 'Corridor Analysis' },
+  { page: 'aviationlive', icon: CloudSun, label: 'Weather & Alerts', aviationAction: 'Weather & Alerts' },
+  { page: 'aviationlive', icon: History, label: 'Historical Replay', aviationAction: 'Historical Replay' },
+  { page: 'aviationlive', icon: Fuel, label: 'Fuel & Emissions', aviationAction: 'Fuel & Emissions' },
+  { page: 'aviationlive', icon: Download, label: 'Reports & Export', aviationAction: 'Reports & Export' },
+  { page: 'airfareindex', icon: LineChart, label: 'Airfare Index', section: 'GOVERNMENT MODULES', minRole: 'ANALYST' },
+  { page: 'insights', icon: BarChart2, label: 'Market Insights' },
+  { page: 'sources', icon: Database, label: 'Data Sources', minRole: 'ANALYST' },
+]
+
+const userNav: NavItem[] = [
+  { page: 'overview', icon: Home, label: 'Dashboard', section: 'USER DASHBOARD' },
+  { page: 'routes', icon: Plane, label: 'Route Explorer' },
+  { page: 'insights', icon: TrendingUp, label: 'Market Insights' },
+  { page: 'map', icon: Map, label: 'GIS / India Map' },
+  { page: 'alerts', icon: Bell, label: 'Price Alerts' },
+  { page: 'routes', icon: Bookmark, label: 'Saved Routes' },
+  { page: 'historicalfares', icon: History, label: 'Travel History' },
+  // Settings is intentionally available from the global header gear only.
+  { page: 'sources', icon: BookOpen, label: 'Help & FAQ', supportAction: 'help' },
+  { page: 'sources', icon: MessageSquare, label: 'Feedback', supportAction: 'feedback' },
 ]
 
 
@@ -135,31 +171,54 @@ const PAGE_PORTAL: Partial<Record<Page, Portal>> = {
   airlineexplorer:'gov', insights:'gov', map:'gov', bookingwindow:'gov',
   forecast:'gov', anomalies:'gov', historicalfares:'gov', government:'gov',
   alerts:'gov', exports:'gov', methodology:'gov',
-  admin:'admin', sources:'admin', collection:'admin',
+  admin:'admin', collection:'admin',
   aviationlive:'aviation', aviationflights:'aviation', aviationairports:'aviation',
 }
 
-const PUBLIC_USER_PAGES: Page[] = ['overview', 'routes', 'insights', 'map', 'alerts']
+const PUBLIC_USER_PAGES: Page[] = ['overview', 'routes', 'insights', 'map', 'alerts', 'historicalfares', 'sources']
 
 export default function AppShell({ currentPage, onNavigate, children }: AppShellProps) {
-  const { user, logout } = useAuth()
+  const { user, token, logout } = useAuth()
+  const isAviation = currentPage.startsWith('aviation')
+  const radar = useAviationRadar(isAviation)
   const govData = useGovData()
   const [avatarOpen, setAvatarOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchFocused, setSearchFocused] = useState(false)
-  const [portal, setPortal] = useState<Portal>(() => PAGE_PORTAL[currentPage] ?? 'gov')
+  const [portal, setPortal] = useState<Portal>(() => {
+    if (currentPage === 'exports') {
+      const savedExportsPortal = sessionStorage.getItem('exports-portal') as Portal | null
+      if (savedExportsPortal === 'admin' || savedExportsPortal === 'gov') return savedExportsPortal
+    }
+    return PAGE_PORTAL[currentPage] ?? 'gov'
+  })
   const [searchOpen, setSearchOpen] = useState(false)
+  const [supportMode, setSupportMode] = useState<'settings' | 'help' | 'feedback' | null>(null)
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [notifications, setNotifications] = useState<LocalNotification[]>([])
+  const [fareFeed, setFareFeed] = useState<{ connected: boolean; observations: number | null }>({ connected: false, observations: null })
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem('aeroprice_theme') === 'dark')
+  const [adminNavKey, setAdminNavKey] = useState(() => sessionStorage.getItem('admin-nav-key') || 'Overview')
   const searchRef = useRef<HTMLDivElement>(null)
+  const mobileNavRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLElement>(null)
 
-  const searchMatches = searchQuery.trim().length >= 3
-    ? corridors
-        .filter(c =>
-          `${c.from}-${c.to}`.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          c.from.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          c.to.toLowerCase().includes(searchQuery.toLowerCase())
-        )
-        .slice(0, 5)
-    : []
+  // Route changes must never preserve an old horizontal scroll position on the
+  // compact navigation strip. Preserving it is what caused clipped labels on
+  // every page after navigating from a partially scrolled menu.
+  useEffect(() => {
+    mobileNavRef.current?.scrollTo({ left: 0, behavior: 'auto' })
+    contentRef.current?.scrollTo({ left: 0, top: 0, behavior: 'auto' })
+  }, [currentPage])
+
+  useEffect(() => {
+    const onAdminNav = (event: Event) => {
+      const key = (event as CustomEvent<string>).detail
+      if (key) setAdminNavKey(key)
+    }
+    window.addEventListener('admin-nav', onAdminNav)
+    return () => window.removeEventListener('admin-nav', onAdminNav)
+  }, [])
 
   useEffect(() => {
     function onMouseDown(e: MouseEvent) {
@@ -171,8 +230,63 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
     return () => document.removeEventListener('mousedown', onMouseDown)
   }, [])
 
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', darkMode)
+    localStorage.setItem('aeroprice_theme', darkMode ? 'dark' : 'light')
+  }, [darkMode])
+
+  useEffect(() => {
+    const syncPreferences = () => setDarkMode(localStorage.getItem('aeroprice_theme') === 'dark')
+    window.addEventListener('aeroprice-preferences-changed', syncPreferences)
+    return () => window.removeEventListener('aeroprice-preferences-changed', syncPreferences)
+  }, [])
+
+  useEffect(() => {
+    const loadNotifications = () => {
+      try {
+        const stored = JSON.parse(localStorage.getItem('aeroprice_notifications') || '[]') as LocalNotification[]
+        setNotifications(stored.filter(item => !item.email || item.email === user?.email).slice(0, 8))
+      } catch {
+        setNotifications([])
+      }
+    }
+    loadNotifications()
+    if (token) {
+      apiNotifications(token).then((result: any) => {
+        if (!Array.isArray(result?.notifications)) return
+        const serverNotifications = result.notifications.map((item: any) => ({ id: item.id, title: item.title, message: item.message, createdAt: item.created_at, read: Boolean(item.read) }))
+        setNotifications(prev => [...serverNotifications, ...prev.filter(item => !serverNotifications.some((server: LocalNotification) => server.id === item.id))].slice(0, 8))
+      }).catch(() => {})
+    }
+    window.addEventListener('aeroprice-notifications-changed', loadNotifications)
+    return () => window.removeEventListener('aeroprice-notifications-changed', loadNotifications)
+  }, [token, user?.email])
+
+  useEffect(() => {
+    let active = true
+    apiHealth()
+      .then(health => {
+        if (active) setFareFeed({
+          connected: health.status === 'ok' && health.database === 'connected' && health.real_observations > 0,
+          observations: health.real_observations,
+        })
+      })
+      .catch(() => { if (active) setFareFeed({ connected: false, observations: null }) })
+    return () => { active = false }
+  }, [])
+
+  function markNotificationsRead() {
+    try {
+      const stored = JSON.parse(localStorage.getItem('aeroprice_notifications') || '[]') as LocalNotification[]
+      localStorage.setItem('aeroprice_notifications', JSON.stringify(stored.map(item => item.email === user?.email ? { ...item, read: true } : item)))
+      setNotifications(prev => prev.map(item => ({ ...item, read: true })))
+    } catch { /* keep the notification panel usable if storage is unavailable */ }
+  }
+
   // Sync portal when page changes externally
-  const derivedPortal = PAGE_PORTAL[currentPage] ?? portal
+  // Exports is shared by Government and Admin. Preserve the portal that opened
+  // it so the Admin Reports & Exports action cannot silently switch portals.
+  const derivedPortal = currentPage === 'exports' ? portal : PAGE_PORTAL[currentPage] ?? portal
 
   const role = user?.role ?? 'PUBLIC'
   const plan = user?.plan ?? 'FREE'
@@ -180,12 +294,23 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
   const roleBadge = ROLE_BADGE[planKey]
 
   // Nav items based on active portal
-  const activeNav = derivedPortal === 'admin' ? adminNav
+  const activeNav = role === 'PUBLIC' && plan === 'FREE' ? userNav
+    : derivedPortal === 'admin' ? adminNav
     : derivedPortal === 'aviation' ? aviationNav
     : govNav
 
+  const searchMatches = searchQuery.trim().length >= 2
+    ? [
+        ...activeNav.filter(isVisible).filter(item => !item.supportAction).map(item => ({ key: `page-${item.label}`, title: item.label, sub: derivedPortal.toUpperCase(), page: item.page })),
+        ...corridors.map(c => ({ key: `route-${c.id}`, title: `${c.from} → ${c.to}`, sub: 'Route Explorer', page: 'routes' as Page })),
+        ...radar.aircraft.map(a => ({ key: `air-${a.icao24 || a.callsign}`, title: a.callsign || a.registration || a.icao24.toUpperCase(), sub: `${a.registration || 'Aircraft'} · Live Flight Map`, page: 'aviationlive' as Page })),
+        ...['DEL','BOM','BLR','MAA','CCU','HYD','AMD','GAU'].map(code => ({ key: `apt-${code}`, title: code, sub: 'Airport reference', page: 'aviationlive' as Page })),
+      ].filter(item => `${item.title} ${item.sub}`.toLowerCase().includes(searchQuery.toLowerCase())).slice(0, 7)
+    : []
+
   function switchPortal(p: Portal) {
     setPortal(p)
+    if (currentPage === 'exports' && (p === 'admin' || p === 'gov')) sessionStorage.setItem('exports-portal', p)
     const first = (p === 'admin' ? adminNav : p === 'aviation' ? aviationNav : govNav)
       .find(item => isVisible(item))
     if (first) navClick(first.page)
@@ -201,6 +326,11 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
   }
 
   function navClick(page: Page) {
+    // Navigation always clears transient surfaces. A profile or notification
+    // popover must never stay pinned above the destination page.
+    setAvatarOpen(false)
+    setNotificationsOpen(false)
+    setSupportMode(null)
     if (!canAccess(role, plan, page)) return
     onNavigate(page)
   }
@@ -210,10 +340,10 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
     : 'U'
 
   return (
-    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', fontFamily: 'var(--font-sans)', background: 'var(--color-surface-canvas)' }}>
+    <div className={`app-shell ${isAviation ? 'aviation-shell' : ''}`} style={{ display: 'flex', height: '100vh', overflow: 'hidden', fontFamily: 'var(--font-sans)', background: 'var(--color-surface-canvas)' }}>
 
       {/* ── Sidebar ────────────────────────────────────── */}
-      <div style={{
+      <div className="app-sidebar" style={{
         width: 'var(--sidebar-width)', flexShrink: 0,
         display: 'flex', flexDirection: 'column',
         background: 'var(--color-surface-bg)',
@@ -225,7 +355,7 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
         <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: 'var(--gradient-brand)', opacity: 0.8 }} />
 
         {/* Logo */}
-        <div style={{ padding: '20px 16px 14px', borderBottom: '1px solid var(--color-border-primary)' }}>
+        <div className="app-sidebar-brand" role="button" tabIndex={0} onClick={() => navClick('overview')} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navClick('overview') } }} title="Go to dashboard" style={{ padding: '20px 16px 14px', borderBottom: '1px solid var(--color-border-primary)', cursor: 'pointer' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
             <div style={{ width: 28, height: 28, background: 'var(--gradient-hero)', borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
               <svg width="16" height="16" viewBox="0 0 36 36" fill="none" aria-hidden>
@@ -238,10 +368,11 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
             <div>
               <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--color-text-primary)', letterSpacing: '0.08em', lineHeight: 1.1 }}>AEROPRICE</div>
               <div style={{ fontSize: 9, color: 'var(--color-text-tertiary)', letterSpacing: '0.12em' }}>INDIA</div>
+              {isAviation && <div className="av-brand-caption">Real-Time Airfare Intelligence</div>}
             </div>
           </div>
           {/* Role badge */}
-          <div style={{
+          <div role={role === 'ADMIN' ? 'button' : undefined} tabIndex={role === 'ADMIN' ? 0 : undefined} onClick={event => { if (role === 'ADMIN') { event.stopPropagation(); setAdminNavKey('Overview'); sessionStorage.setItem('admin-nav-key', 'Overview'); sessionStorage.setItem('admin-tab', 'pipeline'); navClick('admin'); window.dispatchEvent(new CustomEvent('admin-nav', { detail: 'Overview' })); window.dispatchEvent(new CustomEvent('admin-tab', { detail: 'pipeline' })) } }} onKeyDown={event => { if (role === 'ADMIN' && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); event.stopPropagation(); setAdminNavKey('Overview'); sessionStorage.setItem('admin-nav-key', 'Overview'); sessionStorage.setItem('admin-tab', 'pipeline'); navClick('admin'); window.dispatchEvent(new CustomEvent('admin-nav', { detail: 'Overview' })); window.dispatchEvent(new CustomEvent('admin-tab', { detail: 'pipeline' })) } }} title={role === 'ADMIN' ? 'Open Admin Control Center' : undefined} style={{
             display: 'inline-flex', alignItems: 'center', gap: 5,
             padding: '3px 9px',
             background: roleBadge.bg,
@@ -254,7 +385,7 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
         </div>
 
         {/* ── Portal tabs ── */}
-        <div style={{ borderBottom: '1px solid var(--color-border-primary)', padding: '6px 8px' }}>
+        {!(role === 'PUBLIC' && plan === 'FREE') && <div className="app-sidebar-portal" style={{ borderBottom: '1px solid var(--color-border-primary)', padding: '6px 8px' }}>
           {[
             { id:'gov',      label: role === 'PUBLIC' && plan === 'FREE' ? 'USER' : 'GOV',      title: role === 'PUBLIC' && plan === 'FREE' ? 'User Dashboard' : 'Government Portal' },
             { id:'admin',    label:'ADMIN',     title:'Admin Control Center', minRole:'ADMIN' as const },
@@ -276,26 +407,47 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
               {p.label}
             </button>
           ))}
-        </div>
+        </div>}
 
         {/* Nav */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
-          <div style={{ padding: '4px 14px 4px', marginTop: 4 }}>
-            <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-text-tertiary)', letterSpacing: '0.12em' }}>
-              {role === 'PUBLIC' && plan === 'FREE' ? 'USER DASHBOARD'
-                : derivedPortal === 'gov' ? 'GOVERNMENT PORTAL'
-                : derivedPortal === 'admin' ? 'ADMIN CONTROL CENTER'
-                : 'AVIATION INTELLIGENCE'}
-            </span>
-          </div>
-          {activeNav.filter(isVisible).map(({ page, icon: Icon, label, badge }) => (
-            <NavButton key={page + label} icon={<Icon size={15} />} label={label} badge={badge}
-              active={currentPage === page} onClick={() => navClick(page)} />
+        <div ref={mobileNavRef} className="app-sidebar-nav" style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
+          {!(role === 'PUBLIC' && plan === 'FREE') && (
+            <div style={{ padding: '4px 14px 4px', marginTop: 4 }}>
+              <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-text-tertiary)', letterSpacing: '0.12em' }}>
+                {derivedPortal === 'gov' ? 'GOVERNMENT PORTAL'
+                  : derivedPortal === 'admin' ? 'ADMIN CONTROL CENTER'
+                  : 'AVIATION INTELLIGENCE'}
+              </span>
+            </div>
+          )}
+          {activeNav.filter(isVisible).map(({ page, icon: Icon, label, badge, supportAction, section, aviationAction, adminTab }) => (
+            <div key={page + label}>
+              {section && <div style={{ padding: '14px 14px 5px', fontSize: 9, fontWeight: 700, letterSpacing: '.12em', color: 'var(--color-text-tertiary)' }}>{section}</div>}
+              <NavButton icon={<Icon size={15} />} label={label} badge={badge}
+              active={adminTab ? currentPage === 'admin' && adminNavKey === label : supportAction || aviationAction ? false : currentPage === page} onClick={() => {
+                  setAvatarOpen(false)
+                  setNotificationsOpen(false)
+                  if (aviationAction) {
+                    sessionStorage.setItem('aviation-panel', aviationAction)
+                    navClick('aviationlive')
+                    window.dispatchEvent(new CustomEvent('aviation-panel', { detail: aviationAction }))
+                  }
+                  else if (supportAction) setSupportMode(supportAction)
+                  else if (adminTab && page === 'admin') { setAdminNavKey(label); sessionStorage.setItem('admin-nav-key', label); sessionStorage.setItem('admin-tab', adminTab); navClick('admin'); window.dispatchEvent(new CustomEvent('admin-nav', { detail: label })); window.dispatchEvent(new CustomEvent('admin-tab', { detail: adminTab })) }
+                  else {
+                    if (page === 'exports' && (derivedPortal === 'admin' || derivedPortal === 'gov')) {
+                      setPortal(derivedPortal)
+                      sessionStorage.setItem('exports-portal', derivedPortal)
+                    }
+                    navClick(page)
+                  }
+                }} />
+            </div>
           ))}
         </div>
 
         {/* Footer avatar */}
-        <div style={{ borderTop: '1px solid var(--color-border-primary)', padding: '10px 12px' }}>
+        <div className="app-sidebar-footer" style={{ borderTop: '1px solid var(--color-border-primary)', padding: '10px 12px' }}>
           <div style={{ position: 'relative' }}>
             <button
               onClick={() => setAvatarOpen(v => !v)}
@@ -362,11 +514,13 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
         </div>
       </div>
 
+      {supportMode && <UserSupportModal mode={supportMode} onClose={() => setSupportMode(null)} onChangeMode={setSupportMode} />}
+
       {/* ── Main area ─────────────────────────────────────── */}
-      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, overflow: 'hidden' }}>
+      <div className="app-main" style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, overflow: 'hidden' }}>
 
         {/* Top bar */}
-        <div style={{
+        <div className="app-topbar" style={{
           height: 50, display: 'flex', alignItems: 'center',
           padding: '0 24px', gap: 16,
           background: 'var(--color-surface-bg)',
@@ -381,20 +535,24 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
           </div>
 
           {/* Global search */}
-          <div ref={searchRef} style={{ flex: 1, maxWidth: 300, position: 'relative' }}>
+          <div ref={searchRef} className="global-search-stack" style={{ flex: 1, maxWidth: 300, position: 'relative', zIndex: 1000, isolation: 'isolate' }}>
             <Search size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-tertiary)', pointerEvents: 'none', zIndex: 1 }} />
             <input
               type="text" value={searchQuery}
-              onChange={e => { setSearchQuery(e.target.value); setSearchOpen(true) }}
+              onChange={e => { setSearchQuery(e.target.value); setSearchOpen(true); if (isAviation) { sessionStorage.setItem('aviation-search', e.target.value); window.dispatchEvent(new CustomEvent('aviation-search', { detail: e.target.value })) } }}
               onFocus={() => { setSearchFocused(true); setSearchOpen(true) }}
               onBlur={() => setSearchFocused(false)}
               onKeyDown={e => {
                 if (e.key === 'Escape') { setSearchOpen(false); setSearchQuery('') }
                 if (e.key === 'Enter' && searchMatches.length > 0) {
-                  setSearchOpen(false); setSearchQuery(''); navClick('routes')
+                  const target = searchMatches[0]
+                  setSearchOpen(false)
+                  if (target.page === 'aviationlive') { sessionStorage.setItem('aviation-search', searchQuery); window.dispatchEvent(new CustomEvent('aviation-search', { detail: searchQuery })) }
+                  else setSearchQuery('')
+                  navClick(target.page)
                 }
               }}
-              placeholder="Search routes, airports…"
+              placeholder={isAviation ? 'Search flights, routes, airports, aircraft…' : 'Search routes, airports, airlines, or insights…'}
               style={{
                 width: '100%', paddingLeft: 30, paddingRight: searchQuery ? 30 : 12,
                 paddingTop: 6, paddingBottom: 6,
@@ -408,7 +566,7 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
               }}
             />
             {searchQuery && (
-              <button onClick={() => { setSearchQuery(''); setSearchOpen(false) }}
+              <button onClick={() => { setSearchQuery(''); setSearchOpen(false); if (isAviation) { sessionStorage.removeItem('aviation-search'); window.dispatchEvent(new CustomEvent('aviation-search', { detail: '' })) } }}
                 style={{ position: 'absolute', right: 9, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', display: 'flex', alignItems: 'center', padding: 0, zIndex: 1 }}>
                 <X size={11} />
               </button>
@@ -419,11 +577,11 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
                 background: 'var(--color-surface-bg)',
                 border: '1px solid var(--color-border-primary)',
                 borderRadius: 10, boxShadow: 'var(--shadow-floating)',
-                overflow: 'hidden', zIndex: 100,
+                overflow: 'hidden', zIndex: 2000,
               }}>
-                {searchMatches.map(c => (
-                  <button key={c.id}
-                    onMouseDown={e => { e.preventDefault(); setSearchOpen(false); setSearchQuery(''); navClick('routes') }}
+                {searchMatches.map(item => (
+                  <button key={item.key}
+                    onMouseDown={e => { e.preventDefault(); setSearchOpen(false); if (item.page === 'aviationlive') { sessionStorage.setItem('aviation-search', searchQuery); window.dispatchEvent(new CustomEvent('aviation-search', { detail: searchQuery })) } else setSearchQuery(''); navClick(item.page) }}
                     style={{
                       width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                       padding: '9px 14px', background: 'none', border: 'none', cursor: 'pointer',
@@ -433,8 +591,8 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
                     onMouseOver={e => { (e.currentTarget as HTMLElement).style.background = 'var(--color-surface-secondary)' }}
                     onMouseOut={e => { (e.currentTarget as HTMLElement).style.background = 'none' }}
                   >
-                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>{c.from} → {c.to}</span>
-                    <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }}>{c.id}</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-text-primary)' }}>{item.title}</span>
+                    <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }}>{item.sub}</span>
                   </button>
                 ))}
               </div>
@@ -442,35 +600,41 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
           </div>
 
           {/* Right status */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginLeft: 'auto', flexShrink: 0 }}>
-            <DataStatusBanner
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 'auto', flexShrink: 0 }}>
+            {isAviation ? <div className={`av-feed-status ${radar.status === 'connected' ? '' : 'pending'}`} aria-live="polite"><span><i/>{radar.status === 'connected' ? 'LIVE DATA FEEDS' : radar.status === 'loading' ? 'CONNECTING' : 'FEED UNAVAILABLE'}{radar.retrievedAt && radar.status === 'connected' ? ` · ${new Date(radar.retrievedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }).toUpperCase()} IST` : ''}</span><span><Radio size={10}/>{radar.status === 'connected' ? 'PROVIDER CONNECTED' : 'PROVIDER PENDING'}</span></div> : <DataStatusBanner
               anyGovConnected={govData.anyConnected}
+              fareFeedConnected={fareFeed.connected}
+              verifiedObservations={fareFeed.observations}
+              showGovernmentStatus={role !== 'PUBLIC'}
               isLoading={govData.isLoading}
               lastFetch={govData.lastFetch}
-            />
-            {/* System status dot */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <div style={{
-                width: 6, height: 6, borderRadius: '50%',
-                background: govData.anyConnected ? '#16a34a' : '#d97706',
-                boxShadow: govData.anyConnected ? '0 0 6px #22c55e' : 'none',
-                animation: govData.anyConnected ? 'pulse-dot 2s ease-in-out infinite' : 'none',
-              }} />
-              <span style={{ fontSize: 10, fontWeight: 700, color: govData.anyConnected ? '#15803d' : '#b45309', letterSpacing: '0.06em' }}>
-                {govData.anyConnected ? (role === 'PUBLIC' && plan === 'FREE' ? 'MARKET DATA CONNECTED' : 'GOV DATA CONNECTED') : 'DEMO/CACHE MODE'}
-              </span>
+            />}
+            <button onClick={() => setDarkMode(value => !value)} aria-label={darkMode ? 'Use light mode' : 'Use dark mode'} title={darkMode ? 'Use light mode' : 'Use dark mode'} style={{ width: 32, height: 32, display: 'grid', placeItems: 'center', border: '1px solid var(--color-border-primary)', borderRadius: 9, background: darkMode ? 'var(--color-brand-muted)' : 'var(--color-surface-bg)', color: darkMode ? 'var(--color-brand-primary)' : 'var(--color-text-secondary)', cursor: 'pointer', transition: 'all 150ms ease' }}>{darkMode ? <Sun size={16} /> : <Moon size={16} />}</button>
+            <div style={{ position: 'relative' }}>
+              <button onClick={() => { setNotificationsOpen(v => !v); markNotificationsRead() }} aria-label="Notifications" title="Notifications" style={{ position: 'relative', width: 32, height: 32, display: 'grid', placeItems: 'center', border: '1px solid var(--color-border-primary)', background: 'var(--color-surface-bg)', color: 'var(--color-text-secondary)', borderRadius: 9, cursor: 'pointer' }}><Bell size={16} />{notifications.some(item => !item.read) && <span style={{ position: 'absolute', right: -3, top: -5, minWidth: 15, height: 15, padding: '0 3px', borderRadius: 99, background: '#e33c3c', color: '#fff', fontSize: 9, fontWeight: 800, display: 'grid', placeItems: 'center' }}>{notifications.filter(item => !item.read).length}</span>}</button>
+              {notificationsOpen && <div style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, width: 290, padding: 14, background: 'var(--color-surface-bg)', border: '1px solid var(--color-border-primary)', borderRadius: 12, boxShadow: 'var(--shadow-floating)', zIndex: 160 }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><b style={{ fontSize: 13, color: 'var(--color-text-primary)' }}>Notifications</b><button onClick={() => setNotificationsOpen(false)} style={{ border: 0, background: 'none', color: 'var(--color-text-tertiary)', cursor: 'pointer' }}><X size={14} /></button></div>{notifications.length === 0 ? <p style={{ margin: '12px 0 0', fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>No new notifications.</p> : <div style={{ display: 'grid', gap: 9, marginTop: 12 }}>{notifications.map(item => <div key={item.id} style={{ padding: 9, borderRadius: 9, background: item.read ? 'var(--color-surface-secondary)' : 'var(--color-brand-muted)' }}><div style={{ fontSize: 11, fontWeight: 800, color: 'var(--color-text-primary)' }}>{item.title}</div><div style={{ marginTop: 3, fontSize: 11, lineHeight: 1.4, color: 'var(--color-text-secondary)' }}>{item.message}</div></div>)}</div>}</div>}
             </div>
+            <button
+              onClick={() => { setNotificationsOpen(false); setAvatarOpen(false); setSupportMode('settings') }}
+              aria-label="Open settings"
+              title="Settings"
+              style={{ width: 32, height: 32, display: 'grid', placeItems: 'center', border: '1px solid var(--color-border-primary)', borderRadius: 9, background: 'var(--color-surface-bg)', color: 'var(--color-text-secondary)', cursor: 'pointer' }}
+            >
+              <Settings size={16} />
+            </button>
+            <button onClick={() => setAvatarOpen(v => !v)} aria-label="Open profile menu" title={user?.name ?? 'Profile'} style={{ width: 32, height: 32, border: 0, borderRadius: '50%', background: 'var(--gradient-brand)', color: '#fff', fontSize: 11, fontWeight: 800, cursor: 'pointer', boxShadow: '0 2px 8px rgba(37,99,235,.25)' }}>{initials}</button>
           </div>
         </div>
 
         {/* Page content */}
         <main
           style={{
-            flex: 1, overflowY: 'auto', padding: '24px', position: 'relative',
+            flex: 1, minWidth: 0, width: '100%', overflowX: 'hidden', overflowY: 'auto', padding: '24px', position: 'relative',
             backgroundImage: 'radial-gradient(circle, var(--color-border-primary) 1px, transparent 1px)',
             backgroundSize: '28px 28px',
           }}
-          className="page-enter"
+          ref={contentRef}
+          className="app-content page-enter"
           key={currentPage}
         >
           {children}

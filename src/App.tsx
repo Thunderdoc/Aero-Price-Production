@@ -18,6 +18,7 @@ import LiveFares from './pages/LiveFares'
 import Anomalies from './pages/Anomalies'
 import Forecast from './pages/Forecast'
 import HistoricalFares from './pages/HistoricalFares'
+import TravelHistory from './pages/TravelHistory'
 import AirfareIndex from './pages/AirfareIndex'
 import AirlineExplorer from './pages/AirlineExplorer'
 import BookingWindow from './pages/BookingWindow'
@@ -27,7 +28,19 @@ import AviationAirports from './pages/AviationAirports'
 
 function AppContent() {
   const { user } = useAuth()
-  const [currentPage, setCurrentPage] = useState<Page>('overview')
+  const [currentPage, setCurrentPage] = useState<Page>(() => {
+    const saved = sessionStorage.getItem('aeroprice-current-page') as Page | null
+    return saved || 'overview'
+  })
+
+  function navigate(page: Page) {
+    sessionStorage.setItem('aeroprice-current-page', page)
+    setCurrentPage(page)
+  }
+
+  useEffect(() => {
+    sessionStorage.setItem('aeroprice-current-page', currentPage)
+  }, [currentPage])
 
   useEffect(() => {
     if (!user) {
@@ -49,50 +62,50 @@ function AppContent() {
 
   useEffect(() => {
     if (user && !canAccess(user.role, user.plan, currentPage)) {
-      setCurrentPage('overview')
+      navigate('overview')
     }
   }, [currentPage, user])
 
   if (!user) {
-    return <LoginPage onLogin={(page = 'overview') => setCurrentPage(page)} />
+    return <LoginPage onLogin={(page = 'overview') => navigate(page)} />
   }
 
   if (!canAccess(user.role, user.plan, currentPage)) {
     return (
-      <AppShell currentPage="overview" onNavigate={setCurrentPage}>
-        <Overview onNavigate={setCurrentPage} />
+      <AppShell currentPage="overview" onNavigate={navigate}>
+        <Overview onNavigate={navigate} />
       </AppShell>
     )
   }
 
   function renderPage() {
     switch (currentPage) {
-      case 'overview':    return <Overview onNavigate={setCurrentPage} />
+      case 'overview':    return <Overview onNavigate={navigate} />
       case 'map':         return <AirfareMap />
       case 'routes':      return <RouteExplorer />
       case 'government':  return <GovernmentIntelligence />
       case 'insights':    return <MarketInsights />
-      case 'alerts':      return <PriceAlerts />
+      case 'alerts':      return <PriceAlerts onNavigate={navigate} />
       case 'sources':     return <DataSources />
       case 'collection':  return <Collection />
-      case 'methodology': return <Methodology onNavigate={setCurrentPage} />
+      case 'methodology': return <Methodology onNavigate={navigate} />
       case 'exports':     return <Exports />
       case 'admin':       return <AdminDashboard />
       case 'livefares':   return <LiveFares />
       case 'anomalies':   return <Anomalies />
       case 'forecast':        return <Forecast />
-      case 'historicalfares':   return <HistoricalFares />
+      case 'historicalfares':   return user?.role === 'PUBLIC' ? <TravelHistory onNavigate={navigate} /> : <HistoricalFares />
       case 'airfareindex':      return <AirfareIndex />
       case 'airlineexplorer':   return <AirlineExplorer />
       case 'bookingwindow':     return <BookingWindow />
-      case 'aviationlive':      return <AviationLive />
+      case 'aviationlive':      return <AviationLive onNavigate={navigate} />
       case 'aviationflights':   return <AviationFlights />
       case 'aviationairports':  return <AviationAirports />
     }
   }
 
   return (
-    <AppShell currentPage={currentPage} onNavigate={setCurrentPage}>
+    <AppShell currentPage={currentPage} onNavigate={navigate}>
       {renderPage()}
     </AppShell>
   )

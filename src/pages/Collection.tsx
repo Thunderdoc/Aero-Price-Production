@@ -174,7 +174,7 @@ export default function Collection() {
               size="lg"
               onClick={handleTrigger}
               disabled={triggering}
-              icon={triggering ? <RefreshCw size={15} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={15} />}
+              iconStart={triggering ? <RefreshCw size={15} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={15} />}
             >
               {triggering ? 'Collecting Feeds…' : 'Trigger Immediate Harvest'}
             </Button>

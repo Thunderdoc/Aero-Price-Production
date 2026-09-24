@@ -42,6 +42,11 @@ ROUTE_BASKET = [
     "DEL-BOM", "DEL-BLR", "BOM-BLR", "DEL-CCU", "DEL-HYD",
     "DEL-MAA", "BOM-CCU", "BOM-HYD", "BLR-CCU", "BLR-HYD",
     "MAA-DEL", "MAA-BOM",
+    # North and North-East coverage. These are collected through the same
+    # authorised fare connectors as the core basket; no estimated prices are
+    # introduced when a provider has no result for a corridor.
+    "DEL-LKO", "DEL-JAI", "DEL-SXR", "DEL-PAT",
+    "DEL-GAU", "CCU-GAU", "CCU-IMF",
 ]
 
 
@@ -303,7 +308,13 @@ async def _upsert_source_health(
         row.failure_reason = result.error
 
 
-async def run_collection(db: AsyncSession, triggered_by: str = "scheduler") -> str:
+async def run_collection(
+    db: AsyncSession,
+    triggered_by: str = "scheduler",
+    routes: list[str] | None = None,
+    advance_windows: list[int] | None = None,
+    adapter_ids: set[str] | None = None,
+) -> str:
     """
     Execute one full collection run across all routes and advance windows.
 
@@ -319,9 +330,13 @@ async def run_collection(db: AsyncSession, triggered_by: str = "scheduler") -> s
     Partial failures are tolerated — one broken adapter does not abort the run.
     """
     run_id = str(uuid.uuid4())
+    selected_routes = routes or ROUTE_BASKET
+    selected_windows = advance_windows or ADVANCE_WINDOWS
     adapters = _make_adapters()
+    if adapter_ids is not None:
+        adapters = [adapter for adapter in adapters if adapter.source_id in adapter_ids]
     all_registries = AIRFARE_SOURCE_REGISTRY + GOV_SOURCE_REGISTRY
-    routes_planned = len(ROUTE_BASKET) * len(ADVANCE_WINDOWS)
+    routes_planned = len(selected_routes) * len(selected_windows)
     total_collected = 0
     total_rejected = 0
 
@@ -336,8 +351,8 @@ async def run_collection(db: AsyncSession, triggered_by: str = "scheduler") -> s
 
     amadeus_configured = bool(settings.AMADEUS_API_KEY and settings.AMADEUS_API_SECRET)
     logger.info(
-        f"Collection run {run_id} started. Routes: {len(ROUTE_BASKET)}, "
-        f"Windows: {ADVANCE_WINDOWS}, Adapters: {len(adapters)}, "
+        f"Collection run {run_id} started. Routes: {len(selected_routes)}, "
+        f"Windows: {selected_windows}, Adapters: {len(adapters)}, "
         f"Amadeus: {'CONFIGURED' if amadeus_configured else 'NOT_CONFIGURED'}"
     )
 
@@ -345,8 +360,8 @@ async def run_collection(db: AsyncSession, triggered_by: str = "scheduler") -> s
         today = date.today()
         routes_done = 0
 
-        for route in ROUTE_BASKET:
-            for advance_days in ADVANCE_WINDOWS:
+        for route in selected_routes:
+            for advance_days in selected_windows:
                 travel_date = (today + timedelta(days=advance_days)).isoformat()
 
                 for adapter in adapters:
@@ -469,7 +484,7 @@ async def run_collection(db: AsyncSession, triggered_by: str = "scheduler") -> s
         # future runs measure the Jevons change against that real baseline.
         from app.services.index_engine import publish_index
         await publish_index(db, date.today().isoformat(), [
-            {"route": route, "weight": 1.0} for route in ROUTE_BASKET
+            {"route": route, "weight": 1.0} for route in selected_routes
         ])
 
         final_status = (

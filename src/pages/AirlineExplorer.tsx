@@ -99,7 +99,7 @@ export default function AirlineExplorer() {
 
       <div style={{ flex:1, display:'flex', overflow:'hidden' }}>
         {/* Sidebar — airline list */}
-        <div style={{ width:250, flexShrink:0, borderRight:'1px solid var(--color-border-primary)',
+        <div className="airline-explorer-sidebar" style={{ width:250, flexShrink:0, borderRight:'1px solid var(--color-border-primary)',
           display:'flex', flexDirection:'column', overflow:'hidden' }}>
           <div style={{ padding:'12px', borderBottom:'1px solid var(--color-border-primary)' }}>
             <div style={{ display:'flex', alignItems:'center', gap:8, padding:'7px 10px',

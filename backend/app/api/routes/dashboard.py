@@ -6,10 +6,150 @@ from app.core.database import get_db
 from app.core.auth import get_current_user
 from app.models.fare import FareObservation
 from app.models.collection import CollectionRun, SourceHealth
-from app.models.government import DgcaMonthlyRecord
+from app.models.government import DgcaMonthlyRecord, MospiTransportSeries
 from app.models.index import IndexObservation
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+AIRPORT_STATES = {
+    "DEL": "Delhi",
+    "BOM": "Maharashtra",
+    "BLR": "Karnataka",
+    "MAA": "Tamil Nadu",
+    "CCU": "West Bengal",
+    "HYD": "Telangana",
+    "LKO": "Uttar Pradesh",
+    "JAI": "Rajasthan",
+    "SXR": "Jammu & Kashmir",
+    "PAT": "Bihar",
+    "GAU": "Assam",
+    "IMF": "Manipur",
+}
+
+
+def _median(values: list[float]) -> float | None:
+    if not values:
+        return None
+    values = sorted(values)
+    midpoint = len(values) // 2
+    return values[midpoint] if len(values) % 2 else (values[midpoint - 1] + values[midpoint]) / 2
+
+
+def _movement_status(change_pct: float) -> str:
+    if change_pct >= 10:
+        return "SIGNIFICANT_INCREASE"
+    if change_pct >= 2:
+        return "MODERATE_INCREASE"
+    if change_pct <= -10:
+        return "SIGNIFICANT_DECREASE"
+    if change_pct <= -2:
+        return "MODERATE_DECREASE"
+    return "STABLE"
+
+
+async def calculate_fare_movement(db: AsyncSession) -> dict:
+    """Compare the latest two verified collection dates; never invent a trend."""
+    rows = (await db.execute(
+        select(FareObservation).where(
+            FareObservation.data_origin.in_(["REAL", "OFFICIAL"]),
+            FareObservation.is_valid == True,
+        ).order_by(FareObservation.collected_at.asc())
+    )).scalars().all()
+    periods = sorted({row.collected_at.date() for row in rows if row.collected_at})
+    if len(periods) < 2:
+        return {"available": False, "price_drops": None, "routes": [], "states": {}, "message": "A second verified collection is required before movement can be calculated."}
+
+    grouped: dict[str, dict[object, list[float]]] = {}
+    for row in rows:
+        if not row.collected_at:
+            continue
+        grouped.setdefault(row.route, {}).setdefault(row.collected_at.date(), []).append(float(row.total_fare))
+
+    # A fresh corridor collection may introduce a newer date with no matching
+    # previous collection for that route. Find the most recent *comparable*
+    # date pair instead of allowing that valid new data to blank the map.
+    previous_period = current_period = None
+    for current_candidate in reversed(periods):
+        for previous_candidate in reversed([day for day in periods if day < current_candidate]):
+            if any(previous_candidate in values and current_candidate in values for values in grouped.values()):
+                previous_period, current_period = previous_candidate, current_candidate
+                break
+        if current_period is not None:
+            break
+    if previous_period is None or current_period is None:
+        return {"available": False, "price_drops": None, "routes": [], "states": {}, "modeled_states": {}, "message": "A comparable second verified collection is required before movement can be calculated."}
+
+    route_changes = []
+    state_changes: dict[str, list[float]] = {}
+    for route, values_by_period in grouped.items():
+        previous = _median(values_by_period.get(previous_period, []))
+        current = _median(values_by_period.get(current_period, []))
+        if previous is None or current is None or previous <= 0:
+            continue
+        change_pct = round(((current - previous) / previous) * 100, 2)
+        route_changes.append({
+            "route": route,
+            "previous_fare": round(previous, 2),
+            "current_fare": round(current, 2),
+            "change_pct": change_pct,
+            "status": _movement_status(change_pct),
+        })
+        origin, destination = route.split("-", 1)
+        for airport in (origin, destination):
+            state = AIRPORT_STATES.get(airport)
+            if state:
+                state_changes.setdefault(state, []).append(change_pct)
+
+    states = {
+        state: {"change_pct": round(_median(changes) or 0, 2), "status": _movement_status(_median(changes) or 0), "routes": len(changes)}
+        for state, changes in state_changes.items()
+    }
+
+    # New routes have an honest current price but cannot have a price *change*
+    # until another collection runs. Expose a deterministic benchmark estimate
+    # rather than pretending it is a verified movement. The estimate compares
+    # each state's real latest median against the latest national route median.
+    latest_period = periods[-1]
+    latest_state_prices: dict[str, list[float]] = {}
+    latest_all_prices: list[float] = []
+    for row in rows:
+        if not row.collected_at or row.collected_at.date() != latest_period:
+            continue
+        price = float(row.total_fare)
+        latest_all_prices.append(price)
+        for airport in (row.origin, row.destination):
+            state = AIRPORT_STATES.get(airport)
+            if state:
+                latest_state_prices.setdefault(state, []).append(price)
+    latest_national_median = _median(latest_all_prices)
+    modeled_states = {}
+    if latest_national_median and latest_national_median > 0:
+        for state, prices in latest_state_prices.items():
+            if state in states:
+                continue
+            state_median = _median(prices)
+            if state_median is None:
+                continue
+            relative_pct = round(((state_median - latest_national_median) / latest_national_median) * 100, 2)
+            modeled_states[state] = {
+                "change_pct": relative_pct,
+                "status": _movement_status(relative_pct),
+                "routes": len(prices),
+                "provenance": "MODELED",
+                "basis": "Current verified state median compared with the latest verified national route median",
+                "period": latest_period.isoformat(),
+            }
+    return {
+        "available": bool(route_changes),
+        "current_period": current_period.isoformat(),
+        "previous_period": previous_period.isoformat(),
+        "price_drops": sum(1 for item in route_changes if item["change_pct"] < 0),
+        "routes_with_change": len(route_changes),
+        "routes": sorted(route_changes, key=lambda item: item["route"]),
+        "states": states,
+        "modeled_states": modeled_states,
+        "message": None if route_changes else "No comparable verified routes are available yet.",
+    }
 
 
 @router.get("")
@@ -55,11 +195,28 @@ async def dashboard_summary(
     latest_index = await db.scalar(
         select(IndexObservation)
         .where(IndexObservation.status == "PUBLISHED")
+        .where(IndexObservation.data_origin.in_(["REAL", "OFFICIAL", "DERIVED"]))
         .order_by(IndexObservation.calculation_ts.desc())
+        .limit(1)
+    )
+    current_fare_rate = await db.scalar(
+        select(func.avg(FareObservation.total_fare))
+        .where(FareObservation.data_origin.in_(["REAL", "OFFICIAL"]))
+        .where(FareObservation.is_valid == True)
+    )
+    routes_tracked = await db.scalar(
+        select(func.count(FareObservation.route.distinct()))
+        .where(FareObservation.data_origin.in_(["REAL", "OFFICIAL"]))
+        .where(FareObservation.is_valid == True)
+    ) or 0
+    latest_cpi = await db.scalar(
+        select(MospiTransportSeries)
+        .order_by(MospiTransportSeries.base_year.desc(), MospiTransportSeries.period.desc())
         .limit(1)
     )
     index_status = latest_index.status if latest_index else "NOT_PUBLISHED"
     index_value = latest_index.index_value if latest_index else None
+    movement = await calculate_fare_movement(db)
     note = (
         "Verified airfare observations are available. Route trends require a later collection for comparison."
         if latest_index else
@@ -77,6 +234,12 @@ async def dashboard_summary(
         "collection_runs_today": 0,
         "index_status": index_status,
         "index_value": index_value,
+        "current_fare_rate": round(current_fare_rate, 2) if current_fare_rate is not None else None,
+        "routes_tracked": routes_tracked,
+        "price_drops": movement["price_drops"],
+        "cpi_transport": latest_cpi.value if latest_cpi else None,
+        "cpi_period": latest_cpi.period if latest_cpi else None,
+        "cpi_base_year": latest_cpi.base_year if latest_cpi else None,
         "note": note,
         "index": {
             "value": index_value,
@@ -100,3 +263,12 @@ async def dashboard_summary(
             "dgca_latest_period": f"{dgca_latest.year}-{dgca_latest.month:02d}" if dgca_latest else None,
         },
     }
+
+
+@router.get("/fare-movement")
+async def fare_movement(
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Verified route/state fare movement from the latest two collection dates."""
+    return await calculate_fare_movement(db)

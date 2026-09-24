@@ -143,6 +143,7 @@ export function useGovData(): GovDataState {
   const [mospiCpi, setMospiCpi] = useState<MospiCpiRecord[]>(DEFAULT_MOSPI_CPI)
   const [isLoading, setIsLoading] = useState(false)
   const [lastFetch, setLastFetch] = useState<string | null>(new Date().toISOString())
+  const [hasLiveResponse, setHasLiveResponse] = useState(false)
 
   async function fetchAll() {
     setIsLoading(true)
@@ -193,6 +194,7 @@ export function useGovData(): GovDataState {
       }
 
       setLastFetch(new Date().toISOString())
+      setHasLiveResponse(true)
     } catch {
       // Retain full high-fidelity official government records with CONNECTED status
       setDatasets(GOV_DATASETS)
@@ -200,6 +202,7 @@ export function useGovData(): GovDataState {
       setDgcaCirculars(DEFAULT_DGCA_CIRCULARS)
       setMospiCpi(DEFAULT_MOSPI_CPI)
       setLastFetch(new Date().toISOString())
+      setHasLiveResponse(false)
     } finally {
       setIsLoading(false)
     }
@@ -229,6 +232,6 @@ export function useGovData(): GovDataState {
     isLoading,
     lastFetch,
     refresh,
-    anyConnected: true,
+    anyConnected: hasLiveResponse && datasets.some(dataset => ['CONNECTED', 'HEALTHY'].includes(dataset.status)),
   }
 }

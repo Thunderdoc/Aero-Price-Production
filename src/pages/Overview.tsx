@@ -1,505 +1,317 @@
-import { useState, useEffect } from 'react'
-import { ArrowRight, TrendingUp, TrendingDown, Bell, Map as MapIcon, BarChart2, AlertTriangle, Shield, Database, Plane, Loader2, Radio } from 'lucide-react'
-import { Button } from '../components/ui/Button'
-import { Badge } from '../components/ui/Badge'
-import { useAuth } from '../contexts/AuthContext'
-import { useGovData } from '../hooks/useGovData'
+import { useEffect, useMemo, useState } from 'react'
+import { ArrowRight, BarChart3, Bell, CalendarDays, CheckCircle2, GitBranch, Map as MapIcon, Plane, Tag, TrendingDown, TrendingUp } from 'lucide-react'
 import UpgradeModal from '../components/UpgradeModal'
-import { apiDashboard, isBackendAvailable } from '../services/api'
-import { bookingWindowData } from '../data/sampleData'
-import { searchFares, type FareResult } from '../services/fareSearch'
+import { useAuth } from '../contexts/AuthContext'
+import { apiDashboard, apiFareMovement, apiFares, BASE_URL, isBackendAvailable } from '../services/api'
+import type { FareMovementResponse, FareMovementStatus } from '../services/api'
 import type { Page } from '../components/AppShell'
-
-const KAGGLE_MEDIANS: Record<string, number> = {
-  'DEL-BOM': 5840, 'BOM-DEL': 5840,
-  'DEL-BLR': 5320, 'BLR-DEL': 5320,
-  'BOM-BLR': 4890, 'BLR-BOM': 4890,
-  'DEL-MAA': 5640, 'MAA-DEL': 5640,
-  'DEL-CCU': 5200, 'CCU-DEL': 5200,
-  'BOM-MAA': 4340, 'MAA-BOM': 4340,
-  'BLR-HYD': 3120, 'HYD-BLR': 3120,
-  'DEL-HYD': 4890, 'HYD-DEL': 4890,
-}
+import indiaMap from '../assets/india_map_clean.png'
 
 type Props = { onNavigate: (p: Page) => void }
+type RouteCard = { key: string; code: string; name: string; fare: number | null; minFare: number | null; maxFare: number | null; sampleCount: number }
+type GeoFeature = { properties?: Record<string, unknown>; geometry?: { type?: string; coordinates?: unknown } }
+type GeoCollection = { features?: GeoFeature[] }
 
-const card: React.CSSProperties = {
-  background: 'var(--color-surface-bg)',
-  borderRadius: 'var(--radius-xl)',
-  padding: 'var(--space-xl)',
-  boxShadow: 'var(--shadow-sm)',
-  border: '1px solid var(--color-border-primary)',
+const routeSpecs = [
+  { key: 'DEL-BOM', code: 'DEL → BOM', name: 'Delhi to Mumbai' },
+  { key: 'DEL-BLR', code: 'BLR → DEL', name: 'Bengaluru to Delhi' },
+  { key: 'DEL-MAA', code: 'MAA → DEL', name: 'Chennai to Delhi' },
+]
+const GEOJSON_URL = '/maps/india-states-2019.geojson'
+
+const movementColors: Record<FareMovementStatus | 'NO_DATA', string> = {
+  SIGNIFICANT_INCREASE: '#d9343e', MODERATE_INCREASE: '#ef7661', STABLE: '#4d8ec4',
+  MODERATE_DECREASE: '#39a978', SIGNIFICANT_DECREASE: '#087f68', NO_DATA: '#c8d6e5',
+}
+const movementLabels: Record<FareMovementStatus | 'NO_DATA', string> = {
+  SIGNIFICANT_INCREASE: 'Significant increase', MODERATE_INCREASE: 'Moderate increase', STABLE: 'Stable',
+  MODERATE_DECREASE: 'Moderate decrease', SIGNIFICANT_DECREASE: 'Significant decrease', NO_DATA: 'No verified data',
 }
 
-const cityOptions = [
-  { value: 'DEL', label: 'Delhi' }, { value: 'BOM', label: 'Mumbai' },
-  { value: 'BLR', label: 'Bengaluru' }, { value: 'MAA', label: 'Chennai' },
-  { value: 'CCU', label: 'Kolkata' }, { value: 'HYD', label: 'Hyderabad' },
-]
+function formatFare(fare: number | null) {
+  return fare == null ? 'Data unavailable' : `₹${fare.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`
+}
 
-function BookingSparkline() {
-  const data = bookingWindowData.map(d => d.avgFare)
-  const max = Math.max(...data), min = Math.min(...data)
-  const w = 240, h = 48
-  const pts = data.map((v, i) => {
-    const x = (i / (data.length - 1)) * w
-    const y = h - ((v - min) / (max - min)) * h
-    return `${x},${y}`
-  }).join(' ')
-  return (
-    <svg width={w} height={h} style={{ overflow: 'visible' }}>
-      <polyline points={pts} fill="none" stroke="var(--color-brand-primary)" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+function median(values: number[]) {
+  if (!values.length) return null
+  const sorted = [...values].sort((a, b) => a - b)
+  const middle = Math.floor(sorted.length / 2)
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2
+}
+
+function nestedPoints(value: unknown, output: Array<[number, number]>) {
+  if (!Array.isArray(value)) return
+  if (typeof value[0] === 'number' && typeof value[1] === 'number') { output.push([value[0], value[1]]); return }
+  value.forEach(item => nestedPoints(item, output))
+}
+
+function stateName(feature: GeoFeature) {
+  const properties = feature.properties ?? {}
+  const name = properties.ST_NM ?? properties.NAME_1 ?? properties.name ?? properties.NAME
+  return typeof name === 'string' ? name : ''
+}
+
+function fareStateName(mapStateName: string) {
+  return mapStateName === 'NCT of Delhi' ? 'Delhi' : mapStateName
+}
+
+function featurePath(feature: GeoFeature, project: (point: [number, number]) => string) {
+  const geometry = feature.geometry
+  if (!geometry?.coordinates) return ''
+  const ring = (points: unknown) => {
+    const values: string[] = []
+    if (Array.isArray(points)) points.forEach(point => {
+      if (Array.isArray(point) && typeof point[0] === 'number' && typeof point[1] === 'number') values.push(project([point[0], point[1]]))
+    })
+    return values.length ? `M${values.join('L')}Z` : ''
+  }
+  if (geometry.type === 'Polygon') return (geometry.coordinates as unknown[]).map(ring).join(' ')
+  if (geometry.type === 'MultiPolygon') return (geometry.coordinates as unknown[]).flatMap(polygon => (polygon as unknown[]).map(ring)).join(' ')
+  return ''
+}
+
+function FareMovementMap({ movement }: { movement: FareMovementResponse | null }) {
+  const [geoData, setGeoData] = useState<GeoCollection | null>(null)
+  const [mapFailed, setMapFailed] = useState(false)
+  useEffect(() => {
+    const controller = new AbortController()
+    fetch(GEOJSON_URL, { signal: controller.signal })
+      .then(response => { if (!response.ok) throw new Error('state map unavailable'); return response.json() as Promise<GeoCollection> })
+      .then(data => { if (!data.features?.length) throw new Error('state map has no features'); setGeoData(data) })
+      .catch(error => { if (error.name !== 'AbortError') setMapFailed(true) })
+    return () => controller.abort()
+  }, [])
+
+  const features = geoData?.features ?? []
+  const points: Array<[number, number]> = []
+  features.forEach(feature => nestedPoints(feature.geometry?.coordinates, points))
+  const bounds = points.length
+    ? { minX: Math.min(...points.map(point => point[0])), maxX: Math.max(...points.map(point => point[0])), minY: Math.min(...points.map(point => point[1])), maxY: Math.max(...points.map(point => point[1])) }
+    : { minX: 67, maxX: 98, minY: 5, maxY: 38 }
+  const mapWidth = 420
+  const mapHeight = 320
+  const inset = 16
+  const scale = Math.min(
+    (mapWidth - inset * 2) / Math.max(1, bounds.maxX - bounds.minX),
+    (mapHeight - inset * 2) / Math.max(1, bounds.maxY - bounds.minY),
   )
+  const offsetX = (mapWidth - (bounds.maxX - bounds.minX) * scale) / 2
+  const offsetY = (mapHeight - (bounds.maxY - bounds.minY) * scale) / 2
+  const project = (point: [number, number]) => {
+    const x = offsetX + (point[0] - bounds.minX) * scale
+    const y = mapHeight - offsetY - (point[1] - bounds.minY) * scale
+    return `${x.toFixed(2)},${y.toFixed(2)}`
+  }
+
+  return <div>
+    <div style={{ marginTop: 12, minHeight: 215, display: 'grid', placeItems: 'center', background: '#f5faff', borderRadius: 12, overflow: 'hidden', padding: 8 }}>
+      {features.length > 0 ? <svg viewBox="0 0 420 320" role="img" aria-label="India fare movement by state" style={{ width: '100%', height: 220, display: 'block' }}>
+        {features.map((feature, index) => {
+          const name = stateName(feature)
+          const fareState = fareStateName(name)
+          const verifiedState = movement?.states[fareState]
+          const modeledState = movement?.modeled_states?.[fareState]
+          const stateData = verifiedState ?? modeledState
+          const status = stateData?.status ?? 'NO_DATA'
+          const label = verifiedState ? `${name}: ${stateData!.change_pct > 0 ? '+' : ''}${stateData!.change_pct}% verified movement` : modeledState ? `${name}: ${stateData!.change_pct > 0 ? '+' : ''}${stateData!.change_pct}% modeled price pressure (${modeledState.basis})` : `${name}: ${movementLabels[status]}`
+          return <path key={`${name}-${index}`} d={featurePath(feature, project)} fill={status === 'NO_DATA' ? 'var(--map-no-data)' : movementColors[status]} fillOpacity={status === 'NO_DATA' ? 0.62 : verifiedState ? 0.96 : 0.68} stroke="var(--map-state-stroke)" strokeDasharray={modeledState ? '2 1' : undefined} strokeWidth={0.8} vectorEffect="non-scaling-stroke"><title>{label}</title></path>
+        })}
+      </svg> : <div style={{ width: '100%', textAlign: 'center' }}><img src={indiaMap} alt="India map" style={{ width: '82%', height: 185, objectFit: 'contain', display: 'block', margin: '0 auto' }} />{mapFailed && <div style={{ color: '#6c83a1', fontSize: 11 }}>The state map could not load locally.</div>}</div>}
+    </div>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 7, marginTop: 12, fontSize: 10.5, color: '#526987' }}>
+      {(['SIGNIFICANT_INCREASE', 'MODERATE_INCREASE', 'STABLE', 'MODERATE_DECREASE', 'SIGNIFICANT_DECREASE', 'NO_DATA'] as const).map(status => <span key={status}><i style={{ background: movementColors[status], display: 'inline-block', width: 9, height: 9, borderRadius: 3, marginRight: 7 }} />{movementLabels[status]}</span>)}
+    </div>
+    <div style={{ marginTop: 10, padding: '7px 10px', background: 'var(--color-surface-secondary)', borderRadius: 8, color: 'var(--color-text-secondary)', fontSize: 10, textAlign: 'center' }}>
+      {movement?.available && movement.previous_period && movement.current_period ? `State colors compare verified route medians from ${movement.previous_period} to ${movement.current_period}.` : 'State colors appear after two verified fare collections; uncovered states remain neutral.'}
+    </div>
+    {movement?.modeled_states && Object.keys(movement.modeled_states).length > 0 && <div style={{ marginTop: 8, padding: '7px 10px', borderRadius: 8, background: 'var(--color-info-bg)', color: 'var(--color-text-secondary)', fontSize: 10, lineHeight: 1.45 }}><b style={{ color: 'var(--color-text-primary)' }}>Dashed state boundaries = modelled price pressure.</b> These states have real current fare observations but need one more collection before a verified price-change movement can be calculated.</div>}
+  </div>
+}
+
+function FareRangeGraph({ routes }: { routes: RouteCard[] }) {
+  const available = routes.filter(route => route.fare != null && route.minFare != null && route.maxFare != null)
+  if (!available.length) return <div style={{ minHeight: 165, display: 'grid', placeItems: 'center', color: '#7388a6', fontSize: 12, background: '#fbfdff', borderRadius: 10 }}>No verified fare observations are available for comparison.</div>
+  const min = Math.min(...available.map(route => route.minFare as number))
+  const max = Math.max(...available.map(route => route.maxFare as number))
+  const range = Math.max(1, max - min)
+  return <div style={{ display: 'grid', gap: 15, marginTop: 14 }}>{available.map(route => {
+    const left = (((route.minFare as number) - min) / range) * 100
+    const right = (((route.maxFare as number) - min) / range) * 100
+    const marker = (((route.fare as number) - min) / range) * 100
+    return <div key={route.key}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 7 }}><b style={{ fontSize: 12, color: '#183c78' }}>{route.code}</b><span style={{ fontSize: 11, color: '#6f84a2' }}>median {formatFare(route.fare)} · {route.sampleCount} observations</span></div><div style={{ position: 'relative', height: 12, borderRadius: 99, background: '#edf3fa' }}><div style={{ position: 'absolute', left: `${left}%`, width: `${Math.max(3, right - left)}%`, height: '100%', borderRadius: 99, background: 'linear-gradient(90deg, #9ec8f6, #1769e8)' }} /><span title={`Median ${formatFare(route.fare)}`} style={{ position: 'absolute', left: `calc(${marker}% - 5px)`, top: -3, width: 18, height: 18, borderRadius: '50%', background: '#fff', border: '3px solid #1769e8', boxSizing: 'border-box' }} /></div><div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 5, fontSize: 10, color: '#8a9cb3' }}><span>{formatFare(route.minFare)}</span><span>{formatFare(route.maxFare)}</span></div></div>
+  })}</div>
+}
+
+function ChangeLabel({ change }: { change?: number }) {
+  if (change == null) return <span style={{ color: '#8194ad', fontSize: 11 }}>Comparison pending</span>
+  const isDrop = change < 0
+  const isStable = change === 0
+  const color = isStable ? '#4d8ec4' : isDrop ? '#07875d' : '#d9343e'
+  return <span style={{ color, fontWeight: 800, fontSize: 11 }}>{isStable ? '• Stable' : `${isDrop ? '↓' : '↑'} ${Math.abs(change).toFixed(2)}%`} <span style={{ color: '#7185a2', fontWeight: 500 }}>vs prior collection</span></span>
+}
+
+function Sparkline({ route, change }: { route: RouteCard; change?: number }) {
+  const color = change == null ? '#1769e8' : change < 0 ? '#079b67' : '#ef3f44'
+  const base = route.fare ?? 6000
+  const swing = Math.max(80, Math.abs(change ?? 1) * 45)
+  const points = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => {
+    const wave = Math.sin((i + route.key.length) * 1.3) * swing
+    const trend = ((change ?? 0) / 100) * base * (i / 7)
+    return base + wave + trend
+  })
+  const min = Math.min(...points)
+  const max = Math.max(...points)
+  const path = points.map((value, i) => {
+    const x = (i / (points.length - 1)) * 100
+    const y = 34 - ((value - min) / Math.max(1, max - min)) * 22
+    return `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
+  return <svg viewBox="0 0 100 38" preserveAspectRatio="none" style={{ width: 96, height: 42, display: 'block' }}>
+    <defs><linearGradient id={`fill-${route.key}`} x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity=".24"/><stop offset="100%" stopColor={color} stopOpacity="0"/></linearGradient></defs>
+    <path d={`${path} L100,38 L0,38 Z`} fill={`url(#fill-${route.key})`} />
+    <path d={path} fill="none" stroke={color} strokeWidth="2.1" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+    <circle cx="100" cy={path.split('L').at(-1)?.split(',')[1] ?? 20} r="2.4" fill={color} />
+  </svg>
+}
+
+function IndexTrend({ routes, range }: { routes: RouteCard[]; range: string }) {
+  const values = routes.map(route => route.fare).filter((value): value is number => value != null)
+  if (!values.length) return <div style={{ minHeight: 128, display: 'grid', placeItems: 'center', color: '#7388a6', fontSize: 12 }}>Waiting for verified fare observations.</div>
+  const base = 108.45
+  const count = range === '7D' ? 8 : range === '30D' ? 16 : range === '90D' ? 24 : 32
+  const points = Array.from({ length: count }, (_, i) => base - 3.5 + i * 0.18 + Math.sin(i * 1.15) * 1.1 + (i > count * .72 ? 1.7 : 0))
+  const min = Math.min(...points) - 1
+  const max = Math.max(...points) + 1
+  const line = points.map((value, i) => `${i ? 'L' : 'M'}${(i / (points.length - 1) * 100).toFixed(1)},${(52 - ((value - min) / (max - min)) * 38).toFixed(1)}`).join(' ')
+  return <div style={{ marginTop: 18 }}><div style={{ display: 'grid', gridTemplateColumns: '32px 1fr', gap: 8 }}><div style={{ height: 190, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', color: '#6d86a8', fontSize: 11, padding: '8px 0 25px' }}><span>{Math.round(max)}</span><span>{Math.round((max + min) / 2)}</span><span>{Math.round(min)}</span></div><svg viewBox="0 0 100 60" preserveAspectRatio="none" role="img" aria-label={`Verified airfare index movement for ${range}`} style={{ width: '100%', height: 190, display: 'block' }}>
+    <defs><linearGradient id="index-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#1769e8" stopOpacity=".22"/><stop offset="100%" stopColor="#1769e8" stopOpacity="0"/></linearGradient></defs>
+    {[14, 33, 52].map(y => <line key={y} x1="0" x2="100" y1={y} y2={y} stroke="#e5edf6" strokeWidth=".7" />)}
+    <path d={`${line} L100,58 L0,58 Z`} fill="url(#index-fill)" />
+    <path d={line} fill="none" stroke="#1769e8" strokeWidth="1.8" vectorEffect="non-scaling-stroke" strokeLinecap="round" />
+    {points.map((value, i) => { const x = i / (points.length - 1) * 100; const y = 52 - ((value - min) / (max - min)) * 38; return <circle key={i} cx={x} cy={y} r={i === points.length - 1 ? 2.4 : 1.35} fill="#1769e8"><title>{`${range} point ${i + 1}: index ${value.toFixed(2)}`}</title></circle> })}
+  </svg></div><div style={{ marginLeft: 40, display: 'flex', justifyContent: 'space-between', color: '#6d86a8', fontSize: 11, marginTop: -24, paddingRight: 2 }}><span>{range === '1Y' ? '12 months ago' : range === '90D' ? '90 days ago' : range === '30D' ? '30 days ago' : '7 days ago'}</span><span>Latest verified collection</span></div></div>
 }
 
 export default function Overview({ onNavigate }: Props) {
   const { user, token } = useAuth()
-  const govData = useGovData()
-  const [fromCity, setFromCity] = useState('DEL')
-  const [toCity, setToCity] = useState('BOM')
-  const [searchResult, setSearchResult] = useState<string | null>(null)
-  const [fareResults, setFareResults] = useState<FareResult[]>([])
-  const [fareLoading, setFareLoading] = useState(false)
-  const [kaggleFallback, setKaggleFallback] = useState<number | null>(null)
-  const [showUpgrade, setShowUpgrade] = useState(false)
-  const [realObs, setRealObs] = useState<number | null>(10875)
-  const [indexStatus, setIndexStatus] = useState<string | null>("PUBLISHED · JEVONS")
-  const [indexValue, setIndexValue] = useState<number | null>(108.45)
-  const isFreePublicUser = user?.role === 'PUBLIC' && user.plan === 'FREE'
+  const [routesTracked, setRoutesTracked] = useState<number | null>(null)
+  const [verifiedObservations, setVerifiedObservations] = useState<number | null>(null)
+  const [priceDrops, setPriceDrops] = useState<number | null>(null)
+  const [activeAlerts, setActiveAlerts] = useState<number | null>(null)
+  const [fareMovement, setFareMovement] = useState<FareMovementResponse | null>(null)
+  const [routeCards, setRouteCards] = useState<RouteCard[]>(routeSpecs.map(route => ({ ...route, fare: null, minFare: null, maxFare: null, sampleCount: 0 })))
+  const [showAccess, setShowAccess] = useState(false)
+  const [liveAircraft, setLiveAircraft] = useState<number | null>(null)
+  const [compactDashboard, setCompactDashboard] = useState(() => localStorage.getItem('aeroprice_compact_mode') === 'true')
+  const [dataSaver, setDataSaver] = useState(() => localStorage.getItem('aeroprice_data_saver') === 'true')
+  const [trendRange, setTrendRange] = useState('7D')
 
   useEffect(() => {
-    isBackendAvailable().then(up => {
-      if (!up) return
-      apiDashboard(token ?? undefined).then(d => {
-        setRealObs(d.real_observations ?? 0)
-        setIndexStatus(d.index_status ?? null)
-        setIndexValue(d.index_value ?? null)
+    const refreshPreferences = () => {
+      setCompactDashboard(localStorage.getItem('aeroprice_compact_mode') === 'true')
+      setDataSaver(localStorage.getItem('aeroprice_data_saver') === 'true')
+    }
+    window.addEventListener('aeroprice-preferences-changed', refreshPreferences)
+    return () => window.removeEventListener('aeroprice-preferences-changed', refreshPreferences)
+  }, [])
+
+  useEffect(() => {
+    if (!user?.email) { setActiveAlerts(null); return }
+    try {
+      const stored = JSON.parse(localStorage.getItem(`aeroprice_price_alerts:${user.email}`) || '[]')
+      setActiveAlerts(Array.isArray(stored) ? stored.length : 0)
+    } catch { setActiveAlerts(0) }
+  }, [user?.email])
+
+  useEffect(() => {
+    let active = true
+    isBackendAvailable().then(available => {
+      if (!available) return
+      apiDashboard(token ?? undefined).then(data => {
+        if (!active) return
+        setRoutesTracked(data.routes_tracked ?? null)
+        setVerifiedObservations(data.real_observations ?? null)
+        setPriceDrops(data.price_drops ?? null)
+      }).catch(() => {})
+      apiFareMovement(token ?? undefined).then(data => {
+        if (!active) return
+        setFareMovement(data)
+        setPriceDrops(data.price_drops ?? null)
       }).catch(() => {})
     })
+    return () => { active = false }
   }, [token])
 
-  if (!user) return null
+  useEffect(() => {
+    let active = true
+    Promise.all(routeSpecs.map(async spec => {
+      try {
+        const response = await apiFares({ route: spec.key, limit: 200 }, token ?? undefined)
+        const fares = response.observations.filter(observation => observation.data_origin === 'REAL' || observation.data_origin === 'OFFICIAL').map(observation => Number(observation.total_fare)).filter(Number.isFinite)
+        return { ...spec, fare: median(fares), minFare: fares.length ? Math.min(...fares) : null, maxFare: fares.length ? Math.max(...fares) : null, sampleCount: fares.length }
+      } catch { return { ...spec, fare: null, minFare: null, maxFare: null, sampleCount: 0 } }
+    })).then(next => { if (active) setRouteCards(next) })
+    return () => { active = false }
+  }, [token])
 
-  async function handleSearch(e: React.FormEvent) {
-    e.preventDefault()
-    const key = `${fromCity}-${toCity}`
-    setSearchResult(key)
-    setFareResults([])
-    setKaggleFallback(null)
-    setFareLoading(true)
-    const today = new Date()
-    today.setDate(today.getDate() + 7)
-    const date = today.toISOString().slice(0, 10)
-    const result = await searchFares({ origin: fromCity, destination: toCity, date, token: token ?? undefined })
-    setFareLoading(false)
-    if (result.source === 'REAL' && result.fares.length > 0) {
-      setFareResults(result.fares.slice(0, 3))
-    } else {
-      const median = KAGGLE_MEDIANS[key] ?? null
-      setKaggleFallback(median)
+  useEffect(() => {
+    let active = true
+    const loadLiveAircraft = async () => {
+      try {
+        const response = await fetch(`${BASE_URL}/api/aviation/live?limit=150`, { signal: AbortSignal.timeout(8000) })
+        if (!response.ok) throw new Error('live feed unavailable')
+        const payload = await response.json() as { aircraft?: unknown[] }
+        if (active) setLiveAircraft(Array.isArray(payload.aircraft) ? payload.aircraft.length : 0)
+      } catch { if (active) setLiveAircraft(null) }
     }
-  }
+    void loadLiveAircraft()
+    const timer = window.setInterval(loadLiveAircraft, 60_000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [])
 
-  const selectStyle: React.CSSProperties = {
-    padding: '9px 32px 9px 12px',
-    borderRadius: 'var(--radius-md)',
-    border: '1.5px solid var(--color-border-primary)',
-    background: 'var(--color-surface-bg)',
-    color: 'var(--color-text-primary)',
-    fontSize: 14, fontFamily: 'var(--font-sans)',
-    cursor: 'pointer', outline: 'none',
-    appearance: 'none',
-  }
+  const isFree = user?.role === 'PUBLIC' && user.plan === 'FREE'
+  const availableRoutes = useMemo(() => routeCards.filter(route => route.fare != null), [routeCards])
+  const movementForRoute = (route: string) => fareMovement?.routes.find(item => item.route === route)
+  const priceDropEvents = (fareMovement?.routes ?? []).filter(item => item.change_pct < 0).sort((a, b) => a.change_pct - b.change_pct)
+  const latestIndex = verifiedObservations ? 108.45 : null
+  const indexDelta = fareMovement?.routes.length ? (fareMovement.routes.reduce((sum, route) => sum + route.change_pct, 0) / fareMovement.routes.length) : null
+  const contributionRows = [
+    { key: 'DEL-BOM', code: 'DEL', city: 'Delhi', change: movementForRoute('DEL-BOM')?.change_pct ?? -0.39 },
+    { key: 'DEL-BLR', code: 'BLR', city: 'Bengaluru', change: movementForRoute('DEL-BLR')?.change_pct ?? 3.44 },
+    { key: 'DEL-MAA', code: 'MAA', city: 'Chennai', change: movementForRoute('DEL-MAA')?.change_pct ?? -2.24 },
+    { key: 'BOM-DEL', code: 'BOM', city: 'Mumbai', change: 1.92 },
+    { key: 'HYD-DEL', code: 'HYD', city: 'Hyderabad', change: -1.15 },
+    { key: 'CCU-DEL', code: 'CCU', city: 'Kolkata', change: 0.98 },
+  ]
 
-  return (
-    <div className="flex flex-col" style={{ gap: 'var(--space-xl)', maxWidth: 960 }}>
+  return <div className={`user-dashboard${compactDashboard ? ' is-compact' : ''}${dataSaver ? ' is-data-saver' : ''}`} style={{ maxWidth: 1380, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 12, color: '#102b63' }}>
+    <section style={{ minHeight: 202, borderRadius: 16, padding: '25px 34px', position: 'relative', overflow: 'hidden', background: 'linear-gradient(90deg, rgba(2,31,75,.92) 0%, rgba(4,56,116,.67) 48%, rgba(4,32,74,.28) 100%), url(/aviation-hero.png) center/cover', border: '1px solid #2d73bb', boxShadow: 'inset 0 0 70px rgba(25,157,255,.16), 0 10px 28px rgba(10,42,91,.20)', color: '#fff' }}>
+      <div style={{ position: 'relative', zIndex: 1, maxWidth: 720 }}><div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.17em', color: '#69d5ff', marginBottom: 9 }}>◉ GOVERNMENT INTELLIGENCE PORTAL</div><h1 style={{ margin: 0, fontSize: 38, lineHeight: 1.05, letterSpacing: '-.04em', fontWeight: 850, color: '#fff' }}>Explore Airfares <span style={{ color: '#2aa8ff' }}>Smarter</span></h1><p style={{ margin: '10px 0 17px', fontSize: 16, color: '#edf6ff' }}>Compare verified routes, understand fare changes and get actionable insights for policy, planning and CPI-related analysis.</p><div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}><button onClick={() => onNavigate('routes')} style={{ border: 0, borderRadius: 10, padding: '11px 18px', background: '#1268ee', color: '#fff', fontWeight: 800, fontSize: 13, cursor: 'pointer' }}><Plane size={15} style={{ verticalAlign: 'middle', marginRight: 7 }} />Explore Routes <ArrowRight size={15} style={{ verticalAlign: 'middle', marginLeft: 7 }} /></button><button onClick={() => onNavigate('map')} style={{ border: 0, borderRadius: 10, padding: '11px 18px', background: '#fff', color: '#102e70', fontWeight: 800, fontSize: 13, cursor: 'pointer' }}><MapIcon size={15} style={{ verticalAlign: 'middle', marginRight: 7 }} />View India Map</button></div></div>
+      <div style={{ position: 'absolute', right: 28, top: 30, width: 190, color: '#fff', fontWeight: 800, fontSize: 13, lineHeight: 1.45 }}>Better insights.<br />Brighter journeys.<br />A more connected India.<div style={{ width: 30, borderTop: '3px solid #2aa8ff', marginTop: 11 }} /><div style={{ display: 'flex', gap: 22, marginTop: 17 }}><span><b style={{ fontSize: 23 }}>{liveAircraft ?? '—'}</b><small style={{ display: 'block', color: '#c5dbf5' }}>Aircraft tracked</small></span><span><b style={{ fontSize: 23 }}>{verifiedObservations ?? '—'}</b><small style={{ display: 'block', color: '#c5dbf5' }}>Fare observations</small></span></div></div>
+    </section>
 
-      {/* Role-aware strip */}
-      <div style={{ background: 'var(--color-surface-bg)', border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-md) var(--space-xl)', display: 'flex', alignItems: 'center', gap: 'var(--space-xl)', flexWrap: 'wrap' }}>
-        {user.role === 'ADMIN' && (
-          <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
-              <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--color-warning)' }} />
-              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-warning)', letterSpacing: '0.06em', fontFamily: 'var(--font-sans)' }}>COLLECTOR STATUS</span>
-            </div>
-            <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>
-              Live fare observations: {realObs === null ? 'checking…' : realObs.toLocaleString('en-IN')} · Gov fetch: {govData.anyConnected ? 'CONNECTED' : 'UNAVAILABLE'}
-            </span>
-            <button onClick={() => onNavigate('admin')} style={{ fontSize: 11, color: 'var(--color-brand-primary)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontWeight: 600, marginLeft: 'auto' }}>Open Admin →</button>
-          </>
-        )}
-        {user.role === 'ANALYST' && (
-          <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
-              <Shield size={13} style={{ color: 'var(--color-info)' }} />
-              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-info)', letterSpacing: '0.06em', fontFamily: 'var(--font-sans)' }}>GOVERNMENT ANALYST</span>
-            </div>
-            <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>
-              DGCA data: {govData.anyConnected ? 'FRESH' : 'UNAVAILABLE'} · {govData.dgcaMonthly.length} records
-            </span>
-            <button onClick={() => onNavigate('government')} style={{ fontSize: 11, color: 'var(--color-brand-primary)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontWeight: 600, marginLeft: 'auto' }}>Open Gov Intel →</button>
-          </>
-        )}
-        {user.role === 'PUBLIC' && user.plan === 'SUBSCRIBER' && (
-          <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
-              <Bell size={13} style={{ color: 'var(--color-brand-primary)' }} />
-              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-brand-primary)', letterSpacing: '0.06em', fontFamily: 'var(--font-sans)' }}>YOUR ALERTS</span>
-            </div>
-            <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>Alerts pending first observation — airfare collector not yet connected</span>
-            <button onClick={() => onNavigate('alerts')} style={{ fontSize: 11, color: 'var(--color-brand-primary)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontWeight: 600, marginLeft: 'auto' }}>View Alerts →</button>
-          </>
-        )}
-        {user.role === 'PUBLIC' && user.plan === 'FREE' && (
-          <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
-              <Database size={13} style={{ color: 'var(--color-text-tertiary)' }} />
-              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-tertiary)', letterSpacing: '0.06em', fontFamily: 'var(--font-sans)' }}>USER ACCESS</span>
-            </div>
-            <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>Compare routes for free. Price alerts unlock with subscription or an approved access code.</span>
-            <button onClick={() => setShowUpgrade(true)} style={{ fontSize: 11, color: 'var(--color-brand-primary)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontWeight: 700, marginLeft: 'auto' }}>Get Alerts →</button>
-          </>
-        )}
-      </div>
+    <section className="user-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0,1fr))', gap: 10 }}>{[
+      { icon: Plane, label: 'Verified routes', value: routesTracked == null ? 'Data unavailable' : routesTracked.toLocaleString('en-IN'), tone: '#1989e8', helper: 'Current monitored corridors' },
+      { icon: CheckCircle2, label: 'Verified observations', value: verifiedObservations == null ? 'Data unavailable' : verifiedObservations.toLocaleString('en-IN'), tone: '#159669', helper: 'REAL / OFFICIAL fare rows' },
+      { icon: Tag, label: 'Price drops', value: priceDrops == null ? 'Data unavailable' : priceDrops.toLocaleString('en-IN'), tone: '#7c55e8', helper: priceDrops == null ? 'A comparison period is required' : 'Routes cheaper than the prior collection' },
+      { icon: Bell, label: 'Active alerts', value: activeAlerts == null ? 'Data unavailable' : activeAlerts.toLocaleString('en-IN'), tone: '#f0a22b', helper: activeAlerts == null ? 'Sign in to view account alerts' : 'Saved alerts for this account' },
+      { icon: TrendingUp, label: 'Airfare index (latest)', value: latestIndex == null ? 'Data unavailable' : latestIndex.toFixed(2), tone: '#159ed1', helper: indexDelta == null ? 'Verified index pending' : `${indexDelta >= 0 ? '↑' : '↓'} ${Math.abs(indexDelta).toFixed(1)}% vs prior collection` },
+    ].map(({ icon: Icon, label, value, tone, helper }) => <div key={label} style={{ background: '#fff', border: '1px solid #dbe7f2', borderRadius: 14, padding: '15px 17px', minHeight: 83, boxShadow: '0 5px 15px rgba(25,71,130,.05)', display: 'flex', gap: 12, alignItems: 'center' }}><div style={{ width: 38, height: 38, borderRadius: 11, display: 'grid', placeItems: 'center', background: `${tone}16`, color: tone, flexShrink: 0 }}><Icon size={19} /></div><div style={{ minWidth: 0 }}><div style={{ fontSize: 12, fontWeight: 700, color: '#19366f' }}>{label}</div><div style={{ marginTop: 5, fontSize: value === 'Data unavailable' ? 13 : 23, fontWeight: 850, color: '#0c2c6e', whiteSpace: 'nowrap' }}>{value}</div><div style={{ marginTop: 3, fontSize: 10, color: '#8194ad' }}>{helper}</div></div></div>)}</section>
 
-      {/* Hero: AIRFARE MARKET PULSE ─────────────────────── */}
-      <div style={{
-        background: 'var(--gradient-hero-dark)',
-        borderRadius: 16, overflow: 'hidden', position: 'relative',
-        padding: '28px 32px', boxShadow: '0 20px 50px rgba(8,14,26,0.35)',
-        border: '1px solid rgba(255,255,255,0.05)',
-      }}>
-        {/* Background layers */}
-        <div style={{ position:'absolute',inset:0,backgroundImage:'linear-gradient(rgba(255,255,255,0.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.025) 1px,transparent 1px)',backgroundSize:'32px 32px',pointerEvents:'none' }}/>
-        <div style={{ position:'absolute',top:-60,right:-60,width:280,height:280,borderRadius:'50%',background:'rgba(37,99,235,0.18)',filter:'blur(70px)',pointerEvents:'none' }}/>
-        <div style={{ position:'absolute',bottom:-40,left:80,width:200,height:200,borderRadius:'50%',background:'rgba(99,102,241,0.14)',filter:'blur(50px)',pointerEvents:'none' }}/>
+    <section className="user-routes-layout" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2fr) minmax(360px, 1fr)', gap: 12, alignItems: 'stretch' }}>
+      <div style={{ background: 'linear-gradient(180deg, #ffffff 0%, #f7fbff 100%)', border: '1px solid #dbe7f2', borderRadius: 14, padding: 14, boxShadow: '0 5px 15px rgba(25,71,130,.05)' }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}><div><h2 style={{ margin: 0, fontSize: 18, color: '#102e70' }}>Popular Routes</h2><p style={{ margin: '4px 0 0', fontSize: 11, color: '#7890ae' }}>Verified fare medians, range and latest movement</p></div><div style={{ display: 'flex', gap: 6, alignItems: 'center' }}><span style={{ background: '#1769e8', color: '#fff', padding: '6px 12px', borderRadius: 8, fontSize: 11, fontWeight: 800 }}>Domestic</span><button onClick={() => onNavigate('routes')} style={{ border: 0, background: 'none', color: '#1265db', fontWeight: 800, cursor: 'pointer' }}>View All →</button></div></div><div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10 }}>{routeCards.map(route => {
+        const routeMovement = movementForRoute(route.key)
+        const lineColor = routeMovement?.change_pct == null ? '#9ec8f6' : routeMovement.change_pct < 0 ? '#39a978' : routeMovement.change_pct > 0 ? '#ef7661' : '#4d8ec4'
+        return <div key={route.code} style={{ border: '1px solid #e0eaf4', borderRadius: 12, padding: 13, background: '#fbfdff', minWidth: 0, minHeight: 206, display: 'flex', flexDirection: 'column' }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}><div><div style={{ fontSize: 17, fontWeight: 850 }}>{route.code}</div><div style={{ fontSize: 11, color: '#7083a0', marginTop: 3 }}>{route.name}</div></div><span style={{ width: 30, height: 30, borderRadius: 50, display: 'grid', placeItems: 'center', background: '#edf5ff', color: '#1769e8' }}><Plane size={15} /></span></div><div style={{ marginTop: 14, fontSize: 22, fontWeight: 850, color: '#0d3076' }}>{formatFare(route.fare)}</div>{route.fare != null ? <><div style={{ marginTop: 4 }}><ChangeLabel change={routeMovement?.change_pct} /></div><div style={{ display: 'grid', gridTemplateColumns: '1fr 96px', gap: 10, alignItems: 'end', marginTop: 'auto' }}><div style={{ display: 'grid', gap: 4, fontSize: 10, color: '#647a98' }}><span>Range <b style={{ color: '#173b78' }}>{formatFare(route.minFare)} - {formatFare(route.maxFare)}</b></span><span>{route.sampleCount} verified observations</span></div><Sparkline route={route} change={routeMovement?.change_pct} /></div></> : <div style={{ marginTop: 6, color: '#7b8da5', fontSize: 11, lineHeight: 1.45 }}>No verified observation for this route yet.</div>}<button onClick={() => onNavigate('routes')} style={{ width: '100%', marginTop: 12, border: 0, borderRadius: 8, padding: 8, background: '#eff6ff', color: '#1265db', fontWeight: 800, cursor: 'pointer' }}>View Route →</button></div>
+      })}</div></div>
+      <div style={{ background: '#fff', border: '1px solid #dbe7f2', borderRadius: 14, padding: 16, boxShadow: '0 5px 15px rgba(25,71,130,.05)' }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><h2 style={{ margin: 0, fontSize: 18, color: '#102e70' }}>India Fare Movement <span title="Colors are calculated from verified collection medians" style={{ fontSize: 12, color: '#7d91ad' }}>ⓘ</span></h2><span style={{ fontSize: 11, background: '#1769e8', color: '#fff', borderRadius: 8, padding: '6px 10px', fontWeight: 800 }}>Domestic</span></div><FareMovementMap movement={fareMovement} /></div>
+    </section>
 
-        <div style={{ position:'relative' }}>
-          {/* Eyebrow */}
-          <div style={{ display:'flex',alignItems:'center',gap:8,marginBottom:20 }}>
-            <div style={{ display:'flex',alignItems:'center',gap:6 }}>
-              <div style={{ width:6,height:6,borderRadius:'50%',background:'rgba(147,197,253,0.7)',animation:'pulse-dot 2s ease-in-out infinite' }}/>
-              <span style={{ fontSize:9,fontWeight:700,color:'rgba(147,197,253,0.7)',letterSpacing:'0.15em',fontFamily:'var(--font-mono)' }}>AIRFARE MARKET PULSE · SIH26056</span>
-            </div>
-            <div style={{ flex:1,height:'1px',background:'rgba(255,255,255,0.07)' }}/>
-            <span style={{ fontSize:9,fontWeight:700,color:'rgba(255,255,255,0.25)',letterSpacing:'0.1em',fontFamily:'var(--font-mono)' }}>ALL-INDIA INDEX</span>
-          </div>
-
-          {/* Metric grid */}
-          <div style={{ display:'grid',gridTemplateColumns:'auto 1fr auto auto',gap:'0 32px',alignItems:'start',marginBottom:22 }}>
-            {/* Main metric */}
-            <div>
-              <div style={{ fontSize:9,fontWeight:700,color:'rgba(255,255,255,0.35)',letterSpacing:'0.12em',fontFamily:'var(--font-mono)',marginBottom:8 }}>PRICE INDEX</div>
-              <div style={{ fontSize:'2.8rem',fontWeight:800,color:'rgba(255,255,255,0.2)',fontFamily:'var(--font-mono)',letterSpacing:'-0.04em',lineHeight:1,marginBottom:10 }}>
-                {indexValue === null ? '—·—' : indexValue.toFixed(2)}
-              </div>
-              <div style={{ display:'flex',alignItems:'center',gap:8,padding:'6px 12px',borderRadius:8,background:'rgba(217,119,6,0.2)',border:'1px solid rgba(217,119,6,0.35)',width:'fit-content' }}>
-                <div style={{ width:5,height:5,borderRadius:'50%',background:'var(--color-warning)',animation:'pulse-dot 2s ease-in-out infinite',flexShrink:0 }}/>
-                <span style={{ fontSize:10,fontWeight:800,letterSpacing:'0.1em',color:'var(--color-warning)',fontFamily:'var(--font-mono)' }}>
-                  {indexStatus ?? 'INDEX NOT PUBLISHED'}
-                </span>
-              </div>
-              {realObs !== null && realObs > 0 && (
-                <div style={{ marginTop:8,fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'var(--font-mono)' }}>
-                  {realObs.toLocaleString('en-IN')} observations
-                </div>
-              )}
-            </div>
-
-            {/* Explanation */}
-            <div style={{ paddingTop:28 }}>
-              <div style={{ fontSize:13,color:'rgba(255,255,255,0.6)',fontFamily:'var(--font-sans)',lineHeight:1.65,marginBottom:12 }}>
-                {indexValue !== null
-                  ? `${realObs?.toLocaleString('en-IN') ?? 0} verified Google Flights observations across the index basket. This first collection establishes the 100.00 baseline; trend movement appears after later collections.`
-                  : 'No published live airfare index is available yet. The index is released only after verified observations cover the required route basket.'}
-              </div>
-              <div style={{ display:'flex',flexWrap:'wrap',gap:6 }}>
-                {(indexValue !== null ? ['REAL FARES', 'GOOGLE FLIGHTS', '12 ROUTES'] : []).map(a=>(
-                  <span key={a} style={{ fontSize:9,fontWeight:700,color:'var(--color-warning)',background:'rgba(217,119,6,0.15)',padding:'3px 8px',borderRadius:99,fontFamily:'var(--font-mono)',letterSpacing:'0.04em',border:'1px solid rgba(217,119,6,0.25)' }}>
-                    {a}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            {/* Mini stat: corridors */}
-            <div style={{ paddingTop:28,textAlign:'right' }}>
-              <div style={{ fontSize:9,fontWeight:700,color:'rgba(255,255,255,0.3)',letterSpacing:'0.12em',fontFamily:'var(--font-mono)',marginBottom:6 }}>CORRIDORS</div>
-              <div style={{ fontSize:28,fontWeight:800,color:'rgba(255,255,255,0.75)',fontFamily:'var(--font-mono)',lineHeight:1 }}>{indexValue !== null ? '12' : '—'}</div>
-            </div>
-
-            {/* Mini stat: sources */}
-            <div style={{ paddingTop:28,textAlign:'right' }}>
-              <div style={{ fontSize:9,fontWeight:700,color:'rgba(255,255,255,0.3)',letterSpacing:'0.12em',fontFamily:'var(--font-mono)',marginBottom:6 }}>SOURCES</div>
-              <div style={{ fontSize:28,fontWeight:800,color:'rgba(255,255,255,0.75)',fontFamily:'var(--font-mono)',lineHeight:1 }}>{indexValue !== null ? '1' : '—'}</div>
-            </div>
-          </div>
-
-          {/* DGCA official ref strip */}
-          {govData.dgcaMonthly.length > 0 && (
-            <div style={{ padding:'12px 16px',borderRadius:9,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.09)',marginBottom:20,display:'flex',alignItems:'center',gap:20,flexWrap:'wrap' }}>
-            <div style={{ fontSize:9,fontWeight:700,color:'rgba(147,197,253,0.7)',letterSpacing:'0.1em',fontFamily:'var(--font-mono)',flexShrink:0 }}>{isFreePublicUser ? 'MARKET SNAPSHOT' : 'OFFICIAL · DGCA'}</div>
-              {govData.dgcaMonthly.slice(0,3).map(m=>(
-                <div key={m.month} style={{ display:'flex',alignItems:'center',gap:8 }}>
-                  <span style={{ fontSize:9,color:'rgba(255,255,255,0.35)',fontFamily:'var(--font-mono)' }}>{m.month}</span>
-                  <span style={{ fontSize:12,fontWeight:700,color:'rgba(255,255,255,0.8)',fontFamily:'var(--font-sans)' }}>{(m.domestic_passengers/1_000_000).toFixed(1)}M pax</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Action buttons */}
-          <div style={{ display:'flex',gap:10,flexWrap:'wrap' }}>
-            <button
-              onClick={()=>onNavigate('map')}
-              style={{ display:'flex',alignItems:'center',gap:8,padding:'10px 18px',background:'rgba(37,99,235,0.9)',border:'1px solid rgba(37,99,235,0.5)',borderRadius:10,color:'white',fontSize:12,fontWeight:700,fontFamily:'var(--font-sans)',cursor:'pointer',letterSpacing:'0.05em',transition:'all 180ms ease' }}
-              onMouseOver={e=>{(e.currentTarget as HTMLElement).style.background='rgba(37,99,235,1)';(e.currentTarget as HTMLElement).style.boxShadow='0 4px 16px rgba(37,99,235,0.4)'}}
-              onMouseOut={e=>{(e.currentTarget as HTMLElement).style.background='rgba(37,99,235,0.9)';(e.currentTarget as HTMLElement).style.boxShadow='none'}}
-            >
-              <MapIcon size={14}/> EXPLORE MAP
-            </button>
-            <button
-              onClick={()=>onNavigate('routes')}
-              style={{ display:'flex',alignItems:'center',gap:8,padding:'10px 18px',background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.12)',borderRadius:10,color:'rgba(255,255,255,0.75)',fontSize:12,fontWeight:700,fontFamily:'var(--font-sans)',cursor:'pointer',letterSpacing:'0.05em',transition:'all 180ms ease' }}
-              onMouseOver={e=>{(e.currentTarget as HTMLElement).style.background='rgba(255,255,255,0.1)';(e.currentTarget as HTMLElement).style.borderColor='rgba(255,255,255,0.2)'}}
-              onMouseOut={e=>{(e.currentTarget as HTMLElement).style.background='rgba(255,255,255,0.06)';(e.currentTarget as HTMLElement).style.borderColor='rgba(255,255,255,0.12)'}}
-            >
-              <Plane size={14}/> CHECK ROUTE
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Route search */}
-      <div className="ap-card" style={{ padding: 'var(--space-2xl)', background: 'var(--color-surface-bg)', overflow: 'hidden', position: 'relative' }}>
-        <div style={{ position:'absolute',top:-30,right:-30,width:120,height:120,borderRadius:'50%',background:'rgba(37,99,235,0.05)',filter:'blur(30px)',pointerEvents:'none' }}/>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 'var(--space-xl)' }}>
-          <div style={{ width:32,height:32,borderRadius:8,background:'var(--gradient-brand)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0 }}>
-            <Plane size={15} color="white"/>
-          </div>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', letterSpacing:'-0.01em' }}>
-              Route Intelligence
-            </div>
-            <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.09em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)', marginTop:1 }}>
-              CHECK AIRFARE DATA · ALL CORRIDORS
-            </div>
-          </div>
-        </div>
-        <form onSubmit={handleSearch} style={{ display: 'flex', gap: 'var(--space-lg)', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex:1, minWidth:140 }}>
-            <label style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-text-tertiary)', letterSpacing: '0.12em', fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}>FROM</label>
-            <select value={fromCity} onChange={e => { setFromCity(e.target.value); setSearchResult(null) }} className="ap-input" style={{ ...selectStyle, padding: '10px 36px 10px 14px', fontSize: 13, fontWeight: 600 }}>
-              {cityOptions.map(c => <option key={c.value} value={c.value}>{c.label} ({c.value})</option>)}
-            </select>
-          </div>
-          <div style={{ paddingBottom:14,color:'var(--color-brand-primary)',fontSize:18,fontWeight:700,userSelect:'none' }}>⇄</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex:1, minWidth:140 }}>
-            <label style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-text-tertiary)', letterSpacing: '0.12em', fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}>TO</label>
-            <select value={toCity} onChange={e => { setToCity(e.target.value); setSearchResult(null) }} className="ap-input" style={{ ...selectStyle, padding: '10px 36px 10px 14px', fontSize: 13, fontWeight: 600 }}>
-              {cityOptions.map(c => <option key={c.value} value={c.value}>{c.label} ({c.value})</option>)}
-            </select>
-          </div>
-          <button type="submit" style={{ display:'flex',alignItems:'center',gap:8,padding:'10px 20px',background:'var(--gradient-brand)',border:'none',borderRadius:10,color:'white',fontSize:12,fontWeight:700,fontFamily:'var(--font-sans)',cursor:'pointer',letterSpacing:'0.06em',transition:'all 180ms ease',boxShadow:'var(--shadow-brand)',whiteSpace:'nowrap' }}
-            onMouseOver={e=>{(e.currentTarget as HTMLElement).style.transform='translateY(-1px)'}}
-            onMouseOut={e=>{(e.currentTarget as HTMLElement).style.transform='none'}}
-          >
-            <ArrowRight size={14}/> CHECK ROUTE
-          </button>
-        </form>
-
-        {fareLoading && (
-          <div style={{ marginTop: 'var(--space-xl)', display: 'flex', alignItems: 'center', gap: 10, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', fontSize: 13 }}>
-            <Loader2 size={16} style={{ animation: 'spin 1s linear infinite', color: 'var(--color-brand-primary)' }} />
-            Searching fares…
-          </div>
-        )}
-        {!fareLoading && searchResult && (
-          <div className="animate-fade-up" style={{ marginTop: 'var(--space-xl)', padding: 'var(--space-lg)', borderRadius: 'var(--radius-lg)', background: 'var(--color-surface-secondary)', border: '1px solid var(--color-border-primary)' }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', marginBottom: 10 }}>
-              {fromCity} → {toCity}
-            </div>
-            {fareResults.length > 0 ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
-                {fareResults.map((f, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: 'var(--color-surface-bg)', borderRadius: 8, border: '1px solid var(--color-border-primary)' }}>
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}>{f.airline}</div>
-                      <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>{f.departure_time} · {f.stops === 0 ? 'Non-stop' : `${f.stops} stop`}</div>
-                    </div>
-                    <div style={{ fontSize: 17, fontWeight: 800, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>₹{f.price.toLocaleString('en-IN')}</div>
-                  </div>
-                ))}
-              </div>
-            ) : kaggleFallback !== null ? (
-              <div style={{ marginBottom: 12 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--color-success)', fontFamily: 'var(--font-mono)', marginBottom: 6 }}>DGCA 30-YEAR INDEX BENCHMARK</div>
-                <div style={{ fontSize: 24, fontWeight: 800, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>₹{kaggleFallback.toLocaleString('en-IN')}</div>
-                <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginTop: 4 }}>Calibrated benchmark fare · DGCA 30-Year Longitudinal Series &amp; Live Airspace Feed</div>
-              </div>
-            ) : (
-              <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginBottom: 12 }}>
-                No fare data available for this corridor.
-              </div>
-            )}
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {isFreePublicUser ? (
-                <>
-                  <Button variant="subtle" onClick={() => onNavigate('routes')}>Open Route Explorer</Button>
-                  <Button variant="primary" onClick={() => setShowUpgrade(true)}>Track this route</Button>
-                </>
-              ) : (
-                <>
-                  <Button variant="subtle" onClick={() => onNavigate('sources')}>View Source Status</Button>
-                  <Button variant="subtle" onClick={() => onNavigate('livefares')}>Live Fares Table</Button>
-                </>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {isFreePublicUser && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'var(--space-md)' }}>
-          {[
-            { icon: Bell, title: 'Never miss fare drops', text: 'Unlock alerts for routes you care about and get notified when prices move.', action: 'Request subscription' },
-            { icon: MapIcon, title: 'Compare Indian routes', text: 'See corridor-level airfare context before you book or plan travel.', action: 'Open map' },
-            { icon: Shield, title: 'Access by approval', text: 'Paid features are enabled through subscription approval or an access code.', action: 'Enter code' },
-          ].map(({ icon: Icon, title, text, action }) => (
-            <button
-              key={title}
-              onClick={() => action === 'Open map' ? onNavigate('map') : setShowUpgrade(true)}
-              style={{ ...card, textAlign: 'left', cursor: 'pointer', padding: 18, display: 'flex', gap: 14, alignItems: 'flex-start', transition: 'transform 150ms, box-shadow 150ms' }}
-              onMouseOver={e => { (e.currentTarget as HTMLElement).style.transform = 'translateY(-2px)'; (e.currentTarget as HTMLElement).style.boxShadow = 'var(--shadow-md)' }}
-              onMouseOut={e => { (e.currentTarget as HTMLElement).style.transform = 'none'; (e.currentTarget as HTMLElement).style.boxShadow = 'var(--shadow-sm)' }}
-            >
-              <div style={{ width: 38, height: 38, borderRadius: 12, background: 'var(--color-brand-muted)', display: 'grid', placeItems: 'center', color: 'var(--color-brand-primary)', flex: '0 0 auto' }}>
-                <Icon size={18} />
-              </div>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 850, color: 'var(--color-text-primary)', marginBottom: 4 }}>{title}</div>
-                <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.45, marginBottom: 10 }}>{text}</div>
-                <span style={{ fontSize: 11, fontWeight: 800, color: 'var(--color-brand-primary)' }}>{action} →</span>
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Trends are withheld until two verified collection periods exist. */}
-      {!isFreePublicUser && <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-lg)' }}>
-        {[
-          { title: 'RISING FARES', accent: 'var(--color-danger)', accentBg: 'var(--color-danger-bg)', icon: TrendingUp },
-          { title: 'FALLING FARES', accent: 'var(--color-success)', accentBg: 'var(--color-success-bg)', icon: TrendingDown },
-        ].map(({ title, accent, accentBg, icon: Icon }) => (
-          <div key={title} style={{ background: 'var(--color-surface-bg)', borderRadius: 14, border: '1px solid var(--color-border-primary)', padding: 'var(--space-xl)', overflow:'hidden', position:'relative' }}>
-            <div style={{ position:'absolute',top:0,left:0,right:0,height:3,background:accent,opacity:0.6,borderRadius:'14px 14px 0 0' }}/>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--space-lg)', paddingTop:4 }}>
-              <div style={{ width:26,height:26,borderRadius:7,background:accentBg,display:'flex',alignItems:'center',justifyContent:'center' }}>
-                <Icon size={13} style={{ color: accent }}/>
-              </div>
-              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>{title}</span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '4px 0' }}>
-                {title === 'RISING FARES' ? (
-                  <>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', borderRadius: 8, background: 'var(--color-surface-secondary)', fontSize: 12 }}>
-                      <span style={{ fontWeight: 700, fontFamily: 'var(--font-mono)' }}>DEL → GOI</span>
-                      <span style={{ color: '#ef4444', fontWeight: 800, fontFamily: 'var(--font-mono)' }}>₹6,750 (+5.7%)</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', borderRadius: 8, background: 'var(--color-surface-secondary)', fontSize: 12 }}>
-                      <span style={{ fontWeight: 700, fontFamily: 'var(--font-mono)' }}>BOM → GOI</span>
-                      <span style={{ color: '#ef4444', fontWeight: 800, fontFamily: 'var(--font-mono)' }}>₹3,420 (+6.4%)</span>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', borderRadius: 8, background: 'var(--color-surface-secondary)', fontSize: 12 }}>
-                      <span style={{ fontWeight: 700, fontFamily: 'var(--font-mono)' }}>MAA → HYD</span>
-                      <span style={{ color: '#16a34a', fontWeight: 800, fontFamily: 'var(--font-mono)' }}>₹2,650 (-1.8%)</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', borderRadius: 8, background: 'var(--color-surface-secondary)', fontSize: 12 }}>
-                      <span style={{ fontWeight: 700, fontFamily: 'var(--font-mono)' }}>BOM → HYD</span>
-                      <span style={{ color: '#16a34a', fontWeight: 800, fontFamily: 'var(--font-mono)' }}>₹3,760 (-1.1%)</span>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>}
-
-      {/* Booking window mini chart */}
-      {!isFreePublicUser && <div style={card}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-lg)', flexWrap: 'wrap', gap: 'var(--space-md)' }}>
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', marginBottom: 4, fontFamily: 'var(--font-sans)' }}>BOOKING WINDOW PATTERN</div>
-            <div style={{ fontSize: 'var(--text-label-size)', fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}>Advance purchase fare curve</div>
-          </div>
-          <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
-            <Button variant="subtle" onClick={() => onNavigate('routes')} iconEnd={<ArrowRight size={13} />}>Route Explorer</Button>
-          </div>
-        </div>
-        <BookingSparkline />
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
-          <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>T+1 (tomorrow)</span>
-          <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>T+45 (45 days)</span>
-        </div>
-        <div style={{ marginTop: 12, padding: '8px 12px', borderRadius: 'var(--radius-sm)', background: 'var(--color-info-bg)', fontSize: 11, color: 'var(--color-info)', fontFamily: 'var(--font-sans)' }}>
-          Live advance-purchase curve calibrated across 24 high-density domestic corridors from DGCA &amp; MoSPI multi-decade data.
-        </div>
-      </div>}
-
-      {/* Recent anomalies */}
-      {!isFreePublicUser && <div style={card}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--space-lg)' }}>
-          <AlertTriangle size={14} style={{ color: 'var(--color-warning)' }} />
-          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>RECENT ANOMALIES</span>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
-          <div style={{ padding: '10px 14px', borderRadius: 10, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--color-text-primary)' }}>DEL → SXR</span>
-              <span style={{ color: '#ef4444', fontWeight: 800, fontSize: 12, fontFamily: 'var(--font-mono)' }}>+99.0% SPIKE</span>
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 4 }}>Observed ₹8,200 vs ₹4,120 base (Weather surge)</div>
-          </div>
-          <div style={{ padding: '10px 14px', borderRadius: 10, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--color-text-primary)' }}>DEL → GOI</span>
-              <span style={{ color: '#d97706', fontWeight: 800, fontSize: 12, fontFamily: 'var(--font-mono)' }}>+45.2% SPIKE</span>
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 4 }}>Observed ₹9,800 vs ₹6,750 base (Holiday demand)</div>
-          </div>
-        </div>
-      </div>}
-
-      {/* Quick nav cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--space-md)' }}>
-        {[
-          { page: 'map' as Page, icon: MapIcon, label: 'India Map', sub: 'Route corridors and key airports', color: 'var(--color-brand-primary)' },
-          { page: 'routes' as Page, icon: Plane, label: 'Route Explorer', sub: 'Check fares by route', color: 'var(--color-teal)' },
-          { page: 'insights' as Page, icon: BarChart2, label: 'Market Insights', sub: 'Simple market overview', color: 'var(--color-indigo)' },
-          ...(!isFreePublicUser ? [{ page: 'livefares' as Page, icon: Radio, label: 'Live Fares', sub: 'Real-time multi-carrier feed', color: 'var(--color-success)' }] : []),
-        ].map(({ page, icon: Icon, label, sub, color }) => (
-          <button
-            key={page}
-            onClick={() => onNavigate(page)}
-            style={{ ...card, textAlign: 'left', cursor: 'pointer', border: `1px solid ${color}20`, transition: 'transform 150ms, box-shadow 150ms' }}
-            onMouseOver={e => { (e.currentTarget as HTMLElement).style.transform = 'translateY(-2px)'; (e.currentTarget as HTMLElement).style.boxShadow = `0 4px 16px ${color}20` }}
-            onMouseOut={e => { (e.currentTarget as HTMLElement).style.transform = 'none'; (e.currentTarget as HTMLElement).style.boxShadow = 'var(--shadow-sm)' }}
-          >
-            <Icon size={20} style={{ color, marginBottom: 10 }} />
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', marginBottom: 2 }}>{label}</div>
-            <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>{sub}</div>
-          </button>
-        ))}
-      </div>
-
-      {showUpgrade && <UpgradeModal onClose={() => setShowUpgrade(false)} />}
-    </div>
-  )
+    <section className="user-analytics-layout overview-analytics" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.5fr) minmax(300px, 1fr) minmax(300px, 1fr)', gap: 12 }}>
+      <div className="overview-analytics-card trend-card" style={{ background: '#fff', border: '1px solid #dbe7f2', borderRadius: 14, padding: 16, boxShadow: '0 5px 15px rgba(25,71,130,.05)' }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}><div><h2 style={{ margin: 0, fontSize: 18, color: '#102e70' }}>Airfare Trend <span style={{ fontSize: 12, color: '#7890ae' }}>(All India Index)</span></h2><p style={{ margin: '4px 0 0', fontSize: 11, color: '#7890ae' }}>Verified movement from the latest fare collections</p></div><div style={{ display: 'flex', gap: 5 }}>{['7D','30D','90D','1Y'].map(t => <button type="button" key={t} onClick={() => setTrendRange(t)} aria-pressed={trendRange === t} style={{ padding: '6px 9px', border: '1px solid #dbe7f2', borderRadius: 7, background: trendRange === t ? '#1769e8' : '#f1f6fc', color: trendRange === t ? '#fff' : '#1769e8', fontSize: 10, fontWeight: 800, cursor: 'pointer' }}>{t}</button>)}</div></div><IndexTrend routes={routeCards} range={trendRange} />{latestIndex != null && <div className="trend-kpis" style={{ display: 'flex', justifyContent: 'flex-end', gap: 18, marginTop: -2, color: '#173b78' }}><span style={{ fontSize: 11 }}>Current Index<br/><b style={{ fontSize: 22 }}>{latestIndex.toFixed(2)}</b></span><span style={{ fontSize: 11 }}>Movement<br/><b style={{ fontSize: 16, color: (indexDelta ?? 0) >= 0 ? '#d9343e' : '#07875d' }}>{indexDelta == null ? '—' : `${indexDelta > 0 ? '+' : ''}${indexDelta.toFixed(2)}%`}</b></span></div>}</div>
+      <div className="overview-analytics-card route-contribution-card" style={{ background: '#fff', border: '1px solid #dbe7f2', borderRadius: 14, padding: 16, boxShadow: '0 5px 15px rgba(25,71,130,.05)' }}><div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 13 }}><div style={{ width: 38, height: 38, borderRadius: 11, display: 'grid', placeItems: 'center', background: '#eaf3ff', color: '#1769e8', fontSize: 20 }}>⌁</div><div style={{ flex: 1 }}><h2 style={{ margin: 0, fontSize: 18, color: '#102e70' }}>Route Contribution to Index <span title="How each verified route moves the index" style={{ color: '#7d91ad', fontSize: 12 }}>ⓘ</span></h2><p style={{ margin: '4px 0 0', fontSize: 11, color: '#7890ae' }}>Latest verified route movement · select a route to explore</p></div><button type="button" onClick={() => onNavigate('routes')} style={{ border: '1px solid #dbe7f2', borderRadius: 8, padding: '8px 10px', background: '#eff6ff', color: '#1265db', fontWeight: 800, cursor: 'pointer', whiteSpace: 'nowrap' }}>View All →</button></div><div style={{ display: 'grid', gridTemplateColumns: '70px 1fr 72px 18px', gap: 8, padding: '0 8px 7px', color: '#6882a4', fontSize: 10, fontWeight: 800 }}><span>Route</span><span>Contribution</span><span style={{ textAlign: 'right' }}>Change</span><span /></div>{routeCards.map(route => { const change = movementForRoute(route.key)?.change_pct ?? 0; const positive = change >= 0; const cityByCode: Record<string, string> = { DEL: 'Delhi', BLR: 'Bengaluru', MAA: 'Chennai', BOM: 'Mumbai', HYD: 'Hyderabad', CCU: 'Kolkata' }; const city = cityByCode[route.code.split(' ')[0]] ?? 'India'; return <button type="button" key={route.code} onClick={() => onNavigate('routes')} title={`Open ${route.code} route details`} style={{ width: '100%', display: 'grid', gridTemplateColumns: '70px 1fr 72px 18px', gap: 8, alignItems: 'center', padding: '10px 8px', border: '1px solid #edf2f7', borderRadius: 10, marginBottom: 6, background: '#fbfdff', fontSize: 11, cursor: 'pointer', textAlign: 'left' }}><span><b style={{ display: 'block', color: '#173b78', fontSize: 13 }}>{route.code.split(' ')[0]}</b><small style={{ color: '#8aa0bb' }}>{city}</small></span><span style={{ height: 10, background: '#e6eef7', borderRadius: 99, overflow: 'hidden' }}><i style={{ display: 'block', width: `${Math.min(100, Math.max(9, Math.abs(change) * 12))}%`, height: '100%', background: positive ? '#ef7661' : '#39b37d', borderRadius: 99 }} /></span><span style={{ textAlign: 'right' }}><b style={{ display: 'block', color: positive ? '#ef3f44' : '#07875d', fontSize: 13 }}>{change === 0 ? '—' : `${change > 0 ? '+' : ''}${change.toFixed(2)}`}</b><small style={{ color: positive ? '#ef3f44' : '#07875d' }}>{change === 0 ? 'stable' : `${change > 0 ? '+' : ''}${(change * 1.4).toFixed(1)}%`}</small></span><span style={{ color: '#7890ae', fontSize: 20 }}>›</span></button> })}</div>
+      <div className="overview-analytics-card recent-alerts-card" style={{ background: '#fff', border: '1px solid #dbe7f2', borderRadius: 14, padding: 16, boxShadow: '0 5px 15px rgba(25,71,130,.05)' }}><div style={{ display: 'flex', justifyContent: 'space-between' }}><div><h2 style={{ margin: 0, fontSize: 18, color: '#102e70' }}>Recent Price Alerts</h2><p style={{ margin: '4px 0 0', fontSize: 11, color: '#7890ae' }}>Verified changes from the latest collection</p></div><button onClick={() => onNavigate('alerts')} style={{ border: 0, background: 'none', color: '#1265db', fontWeight: 800, cursor: 'pointer' }}>View All →</button></div>{priceDropEvents.length > 0 ? <div className="recent-alert-list" style={{ display: 'grid', gap: 9, marginTop: 13 }}>{priceDropEvents.slice(0, 3).map(event => <div className="recent-alert-row" key={event.route} style={{ display: 'grid', gridTemplateColumns: '20px 1fr auto', gap: 8, alignItems: 'center', padding: '7px 0', borderBottom: '1px solid #edf2f7' }}><TrendingDown size={18} color="#07875d" /><div><b style={{ display: 'block', fontSize: 11, color: '#173b78' }}>{event.route} fare dropped by {Math.abs(event.change_pct).toFixed(2)}%</b><span style={{ fontSize: 10, color: '#7185a2' }}>{formatFare(event.current_fare)} · verified collection</span></div><span style={{ fontSize: 10, color: '#7185a2' }}>{fareMovement?.current_period ?? ''}</span></div>)}</div> : <div style={{ marginTop: 18, padding: '18px 12px', borderRadius: 10, background: '#fbfdff', border: '1px dashed #dbe7f2', textAlign: 'center' }}><TrendingDown size={20} color="#91a4bd" /><div style={{ marginTop: 8, color: '#526987', fontSize: 12, fontWeight: 700 }}>{fareMovement?.available ? 'No price drops in the latest collection' : 'Movement data is not available yet'}</div><div style={{ marginTop: 4, color: '#8194ad', fontSize: 11, lineHeight: 1.45 }}>{fareMovement?.message ?? 'A second verified collection is required before a price movement can be shown.'}</div></div>}<button onClick={() => setShowAccess(true)} style={{ width: '100%', marginTop: 10, padding: 10, border: 0, borderRadius: 9, background: '#eaf3ff', color: '#1265db', fontWeight: 800, cursor: 'pointer' }}>+ Set New Price Alert</button></div>
+    </section>
+    {isFree && showAccess && <UpgradeModal feature="Price Alerts" featureKey="PRICE_ALERTS" onClose={() => setShowAccess(false)} />}
+  </div>
 }

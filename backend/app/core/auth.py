@@ -12,6 +12,7 @@ from app.models.user import User
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
+oauth2_optional_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token", auto_error=False)
 
 # Demo accounts — in production, managed by DB only
 DEMO_USERS = {
@@ -67,7 +68,21 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
         plan: str = payload.get("plan", "FREE")
         name: str = payload.get("name", "User")
     except JWTError:
-        raise credentials_exception
+        # Firebase-authenticated frontend sessions use a Firebase ID token.
+        # Verify it server-side before allowing admin-only API access.
+        try:
+            import os
+            from app.core.firebase_admin import firebase_app
+            firebase_admin = firebase_app()
+            from firebase_admin import auth
+            if not firebase_admin:
+                raise credentials_exception
+            firebase_user = auth.verify_id_token(token)
+            email = str(firebase_user.get("email", "")).lower()
+            role = "ADMIN" if email in {"admin@aeroprice.in", *[e.strip().lower() for e in os.getenv("FIREBASE_ADMIN_EMAILS", "").split(",") if e.strip()]} else "PUBLIC"
+            return {"email": email, "role": role, "plan": "ADMIN" if role == "ADMIN" else "FREE", "name": firebase_user.get("name") or email}
+        except Exception:
+            raise credentials_exception
     return {"email": email, "role": role, "plan": plan, "name": name}
 
 

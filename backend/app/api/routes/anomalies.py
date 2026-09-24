@@ -8,7 +8,7 @@ from sqlalchemy import select, func, and_
 from datetime import datetime, timezone, timedelta
 import json
 from app.core.database import get_db
-from app.core.auth import require_analyst
+from app.core.auth import require_analyst, get_current_user
 from app.models.fare import FareObservation
 from app.services.anomaly_detector import get_anomaly_summary, detect_anomalies
 
@@ -19,7 +19,7 @@ router = APIRouter()
 async def list_anomalies(
     route: str = Query(default=None),
     limit: int = Query(default=50, le=500),
-    current_user=Depends(require_analyst),
+    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Return fare observations flagged as anomalies (quality_flags contains OUTLIER)."""

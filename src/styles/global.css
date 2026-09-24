@@ -155,29 +155,35 @@
   --color-purple:        #8b5cf6;
   --color-teal:          #0d9488;
   --color-rose:          #e11d48;
+  --map-no-data:         #c8d6e5;
+  --map-state-stroke:    #ffffff;
 }
 
 /* ── Dark mode ───────────────────────────────────────────── */
 .dark {
   --color-brand-muted:      #1e3a5f;
 
-  --color-surface-canvas:   #0f172a;
-  --color-surface-bg:       #1e293b;
-  --color-surface-secondary:#162032;
-  --color-surface-hover:    #263347;
-  --color-surface-dark:     #0f172a;
+  /* A three-level navy surface system keeps cards, columns and inputs
+     distinguishable instead of rendering the whole UI as one flat grey. */
+  --color-surface-canvas:   #091426;
+  --color-surface-bg:       #111f35;
+  --color-surface-secondary:#0c192c;
+  --color-surface-hover:    #1a2c47;
+  --color-surface-dark:     #06101f;
 
-  --color-text-primary:     rgba(255,255,255,0.90);
-  --color-text-secondary:   rgba(255,255,255,0.60);
-  --color-text-tertiary:    rgba(255,255,255,0.35);
+  --color-text-primary:     #f3f7ff;
+  --color-text-secondary:   #b8c7dc;
+  --color-text-tertiary:    #8093ad;
 
-  --color-border-primary:   rgba(255,255,255,0.10);
-  --color-border-secondary: rgba(255,255,255,0.18);
+  --color-border-primary:   #243955;
+  --color-border-secondary: #385273;
 
   --color-success-bg:       #14532d;
   --color-warning-bg:       #451a03;
   --color-danger-bg:        #450a0a;
   --color-info-bg:          #0c2340;
+  --map-no-data:            #6f829c;
+  --map-state-stroke:       #dbe8f7;
 }
 
 /* ── Global base ─────────────────────────────────────────── */

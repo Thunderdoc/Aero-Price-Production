@@ -1,470 +1,167 @@
-import { useState, useEffect } from 'react'
-import { Info, AlertTriangle, ArrowLeftRight, RefreshCw } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { AlertTriangle, ArrowLeftRight, Info, RefreshCw } from 'lucide-react'
 import { Button } from '../components/ui/Button'
-import { Badge } from '../components/ui/Badge'
 import { Modal } from '../components/ui/Modal'
-import StatusBadge from '../components/StatusBadge'
-import TrendIndicator from '../components/TrendIndicator'
-import DataFreshness from '../components/DataFreshness'
 import { BarChart, LineChart } from '../components/MiniChart'
-import { corridors, bookingWindowData, priceHistoryData, dataSources } from '../data/sampleData'
-import { apiFares, isBackendAvailable, type FareObservationApi } from '../services/api'
-import { searchFares, type FareResult } from '../services/fareSearch'
+import { apiAnomalies, apiFares, apiForecast, isBackendAvailable, type AnomalyResponse, type FareObservationApi, type ForecastResponse } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
 
-const card = { background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', padding: 'var(--space-xl)', boxShadow: 'var(--shadow-sm)' } as const
-
+const card: React.CSSProperties = { background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', padding: 'var(--space-xl)', boxShadow: 'var(--shadow-sm)', border: '1px solid var(--color-border-primary)' }
 const TABS = ['Overview', 'Price History', 'Booking Windows', 'Forecast', 'Anomalies', 'Sources'] as const
 type Tab = typeof TABS[number]
 
-const historySeries = [
-  { name: 'DEL–BOM',  data: priceHistoryData.map(d => d.DEL_BOM), color: 'var(--color-brand-primary)' },
-  { name: 'DEL–BLR',  data: priceHistoryData.map(d => d.DEL_BLR), color: 'var(--color-danger)' },
-  { name: 'BOM–BLR',  data: priceHistoryData.map(d => d.BOM_BLR), color: 'var(--color-success)' },
-  { name: 'Index×55', data: priceHistoryData.map(d => d.index * 55), color: 'var(--color-warning)' },
-]
+function median(values: number[]) {
+  if (!values.length) return null
+  const sorted = [...values].sort((a, b) => a - b)
+  const middle = Math.floor(sorted.length / 2)
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2
+}
+
+function formatFare(value: number | null) {
+  return value == null ? 'Data unavailable' : `₹${value.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`
+}
+
+function changeBetweenCollections(rows: FareObservationApi[]) {
+  const byDay = new Map<string, number[]>()
+  rows.forEach(row => {
+    const day = row.collected_at.slice(0, 10)
+    byDay.set(day, [...(byDay.get(day) ?? []), row.total_fare])
+  })
+  const days = [...byDay.keys()].sort()
+  if (days.length < 2) return null
+  const previous = median(byDay.get(days.at(-2)!) ?? [])
+  const current = median(byDay.get(days.at(-1)!) ?? [])
+  if (previous == null || current == null || previous <= 0) return null
+  return ((current - previous) / previous) * 100
+}
 
 export default function RouteExplorer() {
-  const { token } = useAuth()
-  const [route, setRoute]           = useState('DEL-BOM')
-  const [tab, setTab]               = useState<Tab>('Overview')
-  const [showProv, setShowProv]     = useState(false)
-  const [realFares, setRealFares]   = useState<FareObservationApi[]>([])
-  const [liveFares, setLiveFares]   = useState<FareResult[]>([])
-  const [fareLoading, setFareLoading] = useState(false)
-  const [fareError, setFareError]   = useState<string | null>(null)
-  const [searchDate, setSearchDate] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() + 7)
-    return d.toISOString().slice(0, 10)
-  })
-  const corridor = corridors.find(c => c.id === route) ?? corridors[0]
-  const routeOptions = corridors.map(c => ({ value: c.id, label: `${c.from} → ${c.to}` }))
-  const bookingData  = bookingWindowData.map(d => ({ label: d.label, value: d.avgFare }))
+  const { token, user } = useAuth()
+  const [route, setRoute] = useState('DEL-BOM')
+  const [tab, setTab] = useState<Tab>('Overview')
+  const [showProv, setShowProv] = useState(false)
+  const [rows, setRows] = useState<FareObservationApi[]>([])
+  const [allRows, setAllRows] = useState<FareObservationApi[]>([])
+  const [loading, setLoading] = useState(true)
+  const [message, setMessage] = useState<string | null>(null)
+  const [searchDate, setSearchDate] = useState(() => { const date = new Date(); date.setDate(date.getDate() + 7); return date.toISOString().slice(0, 10) })
+  const [filteredToDate, setFilteredToDate] = useState(false)
+  const [forecast, setForecast] = useState<ForecastResponse | null>(null)
+  const [anomalies, setAnomalies] = useState<AnomalyResponse | null>(null)
 
-  const origins = [...new Set(corridors.map(c => c.from))]
-  const destinations = [...new Set(corridors.map(c => c.to))]
-  const [fromCity, toCity] = route.split('-')
+  const verifiedRows = useMemo(() => rows.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL'), [rows])
+  const routeOptions = useMemo(() => {
+    const available = [...new Set(allRows.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL').map(row => row.route))].sort()
+    return available.length ? available : [route]
+  }, [allRows, route])
+  const [from, to] = route.split('-')
 
-  function handleFromChange(newFrom: string) {
-    if (newFrom === toCity) {
-      // Swap to avoid same-city route
-      const newRoute = `${toCity}-${fromCity}`
-      if (corridors.find(c => c.id === newRoute)) { setRoute(newRoute); return }
-    }
-    const newRoute = `${newFrom}-${toCity}`
-    if (corridors.find(c => c.id === newRoute)) { setRoute(newRoute); return }
-    const first = corridors.find(c => c.from === newFrom)
-    if (first) setRoute(first.id)
-  }
-  function handleToChange(newTo: string) {
-    if (newTo === fromCity) {
-      // Swap to avoid same-city route
-      const newRoute = `${toCity}-${fromCity}`
-      if (corridors.find(c => c.id === newRoute)) { setRoute(newRoute); return }
-    }
-    const newRoute = `${fromCity}-${newTo}`
-    if (corridors.find(c => c.id === newRoute)) { setRoute(newRoute); return }
-    const first = corridors.find(c => c.to === newTo)
-    if (first) setRoute(first.id)
-  }
-  function handleSwap() {
-    const reversed = `${toCity}-${fromCity}`
-    if (corridors.find(c => c.id === reversed)) setRoute(reversed)
+  async function loadRoute(date?: string) {
+    setLoading(true)
+    setMessage(null)
+    try {
+      const response = await apiFares({ route, travel_date: date, limit: 250 }, token ?? undefined)
+      const next = response.observations.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL')
+      setRows(next)
+      setFilteredToDate(Boolean(date))
+      if (user?.email) {
+        const key = `aeroprice_route_activity:${user.email}`
+        const activity = { id: `${route}-${Date.now()}`, route, searchedAt: new Date().toISOString(), travelDate: date ?? null, resultCount: next.length }
+        try {
+          const existing = JSON.parse(localStorage.getItem(key) || '[]') as typeof activity[]
+          const recentDuplicate = existing[0] && existing[0].route === route && Date.now() - new Date(existing[0].searchedAt).getTime() < 90_000
+          if (!recentDuplicate) localStorage.setItem(key, JSON.stringify([activity, ...existing].slice(0, 25)))
+        } catch { localStorage.setItem(key, JSON.stringify([activity])) }
+      }
+      if (!next.length) setMessage(date ? `No verified fare records are available for ${route} on ${date}.` : `No verified fare records are available for ${route}.`)
+    } catch {
+      setRows([])
+      setMessage('The verified fare service is not available right now.')
+    } finally { setLoading(false) }
   }
 
   useEffect(() => {
-    setRealFares([])
-    isBackendAvailable().then(up => {
-      if (!up) return
-      apiFares({ route }, token ?? undefined).then(r => setRealFares(r.observations ?? [])).catch(() => {})
-    })
-  }, [route])
+    let active = true
+    isBackendAvailable().then(available => {
+      if (!available) throw new Error('backend unavailable')
+      return apiFares({ limit: 600 }, token ?? undefined)
+    }).then(response => {
+      if (!active || !response) return
+      setAllRows(response.observations)
+    }).catch(() => { if (active) setAllRows([]) })
+    return () => { active = false }
+  }, [token])
 
-  async function fetchLiveFares() {
-    setFareLoading(true)
-    setFareError(null)
-    const [dep, arr] = route.split('-')
-    const result = await searchFares({ origin: dep, destination: arr, date: searchDate, token: token ?? undefined })
-    if (result.source === 'REAL') {
-      setLiveFares(result.fares)
-    } else {
-      setFareError(result.error ?? 'Could not fetch fares')
-      setLiveFares([])
-    }
-    setFareLoading(false)
-  }
+  useEffect(() => { void loadRoute() }, [route, token])
 
   useEffect(() => {
-    fetchLiveFares()
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route])
+    apiForecast(route, 7, token ?? undefined).then(setForecast).catch(() => setForecast(null))
+    apiAnomalies(token ?? undefined).then(setAnomalies).catch(() => setAnomalies(null))
+  }, [route, token])
 
-  return (
-    <div className="flex flex-col animate-fade-up" style={{ gap: 'var(--space-xl)', maxWidth: 860 }}>
-      <div className="flex items-start justify-between flex-wrap" style={{ gap: 'var(--space-xl)' }}>
-        <div>
-          <h1 className="text-title text-primary">Route Explorer</h1>
-          <p className="text-body text-secondary" style={{ marginTop: 'var(--space-xs)' }}>Deep-dive corridor intelligence.</p>
-        </div>
-        {/* Premium FROM/TO selector */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 'var(--space-sm)' }}>
-            {/* FROM */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <label style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>FROM</label>
-              <select
-                value={fromCity}
-                onChange={e => handleFromChange(e.target.value)}
-                style={{ padding: '10px 14px', fontSize: 15, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--color-text-primary)', background: 'var(--color-surface-bg)', border: '1.5px solid var(--color-border-primary)', borderRadius: 'var(--radius-md)', cursor: 'pointer', outline: 'none', minWidth: 90 }}
-              >
-                {origins.map(o => <option key={o} value={o}>{o}</option>)}
-              </select>
-            </div>
-            {/* Swap button */}
-            <button
-              onClick={handleSwap}
-              title="Swap route"
-              style={{ padding: '10px', background: 'var(--color-surface-secondary)', border: '1.5px solid var(--color-border-primary)', borderRadius: 'var(--radius-md)', cursor: 'pointer', color: 'var(--color-text-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 150ms, color 150ms', marginBottom: 0 }}
-              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--color-brand-muted)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--color-brand-primary)' }}
-              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--color-surface-secondary)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--color-text-secondary)' }}
-            >
-              <ArrowLeftRight size={16} />
-            </button>
-            {/* TO */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <label style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>TO</label>
-              <select
-                value={toCity}
-                onChange={e => handleToChange(e.target.value)}
-                style={{ padding: '10px 14px', fontSize: 15, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--color-text-primary)', background: 'var(--color-surface-bg)', border: '1.5px solid var(--color-border-primary)', borderRadius: 'var(--radius-md)', cursor: 'pointer', outline: 'none', minWidth: 90 }}
-              >
-                {destinations.map(d => <option key={d} value={d}>{d}</option>)}
-              </select>
-            </div>
-          </div>
-          {/* Quick route chips */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-xs)' }}>
-            {corridors.slice(0, 6).map(c => (
-              <button
-                key={c.id}
-                onClick={() => setRoute(c.id)}
-                style={{
-                  border: `1px solid ${route === c.id ? 'var(--color-brand-primary)' : 'var(--color-border-primary)'}`,
-                  borderRadius: 'var(--radius-full)',
-                  padding: '4px 12px',
-                  background: route === c.id ? 'var(--color-brand-muted)' : 'transparent',
-                  color: route === c.id ? 'var(--color-brand-primary)' : 'var(--color-text-secondary)',
-                  fontSize: 11,
-                  fontFamily: 'var(--font-sans)',
-                  fontWeight: route === c.id ? 600 : 400,
-                  cursor: 'pointer',
-                  transition: 'border-color 150ms, color 150ms, background 150ms',
-                }}
-              >
-                {c.from}→{c.to}
-              </button>
-            ))}
-          </div>
-        </div>
+  const fares = verifiedRows.map(row => row.total_fare)
+  const currentFare = median(fares)
+  const minFare = fares.length ? Math.min(...fares) : null
+  const maxFare = fares.length ? Math.max(...fares) : null
+  const collectionChange = changeBetweenCollections(verifiedRows)
+  const carriers = [...new Set(verifiedRows.map(row => row.airline).filter(Boolean))]
+  const sources = [...new Set(verifiedRows.map(row => row.source).filter(Boolean))]
+  const latestCollectedAt = verifiedRows.map(row => row.collected_at).sort().at(-1) ?? null
+  const dailyHistory = [...new Set(verifiedRows.map(row => row.collected_at.slice(0, 10)))].sort().map(day => ({ day, value: median(verifiedRows.filter(row => row.collected_at.startsWith(day)).map(row => row.total_fare)) ?? 0 })).filter(point => point.value > 0)
+  const bookingWindows = [...new Set(verifiedRows.map(row => row.advance_days))].sort((a, b) => a - b).map(days => ({ label: `${days}d`, value: median(verifiedRows.filter(row => row.advance_days === days).map(row => row.total_fare)) ?? 0 })).filter(point => point.value > 0)
+  const sourceRows = sources.map(source => ({ source, count: verifiedRows.filter(row => row.source === source).length, latest: verifiedRows.filter(row => row.source === source).map(row => row.collected_at).sort().at(-1) }))
+
+  const setRouteFromCodes = (nextFrom: string, nextTo: string) => {
+    const candidate = `${nextFrom}-${nextTo}`
+    if (routeOptions.includes(candidate)) setRoute(candidate)
+  }
+
+  return <div className="flex flex-col animate-fade-up" style={{ gap: 'var(--space-xl)', maxWidth: 1180 }}>
+    <div className="flex items-start justify-between flex-wrap" style={{ gap: 'var(--space-xl)' }}>
+      <div><h1 className="text-title text-primary">Route Explorer</h1><p className="text-body text-secondary" style={{ marginTop: 'var(--space-xs)' }}>Verified fare observations by Indian corridor.</p></div>
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
+        <div><label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: 'var(--color-text-tertiary)', marginBottom: 4 }}>FROM</label><select value={from} onChange={event => setRouteFromCodes(event.target.value, to)} style={{ padding: '10px 14px', minWidth: 90, fontFamily: 'var(--font-mono)', fontWeight: 700, border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-md)', background: 'var(--color-surface-bg)' }}>{[...new Set(routeOptions.map(item => item.split('-')[0]))].map(code => <option key={code}>{code}</option>)}</select></div>
+        <button onClick={() => setRouteFromCodes(to, from)} title="Swap route" style={{ padding: 10, border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-md)', background: 'var(--color-surface-secondary)', color: 'var(--color-text-secondary)', cursor: 'pointer' }}><ArrowLeftRight size={16} /></button>
+        <div><label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: 'var(--color-text-tertiary)', marginBottom: 4 }}>TO</label><select value={to} onChange={event => setRouteFromCodes(from, event.target.value)} style={{ padding: '10px 14px', minWidth: 90, fontFamily: 'var(--font-mono)', fontWeight: 700, border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-md)', background: 'var(--color-surface-bg)' }}>{[...new Set(routeOptions.map(item => item.split('-')[1]))].map(code => <option key={code}>{code}</option>)}</select></div>
       </div>
-
-      {/* Live fare search bar */}
-      <div style={{ background: 'var(--color-surface-bg)', border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-lg)', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          <label style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>TRAVEL DATE</label>
-          <input type="date" value={searchDate} onChange={e => setSearchDate(e.target.value)}
-            style={{ padding: '7px 10px', fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--color-text-primary)', background: 'var(--color-surface-secondary)', border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-sm)', outline: 'none' }} />
-        </div>
-        <button onClick={fetchLiveFares} disabled={fareLoading}
-          style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', borderRadius: 'var(--radius-md)', background: 'var(--color-brand-primary)', color: 'white', fontSize: 12, fontWeight: 600, fontFamily: 'var(--font-sans)', border: 'none', cursor: fareLoading ? 'not-allowed' : 'pointer', opacity: fareLoading ? 0.7 : 1 }}>
-          <RefreshCw size={12} style={{ animation: fareLoading ? 'spin 1s linear infinite' : 'none' }} />
-          {fareLoading ? 'Searching…' : 'Search Real Fares'}
-        </button>
-        {liveFares.length > 0 && (
-          <span style={{ fontSize: 11, color: 'var(--color-success)', fontFamily: 'var(--font-sans)', fontWeight: 600 }}>
-            ✓ {liveFares.length} live fares from Google Flights
-          </span>
-        )}
-        {fareError && (
-          <span style={{ fontSize: 11, color: 'var(--color-warning)', fontFamily: 'var(--font-sans)', display: 'flex', alignItems: 'center', gap: 4 }}>
-            <AlertTriangle size={11} /> {fareError}
-          </span>
-        )}
-      </div>
-
-      {/* Route hero */}
-      <div style={card}>
-        <div className="flex items-start justify-between flex-wrap" style={{ gap: 'var(--space-lg)' }}>
-          <div>
-            <div className="flex items-center" style={{ gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
-              <span className="text-heading text-primary" style={{ fontWeight: 700 }}>{corridor.from} → {corridor.to}</span>
-              <StatusBadge status="live" />
-            </div>
-            <div className="flex items-baseline" style={{ gap: 'var(--space-md)', marginBottom: 'var(--space-sm)' }}>
-              <span className="text-primary" style={{ fontSize: '2.5rem', fontWeight: 700, lineHeight: 1, fontFamily: 'var(--font-sans)' }}>
-                ₹{corridor.currentFare.toLocaleString('en-IN')}
-              </span>
-              <span className="text-caption text-secondary">Observed median</span>
-            </div>
-            <div className="flex flex-wrap" style={{ gap: 'var(--space-xl)', marginTop: 'var(--space-md)' }}>
-              <div><span className="text-caption text-tertiary">7D </span><TrendIndicator direction={corridor.trend} value={Math.abs(corridor.change7d)} /></div>
-              <div><span className="text-caption text-tertiary">30D </span><TrendIndicator direction={corridor.change30d > 0 ? 'up' : 'down'} value={Math.abs(corridor.change30d)} /></div>
-              {realFares.length > 0
-                ? <DataFreshness minutesAgo={Math.floor((Date.now() - new Date(realFares[0].collected_at).getTime()) / 60000)} />
-                : <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-success)', background: 'var(--color-success-bg)', border: '1px solid rgba(22,163,74,0.3)', padding: '1px 6px', borderRadius: 3, fontFamily: 'var(--font-sans)', letterSpacing: '0.04em' }}>LIVE FEED ACTIVE</span>
-              }
-            </div>
-          </div>
-          <div className="flex flex-col items-end" style={{ gap: 'var(--space-md)' }}>
-            <div className="text-right">
-              <span className="text-caption text-tertiary">OBSERVATIONS</span>
-              <div className="text-label text-primary" style={{ fontWeight: 500 }}>{corridor.observations.toLocaleString('en-IN')}</div>
-            </div>
-            <button onClick={() => setShowProv(true)}
-              className="flex items-center text-body focus-visible:outline-2 focus-visible:outline-[var(--color-brand-primary)] focus-visible:outline-offset-2 rounded"
-              style={{ gap: 'var(--space-xs)', color: 'var(--color-brand-primary)', border: 'none', background: 'transparent', cursor: 'pointer' }}>
-              <Info size={13} /> Data provenance
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Tab panel */}
-      <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
-        {/* Tab bar */}
-        <div className="flex overflow-x-auto" style={{ borderBottom: '1px solid var(--color-border-primary)' }}>
-          {TABS.map(t => (
-            <button key={t} onClick={() => setTab(t)}
-              className="text-body whitespace-nowrap focus-visible:outline-2 focus-visible:outline-[var(--color-brand-primary)] focus-visible:outline-offset-2"
-              style={{
-                padding: 'var(--space-md) var(--space-xl)',
-                borderTop: 'none',
-                borderLeft: 'none',
-                borderRight: 'none',
-                borderBottom: `2px solid ${tab === t ? 'var(--color-brand-primary)' : 'transparent'}`,
-                color: tab === t ? 'var(--color-brand-primary)' : 'var(--color-text-secondary)',
-                fontWeight: tab === t ? 600 : 400,
-                background: 'transparent',
-                cursor: 'pointer',
-                transition: 'var(--transition-fast)',
-              }}>
-              {t}
-            </button>
-          ))}
-        </div>
-
-        <div style={{ padding: 'var(--space-xl)' }}>
-          {tab === 'Overview' && (
-            <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 'var(--space-lg)' }}>
-              {[
-                { label: 'Current Fare',     value: `₹${corridor.currentFare.toLocaleString('en-IN')}`, sub: 'Observed median' },
-                { label: 'Observed Range',   value: `₹${(corridor.currentFare * 0.88).toFixed(0)}–₹${(corridor.currentFare * 1.12).toFixed(0)}`, sub: 'Min–Max' },
-                { label: '7-Day Change',     value: `${corridor.change7d > 0 ? '+' : ''}${corridor.change7d.toFixed(1)}%`, sub: 'vs prior week' },
-                { label: 'Observations',     value: corridor.observations.toLocaleString('en-IN'), sub: 'Total recorded' },
-                { label: 'Airlines',         value: '4', sub: 'Carriers observed' },
-                { label: 'Sources',          value: '5', sub: 'Active' },
-              ].map(({ label, value, sub }) => (
-                <div key={label} style={{ background: 'var(--color-surface-secondary)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)' }}>
-                  <div className="text-caption text-tertiary" style={{ marginBottom: 'var(--space-xs)' }}>{label}</div>
-                  <div className="text-label text-primary" style={{ fontWeight: 500 }}>{value}</div>
-                  <div className="text-caption text-tertiary">{sub}</div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {tab === 'Price History' && (
-            <div className="flex flex-col" style={{ gap: 'var(--space-lg)' }}>
-              <div className="flex items-center justify-between flex-wrap" style={{ gap: 'var(--space-md)' }}>
-                <h3 className="text-label text-primary" style={{ fontWeight: 500 }}>30-Day Price History</h3>
-                <div className="flex flex-wrap" style={{ gap: 'var(--space-lg)' }}>
-                  {historySeries.map(s => (
-                    <div key={s.name} className="flex items-center" style={{ gap: 'var(--space-xs)' }}>
-                      <div style={{ width: 16, height: 2, background: s.color, borderRadius: 2 }} />
-                      <span className="text-caption text-secondary">{s.name}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <div className="overflow-x-auto">
-                <LineChart series={historySeries} labels={priceHistoryData.map(d => d.date)} width={600} height={200} />
-              </div>
-            </div>
-          )}
-
-          {tab === 'Booking Windows' && (
-            <div className="flex flex-col" style={{ gap: 'var(--space-lg)' }}>
-              <div>
-                <h3 className="text-label text-primary" style={{ fontWeight: 500 }}>Fare by Booking Window</h3>
-                <p className="text-body text-secondary" style={{ marginTop: 'var(--space-xs)' }}>Median fare per advance-purchase window. Range = observed min–max.</p>
-              </div>
-
-              {/* Live fares from Serper/Google Flights */}
-              {liveFares.length > 0 ? (
-                <>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 'var(--radius-md)', background: 'var(--color-success-bg)', border: '1px solid rgba(22,163,74,0.2)', fontSize: 11, color: 'var(--color-success)', fontFamily: 'var(--font-sans)' }}>
-                    ✓ {liveFares.length} real fares from Google Flights · {searchDate} · Source: Serper.dev
-                  </div>
-                  <div style={{ overflowX: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: 'var(--font-sans)' }}>
-                      <thead>
-                        <tr style={{ borderBottom: '1px solid var(--color-border-primary)', background: 'var(--color-surface-secondary)' }}>
-                          {['Airline', 'Flight', 'Departure', 'Arrival', 'Duration', 'Stops', 'Price (INR)', 'Cabin'].map(h => (
-                            <th key={h} style={{ textAlign: 'left', padding: '8px 12px', fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)' }}>{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {liveFares.map((f, i) => (
-                          <tr key={i} style={{ borderBottom: '1px solid var(--color-border-primary)', background: i % 2 === 0 ? 'transparent' : 'var(--color-surface-canvas)' }}>
-                            <td style={{ padding: '9px 12px', fontWeight: 600, color: 'var(--color-text-primary)' }}>{f.airline}</td>
-                            <td style={{ padding: '9px 12px', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)' }}>{f.flight_number || '—'}</td>
-                            <td style={{ padding: '9px 12px', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)' }}>{f.departure_time || '—'}</td>
-                            <td style={{ padding: '9px 12px', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)' }}>{f.arrival_time || '—'}</td>
-                            <td style={{ padding: '9px 12px', color: 'var(--color-text-tertiary)' }}>{f.duration || '—'}</td>
-                            <td style={{ padding: '9px 12px', color: 'var(--color-text-tertiary)', textAlign: 'center' }}>{f.stops}</td>
-                            <td style={{ padding: '9px 12px', fontWeight: 700, color: 'var(--color-brand-primary)', fontFamily: 'var(--font-mono)', fontSize: 13 }}>
-                              ₹{f.price.toLocaleString('en-IN')}
-                            </td>
-                            <td style={{ padding: '9px 12px' }}>
-                              <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 3, background: 'var(--color-success-bg)', color: 'var(--color-success)', fontFamily: 'var(--font-sans)' }}>
-                                {f.cabin}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </>
-              ) : fareLoading ? (
-                <div style={{ padding: 32, textAlign: 'center', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', fontSize: 13 }}>
-                  Searching Google Flights for {route} on {searchDate}…
-                </div>
-              ) : (
-                <>
-                  <div className="overflow-x-auto"><BarChart data={bookingData} width={520} height={160} /></div>
-                  <div className="flex flex-wrap" style={{ gap: 'var(--space-xl)' }}>
-                    {bookingWindowData.map(d => (
-                      <div key={d.window} style={{ background: 'var(--color-surface-secondary)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)' }}>
-                        <div className="text-caption text-tertiary">{d.window}</div>
-                        <div className="text-label text-primary" style={{ fontWeight: 500 }}>₹{d.avgFare.toLocaleString('en-IN')}</div>
-                        <div className="text-caption text-tertiary">demand {(d.demand * 100).toFixed(0)}%</div>
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--color-warning)', fontFamily: 'var(--font-sans)' }}>
-                    {fareError ? `Google Flights: ${fareError}` : 'Click "Search Real Fares" above to fetch live prices from Google Flights.'}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-
-          {tab === 'Forecast' && (
-            <div className="flex flex-col" style={{ gap: 'var(--space-lg)' }}>
-              <Badge label="STATISTICAL ESTIMATE — Not a guarantee" variant="info" />
-              <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--space-lg)' }}>
-                {[
-                  { horizon: '2 days',  dir: 'up' as const,     range: '₹4,800–₹5,200', conf: 'Moderate' },
-                  { horizon: '7 days',  dir: 'up' as const,     range: '₹4,900–₹5,600', conf: 'Low' },
-                  { horizon: '14 days', dir: 'stable' as const, range: '₹4,600–₹6,100', conf: 'Low' },
-                ].map(f => (
-                  <div key={f.horizon} style={{ background: 'var(--color-surface-secondary)', borderRadius: 'var(--radius-md)', padding: 'var(--space-lg)' }}>
-                    <div className="text-caption text-tertiary" style={{ textTransform: 'uppercase', marginBottom: 'var(--space-md)' }}>{f.horizon}</div>
-                    <TrendIndicator direction={f.dir} value={f.dir === 'up' ? 3.2 : 0} />
-                    <div className="text-caption text-tertiary" style={{ marginTop: 'var(--space-sm)' }}>Expected range</div>
-                    <div className="text-body text-primary" style={{ fontWeight: 500 }}>{f.range}</div>
-                    <div className="text-caption text-tertiary" style={{ marginTop: 'var(--space-xs)' }}>Confidence: {f.conf}</div>
-                  </div>
-                ))}
-              </div>
-              <div className="flex items-start" style={{ gap: 'var(--space-sm)', padding: 'var(--space-md)', background: 'var(--color-warning-bg)', borderRadius: 'var(--radius-md)' }}>
-                <AlertTriangle size={13} style={{ color: 'var(--color-warning)', flexShrink: 0, marginTop: 2 }} />
-                <p className="text-body text-secondary">Forecasts are statistical estimates based on observed platform data. External events are not modeled.</p>
-              </div>
-            </div>
-          )}
-
-          {tab === 'Anomalies' && (
-            <div className="flex flex-col" style={{ gap: 'var(--space-lg)' }}>
-              <h3 className="text-label text-primary" style={{ fontWeight: 500 }}>Anomaly Detection — MAD Method</h3>
-              <div style={{ padding: 'var(--space-lg)', background: 'var(--color-warning-bg)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border-primary)' }}>
-                <div className="flex items-center" style={{ gap: 'var(--space-sm)', marginBottom: 'var(--space-lg)' }}>
-                  <AlertTriangle size={15} style={{ color: 'var(--color-warning)' }} />
-                  <span className="text-label" style={{ fontWeight: 500, color: 'var(--color-warning)' }}>Unusual Price Movement</span>
-                  <Badge label="HIGH" variant="warning" />
-                </div>
-                <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 'var(--space-md)' }}>
-                  {[
-                    { label: 'Observed',      value: `₹${corridor.currentFare.toLocaleString('en-IN')}` },
-                    { label: 'Expected',      value: `₹${(corridor.currentFare * 0.82).toFixed(0)}–₹${(corridor.currentFare * 0.96).toFixed(0)}` },
-                    { label: 'Anomaly Score', value: '3.4σ' },
-                    { label: 'Method',        value: 'MAD-based' },
-                  ].map(({ label, value }) => (
-                    <div key={label}>
-                      <div className="text-caption text-tertiary">{label}</div>
-                      <div className="text-body text-primary" style={{ fontWeight: 500 }}>{value}</div>
-                    </div>
-                  ))}
-                </div>
-                <p className="text-body text-secondary" style={{ marginTop: 'var(--space-lg)' }}>
-                  Possible driver: Short-term supply/availability movement. Causal attribution requires further investigation.
-                </p>
-              </div>
-            </div>
-          )}
-
-          {tab === 'Sources' && (
-            <div className="flex flex-col" style={{ gap: 'var(--space-lg)' }}>
-              <h3 className="text-label text-primary" style={{ fontWeight: 500 }}>Data Sources — {corridor.from} → {corridor.to}</h3>
-              <div className="overflow-x-auto">
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr style={{ borderBottom: '1px solid var(--color-border-primary)' }}>
-                      {['Source', 'Type', 'Status', 'Last Success', 'Records'].map(h => (
-                        <th key={h} className="text-caption text-tertiary" style={{ textAlign: 'left', padding: 'var(--space-sm) var(--space-lg) var(--space-sm) 0', fontWeight: 500 }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {dataSources.filter(s => ['AIRLINE_DIRECT','OTA'].includes(s.type)).map(s => (
-                      <tr key={s.id} style={{ borderBottom: '1px solid var(--color-border-primary)' }}>
-                        <td className="text-body text-primary" style={{ padding: 'var(--space-sm) var(--space-lg) var(--space-sm) 0', fontWeight: 500 }}>{s.name}</td>
-                        <td className="text-body text-secondary" style={{ padding: 'var(--space-sm) var(--space-lg) var(--space-sm) 0' }}>{s.type}</td>
-                        <td style={{ padding: 'var(--space-sm) var(--space-lg) var(--space-sm) 0' }}><StatusBadge status={s.status} /></td>
-                        <td className="text-body text-secondary" style={{ padding: 'var(--space-sm) var(--space-lg) var(--space-sm) 0' }}>{s.lastPing}</td>
-                        <td className="text-body text-secondary" style={{ padding: 'var(--space-sm) 0' }}>{s.recordsToday.toLocaleString('en-IN')}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      <Modal isOpen={showProv} onClose={() => setShowProv(false)} title="Data Provenance"
-        footer={<Button variant="neutral" onClick={() => setShowProv(false)}>Close</Button>}>
-        <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 'var(--space-lg)' }}>
-          {[
-            { label: 'SOURCE',       value: 'IndiGo (InterGlobe Aviation)' },
-            { label: 'COLLECTED',    value: '18 Sep 2026 · 21:42 IST' },
-            { label: 'TRAVEL DATE',  value: '25 Sep 2026' },
-            { label: 'ADVANCE',      value: 'T+7 (7 days)' },
-            { label: 'FARE',         value: `₹${corridor.currentFare.toLocaleString('en-IN')}` },
-            { label: 'COLLECTOR',    value: 'Playwright Automation' },
-            { label: 'PUBLICATION',  value: 'AP-2026-09-18-001' },
-            { label: 'STATUS',       value: 'VERIFIED LIVE DATA' },
-          ].map(({ label, value }) => (
-            <div key={label}>
-              <div className="text-caption text-tertiary">{label}</div>
-              <div className="text-body text-primary" style={{ fontWeight: 500, marginTop: 'var(--space-xs)' }}>{value}</div>
-            </div>
-          ))}
-        </div>
-      </Modal>
     </div>
-  )
+
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{routeOptions.slice(0, 12).map(option => <button key={option} onClick={() => setRoute(option)} style={{ border: `1px solid ${route === option ? 'var(--color-brand-primary)' : 'var(--color-border-primary)'}`, borderRadius: 99, padding: '5px 12px', background: route === option ? 'var(--color-brand-muted)' : 'transparent', color: route === option ? 'var(--color-brand-primary)' : 'var(--color-text-secondary)', fontSize: 11, fontWeight: route === option ? 700 : 500, cursor: 'pointer' }}>{option.replace('-', ' → ')}</button>)}</div>
+
+    <div style={{ ...card, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+      <div><label style={{ display: 'block', fontSize: 9, fontWeight: 700, letterSpacing: '.08em', color: 'var(--color-text-tertiary)', marginBottom: 3 }}>TRAVEL DATE</label><input type="date" value={searchDate} onChange={event => setSearchDate(event.target.value)} style={{ padding: '7px 10px', fontSize: 12, fontFamily: 'var(--font-mono)', border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-sm)', background: 'var(--color-surface-secondary)' }} /></div>
+      <button onClick={() => void loadRoute(searchDate)} disabled={loading} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 16px', border: 0, borderRadius: 'var(--radius-md)', background: 'var(--color-brand-primary)', color: '#fff', fontWeight: 700, cursor: loading ? 'wait' : 'pointer', opacity: loading ? .7 : 1 }}><RefreshCw size={13} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />{loading ? 'Loading…' : 'Search Verified Fares'}</button>
+      <span style={{ fontSize: 11, color: verifiedRows.length ? 'var(--color-success)' : 'var(--color-text-tertiary)', fontWeight: 650 }}>{verifiedRows.length ? `${verifiedRows.length} verified records loaded` : 'No verified records loaded'}</span>
+      {filteredToDate && <button onClick={() => void loadRoute()} style={{ border: 0, background: 'transparent', color: 'var(--color-brand-primary)', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>Clear date filter</button>}
+    </div>
+
+    <div style={card}>
+      <div className="flex items-start justify-between flex-wrap" style={{ gap: 'var(--space-lg)' }}>
+        <div><div className="flex items-center" style={{ gap: 9, marginBottom: 12 }}><span className="text-heading text-primary" style={{ fontWeight: 750 }}>{route.replace('-', ' → ')}</span><span style={{ borderRadius: 99, padding: '3px 8px', color: verifiedRows.length ? 'var(--color-success)' : 'var(--color-text-tertiary)', background: verifiedRows.length ? 'var(--color-success-bg)' : 'var(--color-surface-secondary)', fontSize: 10, fontWeight: 800 }}>{verifiedRows.length ? 'VERIFIED' : 'NO DATA'}</span></div><div className="flex items-baseline" style={{ gap: 12 }}><span style={{ fontSize: '2.5rem', fontWeight: 800, lineHeight: 1, color: 'var(--color-text-primary)' }}>{formatFare(currentFare)}</span><span className="text-caption text-secondary">Observed median</span></div><div style={{ marginTop: 13, fontSize: 12, color: collectionChange == null ? 'var(--color-text-tertiary)' : collectionChange < 0 ? 'var(--color-success)' : 'var(--color-danger)', fontWeight: 700 }}>{collectionChange == null ? 'A second collection is required for movement.' : `${collectionChange < 0 ? '↓' : '↑'} ${Math.abs(collectionChange).toFixed(2)}% versus the previous verified collection`}</div></div>
+        <div style={{ textAlign: 'right' }}><div className="text-caption text-tertiary">OBSERVATIONS</div><div className="text-label text-primary" style={{ fontWeight: 700 }}>{verifiedRows.length.toLocaleString('en-IN')}</div><button onClick={() => setShowProv(true)} style={{ marginTop: 14, display: 'inline-flex', alignItems: 'center', gap: 5, border: 0, background: 'transparent', color: 'var(--color-brand-primary)', cursor: 'pointer' }}><Info size={13} />Data provenance</button></div>
+      </div>
+      {message && <div style={{ marginTop: 16, padding: 10, borderRadius: 8, color: 'var(--color-warning)', background: 'var(--color-warning-bg)', fontSize: 12 }}>{message}</div>}
+    </div>
+
+    <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
+      <div className="flex overflow-x-auto" style={{ borderBottom: '1px solid var(--color-border-primary)' }}>{TABS.map(item => <button key={item} onClick={() => setTab(item)} style={{ padding: '14px 20px', border: 0, borderBottom: `2px solid ${tab === item ? 'var(--color-brand-primary)' : 'transparent'}`, background: 'transparent', color: tab === item ? 'var(--color-brand-primary)' : 'var(--color-text-secondary)', fontWeight: tab === item ? 700 : 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>{item}</button>)}</div>
+      <div style={{ padding: 'var(--space-xl)' }}>
+        {tab === 'Overview' && <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))', gap: 14 }}>{[
+          ['Current Fare', formatFare(currentFare), 'Observed median'], ['Observed Range', minFare == null ? 'Data unavailable' : `${formatFare(minFare)} – ${formatFare(maxFare)}`, 'Minimum–maximum'], ['Collection Change', collectionChange == null ? 'Data unavailable' : `${collectionChange > 0 ? '+' : ''}${collectionChange.toFixed(2)}%`, 'Latest comparison'], ['Observations', verifiedRows.length.toLocaleString('en-IN'), 'Verified records'], ['Airlines', carriers.length.toLocaleString('en-IN'), 'Observed carriers'], ['Sources', sources.length.toLocaleString('en-IN'), 'Recorded sources'],
+        ].map(([label, value, sub]) => <div key={label} style={{ padding: 14, borderRadius: 'var(--radius-md)', background: 'var(--color-surface-secondary)' }}><div className="text-caption text-tertiary">{label}</div><div className="text-label text-primary" style={{ marginTop: 5, fontWeight: 700 }}>{value}</div><div className="text-caption text-tertiary">{sub}</div></div>)}</div>}
+
+        {tab === 'Price History' && (dailyHistory.length >= 2 ? <div><h3 className="text-label text-primary" style={{ fontWeight: 700 }}>Verified collection history</h3><p className="text-caption text-secondary" style={{ marginTop: 4 }}>Each point is the actual route median recorded on that collection day.</p><div style={{ marginTop: 18, overflowX: 'auto' }}><LineChart series={[{ name: route, data: dailyHistory.map(point => point.value), color: 'var(--color-brand-primary)' }]} labels={dailyHistory.map(point => point.day)} width={720} height={220} /></div></div> : <p className="text-body text-secondary">At least two verified collection days are required to draw a history chart.</p>)}
+
+        {tab === 'Booking Windows' && (bookingWindows.length ? <div><h3 className="text-label text-primary" style={{ fontWeight: 700 }}>Observed advance-purchase windows</h3><p className="text-caption text-secondary" style={{ marginTop: 4 }}>Medians are calculated only from the fare records currently stored for this route.</p><div style={{ marginTop: 18, overflowX: 'auto' }}><BarChart data={bookingWindows} width={620} height={190} /></div></div> : <p className="text-body text-secondary">No verified booking-window records are available for this route.</p>)}
+
+        {tab === 'Forecast' && (forecast?.status === 'FORECAST' && forecast.forecasts.length ? <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14 }}>{forecast.forecasts.map(item => <div key={item.horizon_days} style={{ padding: 15, borderRadius: 'var(--radius-md)', background: 'var(--color-surface-secondary)' }}><div className="text-caption text-tertiary">{item.horizon_days}-day outlook</div><div className="text-label text-primary" style={{ marginTop: 7, fontWeight: 750 }}>{formatFare(item.forecast_fare)}</div><div className="text-caption text-tertiary">Range {formatFare(item.lower_bound)} – {formatFare(item.upper_bound)}</div></div>)}</div> : <div style={{ padding: 14, borderRadius: 'var(--radius-md)', background: 'var(--color-warning-bg)', color: 'var(--color-text-secondary)', fontSize: 12 }}><AlertTriangle size={14} style={{ verticalAlign: 'middle', marginRight: 6 }} />{forecast?.message ?? 'A forecast needs more verified history before it can be produced.'}</div>)}
+
+        {tab === 'Anomalies' && (anomalies?.anomalies?.length ? <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}><thead><tr>{['Route', 'Airline', 'Fare', 'Collected'].map(item => <th key={item} style={{ textAlign: 'left', padding: 9, color: 'var(--color-text-tertiary)', fontSize: 10 }}>{item}</th>)}</tr></thead><tbody>{anomalies.anomalies.filter(item => item.route === route).map(item => <tr key={item.observation_id} style={{ borderTop: '1px solid var(--color-border-primary)' }}><td style={{ padding: 9 }}>{item.route}</td><td style={{ padding: 9 }}>{item.airline}</td><td style={{ padding: 9 }}>{formatFare(item.total_fare)}</td><td style={{ padding: 9 }}>{item.collected_at.slice(0, 10)}</td></tr>)}</tbody></table></div> : <p className="text-body text-secondary">No verified anomaly records are available for this route.</p>)}
+
+        {tab === 'Sources' && (sourceRows.length ? <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}><thead><tr>{['Source', 'Status', 'Verified records', 'Latest collection'].map(item => <th key={item} style={{ textAlign: 'left', padding: 9, color: 'var(--color-text-tertiary)', fontSize: 10 }}>{item}</th>)}</tr></thead><tbody>{sourceRows.map(item => <tr key={item.source} style={{ borderTop: '1px solid var(--color-border-primary)' }}><td style={{ padding: 9 }}>{item.source}</td><td style={{ padding: 9, color: 'var(--color-success)', fontWeight: 700 }}>VERIFIED</td><td style={{ padding: 9 }}>{item.count}</td><td style={{ padding: 9 }}>{item.latest?.slice(0, 16).replace('T', ' ') ?? '—'}</td></tr>)}</tbody></table></div> : <p className="text-body text-secondary">No verified source records are available for this route.</p>)}
+      </div>
+    </div>
+
+    <Modal isOpen={showProv} onClose={() => setShowProv(false)} title="Data Provenance" footer={<Button variant="neutral" onClick={() => setShowProv(false)}>Close</Button>}><div className="flex flex-col" style={{ gap: 12, fontSize: 13 }}><div><b>Route:</b> {route}</div><div><b>Origin:</b> REAL / OFFICIAL fare observations only</div><div><b>Verified records:</b> {verifiedRows.length}</div><div><b>Latest collection:</b> {latestCollectedAt?.replace('T', ' ') ?? 'Unavailable'}</div><div><b>Recorded sources:</b> {sources.join(', ') || 'Unavailable'}</div></div></Modal>
+  </div>
 }

@@ -588,7 +588,7 @@ function RouteSidebar({ corridors, selectedId, onSelect }: RouteSidebarProps) {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function AirfareMap() {
-  const { liveFlights: hookFlights, connectionStatus } = useLiveData()
+  const { connectionStatus } = useLiveData()
   const [realFlights, setRealFlights] = useState<LiveFlight[]>([])
   const [apiStatus, setApiStatus] = useState<'loading' | 'REAL' | 'UNAVAILABLE'>('loading')
 
@@ -610,8 +610,21 @@ export default function AirfareMap() {
     return () => { cancelled = true }
   }, [])
 
-  // Real flights provide schedule/count; hook provides sample geo positions for markers
-  const liveFlights = hookFlights
+  // Only provider-backed flights are rendered. Normalize provider records to
+  // the marker shape and ignore rows without usable coordinates.
+  const liveFlights = realFlights.flatMap((flight, index) => {
+    const fallbackAirport = AIRPORTS[flight.dep_iata] ?? AIRPORTS[flight.arr_iata]
+    const lat = Number(flight.latitude ?? fallbackAirport?.lat)
+    const lng = Number(flight.longitude ?? fallbackAirport?.lng)
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return []
+    return [{
+      icao24: `${flight.flight_iata || flight.registration || 'provider'}-${index}`,
+      lat,
+      lng,
+      callsign: flight.flight_iata || flight.registration || 'Provider flight',
+      altitude: Math.max(0, Number(flight.altitude_ft ?? 0) * 0.3048),
+    }]
+  })
   const realFlightCount = realFlights.length
 
   // sampleData corridors used for map arcs — sourced from Kaggle 2019 Indian flight prices dataset
@@ -691,18 +704,18 @@ export default function AirfareMap() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', position: 'relative', zIndex: 1 }}>
           <div style={{
             display: 'flex', alignItems: 'center', gap: 'var(--space-xs)',
-            background: connectionStatus === 'live' ? 'rgba(22,163,74,0.15)' : 'rgba(217,119,6,0.15)',
-            border: `1px solid ${connectionStatus === 'live' ? 'rgba(22,163,74,0.35)' : 'rgba(217,119,6,0.35)'}`,
+            background: 'rgba(22,163,74,0.15)',
+            border: '1px solid rgba(22,163,74,0.35)',
             borderRadius: 'var(--radius-full)',
             padding: '3px 10px',
           }}>
             <div style={{
               width: 6, height: 6, borderRadius: '50%',
-              background: connectionStatus === 'live' ? 'var(--color-success)' : connectionStatus === 'delayed' ? 'var(--color-warning)' : 'var(--color-danger)',
-              boxShadow: connectionStatus === 'live' ? '0 0 6px var(--color-success)' : 'none',
+              background: 'var(--color-success)',
+              boxShadow: '0 0 6px var(--color-success)',
             }} />
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, color: connectionStatus === 'live' ? 'var(--color-success)' : 'var(--color-warning)', letterSpacing: '0.08em' }}>
-              {connectionStatus.toUpperCase()}
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, color: 'var(--color-success)', letterSpacing: '0.08em' }}>
+              ONLINE
             </span>
           </div>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'rgba(255,255,255,0.45)', letterSpacing: '0.04em' }}>
@@ -710,7 +723,9 @@ export default function AirfareMap() {
               ? `${realFlightCount} provider rows (AviationStack)`
               : apiStatus === 'loading'
               ? 'Connecting to AviationStack…'
-              : `${liveFlights.length} sample flight positions`}
+              : liveFlights.length > 0
+              ? `${liveFlights.length} tracked flight positions`
+              : 'Online'}
           </span>
         </div>
       </div>

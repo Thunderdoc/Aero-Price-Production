@@ -27,7 +27,7 @@ where p_it is the fare for corridor i at time t, p_i0 is the first verified coll
 
 Route weights are configured defaults until an official DGCA corridor-level weight series is imported.`
 
-function DgcaBarChart({ records }: { records: { month: string; year: number; domestic_passengers: number }[] }) {
+function DgcaBarChart({ records }: { records: { month: string; year?: number; domestic_passengers: number }[] }) {
   if (!records.length) return null
   const maxPax = Math.max(...records.map(r => r.domestic_passengers))
   const barH = 120
@@ -221,14 +221,11 @@ export default function GovernmentIntelligence() {
             { label: 'CORRIDORS', value: corridors.length.toString(), sub: 'Monitored routes' },
             { label: 'SOURCES', value: '0', sub: 'Active fare collectors' },
             { label: 'FRESHNESS', value: '—', sub: 'No live observation' },
-          ].map(({ label, value, sub, trend, fresh }) => (
+          ].map(({ label, value, sub }) => (
             <div key={label} className="flex flex-col gap-xs">
               <span className="text-video-title text-text-tertiary">{label}</span>
-              <span className={`text-heading font-semibold ${fresh ? 'text-success' : 'text-text-primary'}`}>{value}</span>
-              {trend
-                ? <TrendIndicator direction={trend} value={parseFloat(value)} size="sm" />
-                : <span className="text-video-title text-text-tertiary">{sub}</span>
-              }
+              <span className="text-heading font-semibold text-text-primary">{value}</span>
+              <span className="text-video-title text-text-tertiary">{sub}</span>
             </div>
           ))}
         </div>

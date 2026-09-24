@@ -3,22 +3,19 @@ import { Bell, Trash2, Plus, Lock, Mail, MessageSquare, CheckCircle, BarChart3, 
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
 import { Modal } from '../components/ui/Modal'
-import { sampleAlerts } from '../data/sampleData'
 import { useAuth } from '../contexts/AuthContext'
 import UpgradeModal from '../components/UpgradeModal'
 import { supabase, SUPABASE_CONFIGURED, savePriceAlert, getPriceAlerts } from '../services/supabase'
-
-const KAGGLE_FARE: Record<string, number> = {
-  'DEL-BOM': 5840, 'DEL-BLR': 5320, 'BOM-BLR': 4890,
-  'DEL-MAA': 5640, 'DEL-CCU': 5200, 'BOM-MAA': 4340,
-  'BLR-HYD': 3120, 'DEL-HYD': 4890,
-}
+import type { Page } from '../components/AppShell'
 
 const CITY_OPTIONS = ['DEL', 'BOM', 'BLR', 'MAA', 'CCU', 'HYD', 'AMD', 'GOI']
 
 interface TrackForm {
   from: string; to: string; date: string; threshold: number
   notifyEmail: boolean; notifyWhatsApp: boolean; frequency: 'IMMEDIATE' | 'DAILY'
+}
+interface UserPriceAlert {
+  id: string; route: string; targetFare: number; currentFare: number | null; triggered: boolean; createdAt: string
 }
 
 const INITIAL_FORM: TrackForm = {
@@ -37,11 +34,23 @@ const inputStyle: React.CSSProperties = {
 }
 const selectStyle: React.CSSProperties = { ...inputStyle, appearance: 'none' }
 
-export default function PriceAlerts() {
+export default function PriceAlerts({ onNavigate }: { onNavigate?: (page: Page) => void }) {
   const { user } = useAuth()
-  const isFree = !user || (user.plan === 'FREE' && user.role === 'PUBLIC')
+  const accessApproved = (() => {
+    try {
+      const requests = JSON.parse(localStorage.getItem('aeroprice_access_requests') || '[]') as Array<{ email?: string; featureKey?: string; status?: string }>
+      return requests.some(request => request.email === user?.email && request.featureKey === 'PRICE_ALERTS' && request.status === 'APPROVED')
+    } catch { return false }
+  })()
+  const isFree = !user || (user.plan === 'FREE' && user.role === 'PUBLIC' && !accessApproved)
   const [upgradeOpen, setUpgradeOpen] = useState(false)
-  const [alerts, setAlerts] = useState(sampleAlerts)
+  const storageKey = `aeroprice_price_alerts:${user?.email ?? 'anonymous'}`
+  const [alerts, setAlerts] = useState<UserPriceAlert[]>(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(storageKey) || '[]')
+      return Array.isArray(stored) ? stored : []
+    } catch { return [] }
+  })
   const [showCreate, setShowCreate] = useState(false)
   const [showUpgrade, setShowUpgrade] = useState(false)
   const [form, setForm] = useState<TrackForm>(INITIAL_FORM)
@@ -62,26 +71,33 @@ export default function PriceAlerts() {
             id: String(r.id ?? Date.now()),
             route: String(r.route ?? ''),
             targetFare: Number(r.threshold_fare ?? 0),
-            currentFare: KAGGLE_FARE[String(r.route ?? '')] ?? 0,
+            currentFare: null,
             triggered: false,
             createdAt: String(r.created_at ?? new Date().toISOString()),
           })))
+          localStorage.setItem(storageKey, JSON.stringify(rows.map((r: Record<string, unknown>) => ({
+            id: String(r.id ?? Date.now()), route: String(r.route ?? ''), targetFare: Number(r.threshold_fare ?? 0), currentFare: null, triggered: false, createdAt: String(r.created_at ?? new Date().toISOString()),
+          }))))
         }
       })
     }
-  }, [])
+  }, [storageKey, user?.email])
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
-    const newAlert = {
+    const newAlert: UserPriceAlert = {
       id: `alert-${Date.now()}`,
       route: `${form.from}-${form.to}`,
       targetFare: form.threshold,
-      currentFare: 0,
+      currentFare: null,
       triggered: false,
       createdAt: new Date().toISOString(),
     }
-    setAlerts(prev => [...prev, newAlert])
+    setAlerts(prev => {
+      const next = [...prev, newAlert]
+      localStorage.setItem(storageKey, JSON.stringify(next))
+      return next
+    })
     if (SUPABASE_CONFIGURED) {
       await savePriceAlert({ user_email: user?.email ?? 'demo@aeroprice.in', route: newAlert.route, threshold_fare: form.threshold })
     }
@@ -90,7 +106,11 @@ export default function PriceAlerts() {
   }
 
   async function deleteAlert(id: string, route: string) {
-    setAlerts(prev => prev.filter(a => a.id !== id))
+    setAlerts(prev => {
+      const next = prev.filter(a => a.id !== id)
+      localStorage.setItem(storageKey, JSON.stringify(next))
+      return next
+    })
     if (SUPABASE_CONFIGURED) {
       await supabase.from('price_alerts').delete().eq('route', route).eq('user_email', user?.email ?? 'demo@aeroprice.in')
     }
@@ -106,7 +126,7 @@ export default function PriceAlerts() {
         <div>
           <h2 style={{ fontSize: 24, fontWeight: 850, color: 'var(--color-text-primary)', margin: '0 0 10px', letterSpacing: '-0.03em' }}>Price Alerts</h2>
           <p style={{ fontSize: 14, color: 'var(--color-text-secondary)', margin: 0, lineHeight: 1.6, maxWidth: 520 }}>
-            Track a route and get notified when fares drop below your target. This feature unlocks with a subscription or access code.
+            Track a route and get notified when fares drop below your target. Request access once and an administrator will review it — no payment is required.
           </p>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12, width: '100%', maxWidth: 560 }}>
@@ -124,13 +144,13 @@ export default function PriceAlerts() {
           ))}
         </div>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center' }}>
-          <Button variant="ghost" onClick={() => setUpgradeOpen(false)}>Back to dashboard</Button>
+          <Button variant="ghost" onClick={() => onNavigate?.('overview')}>Back to dashboard</Button>
           <Button variant="primary" onClick={() => setUpgradeOpen(true)}>
-            View access options
+            Request Access
           </Button>
         </div>
         <p style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
-          Current access: standard user. Paid alerting remains locked until entitlement is assigned.
+          Current access: standard user. Access is enabled after administrator approval.
         </p>
         {upgradeOpen && <UpgradeModal onClose={() => setUpgradeOpen(false)} />}
       </div>
@@ -203,13 +223,7 @@ export default function PriceAlerts() {
                   </div>
                   <div>
                     <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-text-tertiary)', letterSpacing: '0.1em', marginBottom: 4 }}>CURRENT OBS.</div>
-                    {KAGGLE_FARE[alert.route] ? (
-                      <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)' }}>
-                        DGCA benchmark: ₹{KAGGLE_FARE[alert.route].toLocaleString('en-IN')}
-                      </div>
-                    ) : (
-                      <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>DGCA benchmark: —</div>
-                    )}
+                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>{alert.currentFare == null ? 'No verified live fare yet' : `₹${alert.currentFare.toLocaleString('en-IN')}`}</div>
                   </div>
                   <div>
                     <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-text-tertiary)', letterSpacing: '0.1em', marginBottom: 4 }}>CREATED</div>

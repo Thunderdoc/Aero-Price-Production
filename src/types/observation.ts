@@ -30,7 +30,7 @@ export interface FareObservation {
   query_timestamp: string
   collector_version: string
   raw_hash: string
-  data_origin: DataOrigin
+  data_origin?: DataOrigin
   quality_flags: string[]
 }
 
@@ -84,30 +84,44 @@ export interface AirfareSource {
 }
 
 export interface DgcaCircular {
-  id: string
+  id?: string
+  circular_id?: string
   title: string
-  date: string
+  date?: string
+  issued_date?: string
   category: string
-  url: string
-  data_origin: DataOrigin
+  circular_number?: string
+  url?: string
+  source_url?: string
+  summary?: string
+  data_origin?: DataOrigin
 }
 
 export interface DgcaMonthlyRecord {
   month: string              // "2026-08"
-  year: number
+  year?: number
   domestic_passengers: number
-  international_passengers: number
-  top_airline: string
-  data_origin: DataOrigin
+  international_passengers?: number
+  top_airline?: string
+  rpk_millions?: number
+  ask_millions?: number
+  passenger_load_factor?: number
+  cancellations_pct?: number
+  on_time_performance_pct?: number
+  reference_period?: string
+  data_origin?: DataOrigin
 }
 
 export interface MospiCpiRecord {
   period: string
   cpi_transport: number
   cpi_general: number
+  cpi_airfare_subindex?: number
+  year_on_year_change_pct?: number
+  reference_period?: string
   base_year?: number
   definition?: string
   series?: string
   source_url?: string
-  data_origin: DataOrigin
+  data_origin?: DataOrigin
 }

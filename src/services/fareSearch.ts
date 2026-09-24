@@ -28,133 +28,9 @@ export interface FareSearchParams {
 
 export interface FareSearchResult {
   fares: FareResult[]
-  source: 'REAL'
+  source: 'REAL' | 'UNAVAILABLE'
   error?: string
   query: FareSearchParams
-}
-
-const BASE_CORRIDOR_FARES: Record<string, number> = {
-  'DEL-BOM': 5840, 'BOM-DEL': 5840,
-  'DEL-BLR': 5320, 'BLR-DEL': 5320,
-  'DEL-CCU': 5200, 'CCU-DEL': 5200,
-  'DEL-HYD': 4890, 'HYD-DEL': 4890,
-  'DEL-MAA': 5640, 'MAA-DEL': 5640,
-  'BOM-BLR': 4150, 'BLR-BOM': 4150,
-  'BOM-MAA': 4340, 'MAA-BOM': 4340,
-  'BOM-HYD': 3850, 'HYD-BOM': 3850,
-  'BLR-HYD': 3120, 'HYD-BLR': 3120,
-  'BLR-MAA': 2850, 'MAA-BLR': 2850,
-  'DEL-AMD': 3950, 'AMD-DEL': 3950,
-  'DEL-JAI': 2450, 'JAI-DEL': 2450,
-  'DEL-SXR': 7850, 'SXR-DEL': 7850,
-  'DEL-GAU': 6250, 'GAU-DEL': 6250,
-  'BOM-GOI': 4120, 'GOI-BOM': 4120,
-  'DEL-GOI': 6850, 'GOI-DEL': 6850,
-  'CCU-GAU': 3450, 'GAU-CCU': 3450,
-  'DEL-COK': 6950, 'COK-DEL': 6950,
-  'DEL-LKO': 2950, 'LKO-DEL': 2950,
-  'DEL-PAT': 4150, 'PAT-DEL': 4150,
-}
-
-// Generate realistic live scheduled flight offers
-export function generateRealDomesticFares(dep: string, arr: string, travelDate: string, cabin: 'ECONOMY' | 'BUSINESS' = 'ECONOMY'): FareResult[] {
-  const key = `${dep.toUpperCase()}-${arr.toUpperCase()}`
-  const basePrice = BASE_CORRIDOR_FARES[key] ?? 5200
-  const mult = cabin === 'BUSINESS' ? 2.8 : 1.0
-  const nowIso = new Date().toISOString()
-
-  return [
-    {
-      origin: dep.toUpperCase(),
-      destination: arr.toUpperCase(),
-      airline: 'IndiGo',
-      flight_number: '6E-204',
-      departure_time: `${travelDate}T06:15:00`,
-      arrival_time: `${travelDate}T08:25:00`,
-      duration: '2h 10m',
-      stops: 0,
-      price: Math.round(basePrice * 0.94 * mult),
-      currency: 'INR',
-      cabin,
-      source: 'SERPAPI_GOOGLE_FLIGHTS',
-      fetched_at: nowIso,
-    },
-    {
-      origin: dep.toUpperCase(),
-      destination: arr.toUpperCase(),
-      airline: 'Air India',
-      flight_number: 'AI-887',
-      departure_time: `${travelDate}T08:00:00`,
-      arrival_time: `${travelDate}T10:15:00`,
-      duration: '2h 15m',
-      stops: 0,
-      price: Math.round(basePrice * 1.12 * mult),
-      currency: 'INR',
-      cabin,
-      source: 'SERPAPI_GOOGLE_FLIGHTS',
-      fetched_at: nowIso,
-    },
-    {
-      origin: dep.toUpperCase(),
-      destination: arr.toUpperCase(),
-      airline: 'Akasa Air',
-      flight_number: 'QP-1302',
-      departure_time: `${travelDate}T11:30:00`,
-      arrival_time: `${travelDate}T13:40:00`,
-      duration: '2h 10m',
-      stops: 0,
-      price: Math.round(basePrice * 0.88 * mult),
-      currency: 'INR',
-      cabin,
-      source: 'SERPAPI_GOOGLE_FLIGHTS',
-      fetched_at: nowIso,
-    },
-    {
-      origin: dep.toUpperCase(),
-      destination: arr.toUpperCase(),
-      airline: 'SpiceJet',
-      flight_number: 'SG-8169',
-      departure_time: `${travelDate}T14:45:00`,
-      arrival_time: `${travelDate}T17:00:00`,
-      duration: '2h 15m',
-      stops: 0,
-      price: Math.round(basePrice * 0.85 * mult),
-      currency: 'INR',
-      cabin,
-      source: 'SERPAPI_GOOGLE_FLIGHTS',
-      fetched_at: nowIso,
-    },
-    {
-      origin: dep.toUpperCase(),
-      destination: arr.toUpperCase(),
-      airline: 'Air India Express',
-      flight_number: 'IX-1144',
-      departure_time: `${travelDate}T18:20:00`,
-      arrival_time: `${travelDate}T20:35:00`,
-      duration: '2h 15m',
-      stops: 0,
-      price: Math.round(basePrice * 0.82 * mult),
-      currency: 'INR',
-      cabin,
-      source: 'SERPAPI_GOOGLE_FLIGHTS',
-      fetched_at: nowIso,
-    },
-    {
-      origin: dep.toUpperCase(),
-      destination: arr.toUpperCase(),
-      airline: 'IndiGo',
-      flight_number: '6E-512',
-      departure_time: `${travelDate}T20:50:00`,
-      arrival_time: `${travelDate}T23:00:00`,
-      duration: '2h 10m',
-      stops: 0,
-      price: Math.round(basePrice * 0.98 * mult),
-      currency: 'INR',
-      cabin,
-      source: 'SERPAPI_GOOGLE_FLIGHTS',
-      fetched_at: nowIso,
-    },
-  ]
 }
 
 /** Search real Indian domestic fares via SerpAPI Google Flights or live pricing engine */
@@ -184,7 +60,7 @@ export async function searchFares(params: FareSearchParams): Promise<FareSearchR
           price:          f.total_fare,
           currency:       'INR' as const,
           cabin:          f.cabin === 'BUSINESS' ? 'BUSINESS' : 'ECONOMY',
-          source:         'SERPAPI_GOOGLE_FLIGHTS' as const,
+          source:         f.source === 'SERPAPI_GOOGLE_FLIGHTS' ? 'SERPAPI_GOOGLE_FLIGHTS' : 'DIRECT_GDS_FEED',
           fetched_at:     f.collected_at,
         }))
 
@@ -193,11 +69,9 @@ export async function searchFares(params: FareSearchParams): Promise<FareSearchR
       }
     }
   } catch {
-    // Continue to guaranteed high-fidelity live stream
+    // Return an honest unavailable state; never manufacture fares.
   }
-
-  const liveFares = generateRealDomesticFares(params.origin, params.destination, params.date, cabin)
-  return { fares: liveFares, source: 'REAL', query: params }
+  return { fares: [], source: 'UNAVAILABLE', error: 'No verified fares are available for this route and travel date.', query: params }
 }
 
 export const FARE_CORRIDORS = [
@@ -235,4 +109,4 @@ export async function fetchCorridorFareWindows(dep: string, arr: string) {
     .map(r => r.value)
 }
 
-export const SERPAPI_CONFIGURED = true
+export const SERPAPI_CONFIGURED = false

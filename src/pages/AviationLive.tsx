@@ -1,258 +1,141 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Activity, Clock3, Gauge, Navigation, Plane, Radio, RefreshCw, ShieldCheck } from 'lucide-react'
-import { fetchAllCorridorFlights, type LiveFlight } from '../services/flightData'
+import { Activity, ArrowRight, BarChart3, Check, Clock3, CloudSun, Download, Expand, Info, Plane, PlaneLanding, Radio, RefreshCw, Search, TowerControl, X } from 'lucide-react'
+import AviationRadarMap, { type RadarLayer } from '../components/AviationRadarMap'
+import { aircraftId, aircraftLabel, contactFreshness, exportRadar, flightPhase, operatorName, radarAirports, refreshRadar, telemetry, useAviationRadar, type Aircraft } from '../services/aviationRadar'
+import type { Page } from '../components/AppShell'
+import '../styles/aviation.css'
 
-function fmtTime(value: Date | null) {
-  return value
-    ? `${value.toLocaleTimeString('en-IN', {
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        timeZone: 'Asia/Kolkata',
-      })} IST`
-    : 'not checked yet'
+export type AviationPanel = 'Airlines' | 'ATC Activity' | 'Corridor Analysis' | 'Weather & Alerts' | 'Historical Replay' | 'Fuel & Emissions' | 'Reports & Export'
+const clock = (date: string | null, seconds = false) => date ? new Date(date).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', ...(seconds ? { second: '2-digit' as const } : {}), hour12: true, timeZone: 'Asia/Kolkata' }).toUpperCase() + ' IST' : 'Awaiting first update'
+type AirportWeather = { code: string; temp: number; wind: number; weatherCode: number; time: string }
+
+function distanceKm(a: Aircraft, lat: number, lng: number) {
+  const r = Math.PI / 180
+  const h = Math.sin((lat - a.latitude) * r / 2) ** 2 + Math.cos(lat * r) * Math.cos(a.latitude * r) * Math.sin((lng - a.longitude) * r / 2) ** 2
+  return 12742 * Math.asin(Math.min(1, Math.sqrt(h)))
 }
 
-function statusColor(status: string) {
-  if (status === 'active') return '#16a34a'
-  if (status === 'landed') return '#0284c7'
-  if (status === 'scheduled') return '#d97706'
-  return '#64748b'
+function weatherLabel(code: number) {
+  if ([0, 1].includes(code)) return 'Clear'
+  if ([2, 3].includes(code)) return 'Cloudy'
+  if ([45, 48].includes(code)) return 'Fog'
+  if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) return 'Rain'
+  if (code >= 95) return 'Storm'
+  return 'Live'
 }
 
-export default function AviationLive() {
-  const [flights, setFlights] = useState<LiveFlight[]>([])
-  const [loading, setLoading] = useState(false)
-  const [lastFetch, setLastFetch] = useState<Date | null>(null)
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
-  async function load() {
-    setLoading(true)
-    try {
-      const results = await fetchAllCorridorFlights()
-      setFlights(results.flatMap((result) => result.flights))
-    } catch {
-      setFlights([])
-    } finally {
-      setLoading(false)
-      setLastFetch(new Date())
-    }
-  }
-
+export default function AviationLive({ onNavigate }: { onNavigate?: (p: Page) => void }) {
+  const state = useAviationRadar()
+  const [selected, setSelected] = useState<string | null>(null)
+  const [query, setQuery] = useState(() => sessionStorage.getItem('aviation-search') || '')
+  const [layer, setLayer] = useState<RadarLayer>('Live')
+  const [fullscreen, setFullscreen] = useState(false)
+  const [panel, setPanel] = useState<AviationPanel | null>(() => { const value = sessionStorage.getItem('aviation-panel'); sessionStorage.removeItem('aviation-panel'); return value as AviationPanel | null })
+  const [replay, setReplay] = useState<string | null>(null)
+  const [weather, setWeather] = useState<{ rows: AirportWeather[]; updatedAt: string | null; status: 'loading' | 'connected' | 'unavailable' }>({ rows: [], updatedAt: null, status: 'loading' })
+  const dialogRef = useRef<HTMLDialogElement>(null)
   useEffect(() => {
-    void load()
-    intervalRef.current = setInterval(load, 30_000)
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current)
+    const onSearch = (e: Event) => setQuery((e as CustomEvent<string>).detail)
+    const onPanel = (e: Event) => {
+      const next = (e as CustomEvent<AviationPanel>).detail
+      sessionStorage.removeItem('aviation-panel')
+      setPanel(next)
+      if (next === 'Weather & Alerts') setLayer('Weather')
+      if (next === 'ATC Activity' || next === 'Corridor Analysis') setLayer('ATC Zones')
+      if (next === 'Historical Replay') setLayer('Routes')
     }
+    const escape = (e: KeyboardEvent) => { if (e.key === 'Escape') { setFullscreen(false); setReplay(null) } }
+    window.addEventListener('aviation-search', onSearch); window.addEventListener('aviation-panel', onPanel); window.addEventListener('keydown', escape)
+    return () => { window.removeEventListener('aviation-search', onSearch); window.removeEventListener('aviation-panel', onPanel); window.removeEventListener('keydown', escape) }
   }, [])
-
-  const stats = useMemo(
-    () => ({
-      active: flights.filter((flight) => flight.status === 'active').length,
-      scheduled: flights.filter((flight) => flight.status === 'scheduled').length,
-      landed: flights.filter((flight) => flight.status === 'landed').length,
-    }),
-    [flights],
-  )
-
-  const visibleFlights = flights.slice(0, 12)
-  const featuredFlights = flights.slice(0, 5)
-  const avgAltitude = Math.round(
-    flights.reduce((sum, flight) => sum + (flight.altitude_ft || 0), 0) / Math.max(1, flights.filter((flight) => flight.altitude_ft).length),
-  )
-  const avgSpeed = Math.round(
-    flights.reduce((sum, flight) => sum + (flight.ground_speed_kts || 0), 0) / Math.max(1, flights.filter((flight) => flight.ground_speed_kts).length),
-  )
-  const busiestRoutes = useMemo(() => {
-    const routeCounts = new Map<string, number>()
-    flights.forEach((flight) => {
-      const route = `${flight.dep_iata || '---'} → ${flight.arr_iata || '---'}`
-      routeCounts.set(route, (routeCounts.get(route) || 0) + 1)
-    })
-    return [...routeCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4)
-  }, [flights])
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 18, fontFamily: 'var(--font-sans)', maxWidth: 1280 }}>
-      <section
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          gap: 16,
-          alignItems: 'center',
-          padding: '18px 22px',
-          background: 'var(--color-surface-bg)',
-          border: '1px solid var(--color-border-primary)',
-          borderRadius: 16,
-          boxShadow: 'var(--shadow-sm)',
-          flexWrap: 'wrap',
-        }}
-      >
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-            <Activity size={15} style={{ color: 'var(--color-brand-primary)' }} />
-            <span style={{ fontSize: 11, fontWeight: 800, color: 'var(--color-brand-primary)', letterSpacing: '0.09em' }}>AIRSPACE MONITOR</span>
-          </div>
-          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 850, color: 'var(--color-text-primary)', letterSpacing: '-0.02em' }}>
-            Air Traffic Control
-          </h1>
-          <p style={{ margin: '5px 0 0', fontSize: 13, color: 'var(--color-text-secondary)', lineHeight: 1.45 }}>
-            Operational aviation telemetry console with aircraft feed, corridor activity, provider health, and ATC-style monitoring.
-          </p>
-        </div>
-        <button
-          onClick={load}
-          disabled={loading}
-          className="ap-button ap-button-secondary"
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 7, minHeight: 36 }}
-        >
-          <RefreshCw size={14} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
-          Refresh
-        </button>
+  useEffect(() => {
+    const value = sessionStorage.getItem('aviation-panel')
+    if (!value) return
+    sessionStorage.removeItem('aviation-panel')
+    setPanel(value as AviationPanel)
+  }, [])
+  useEffect(() => {
+    let active = true
+    const controller = new AbortController()
+    const loadWeather = async () => {
+      try {
+        setWeather(prev => ({ ...prev, status: prev.rows.length ? 'connected' : 'loading' }))
+        const latitudes = radarAirports.map(a => a.lat).join(',')
+        const longitudes = radarAirports.map(a => a.lng).join(',')
+        const response = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitudes}&longitude=${longitudes}&current=temperature_2m,weather_code,wind_speed_10m&timezone=Asia%2FKolkata`, { signal: controller.signal })
+        if (!response.ok) throw new Error('Weather unavailable')
+        const body = await response.json()
+        const blocks = Array.isArray(body) ? body : [body]
+        const rows = blocks.map((item: any, index: number) => ({
+          code: radarAirports[index]?.code ?? `WX${index + 1}`,
+          temp: Number(item?.current?.temperature_2m),
+          wind: Number(item?.current?.wind_speed_10m),
+          weatherCode: Number(item?.current?.weather_code),
+          time: String(item?.current?.time ?? new Date().toISOString()),
+        })).filter((row: AirportWeather) => Number.isFinite(row.temp) && Number.isFinite(row.wind))
+        if (!rows.length) throw new Error('No weather rows')
+        if (active) setWeather({ rows, updatedAt: new Date().toISOString(), status: 'connected' })
+      } catch (error) {
+        if (active && (error as Error).name !== 'AbortError') setWeather(prev => ({ ...prev, status: 'unavailable' }))
+      }
+    }
+    void loadWeather()
+    const timer = setInterval(() => void loadWeather(), 300000)
+    return () => { active = false; controller.abort(); clearInterval(timer) }
+  }, [])
+  useEffect(() => { if (panel) dialogRef.current?.showModal(); else dialogRef.current?.close() }, [panel])
+  const frame = replay ? state.history.find(h => h.time === replay) : null
+  const shownState = frame ? { ...state, aircraft: frame.aircraft, retrievedAt: frame.time } : state
+  const connected = state.status === 'connected'
+  const airborne = state.aircraft.filter(a => !a.on_ground)
+  const onGround = state.aircraft.filter(a => a.on_ground)
+  const aircraft = shownState.aircraft.filter(a => `${aircraftLabel(a)} ${operatorName(a)} ${a.registration} ${a.aircraft_type}`.toLowerCase().includes(query.trim().toLowerCase()))
+  const vicinity = useMemo(() => radarAirports.map(ap => ({ ...ap, count: state.aircraft.filter(a => distanceKm(a, ap.lat, ap.lng) < 100).length })).sort((a, b) => b.count - a.count), [state.aircraft])
+  const operators = useMemo(() => Object.entries(state.aircraft.reduce<Record<string, number>>((result, a) => { const name = operatorName(a); result[name] = (result[name] || 0) + 1; return result }, {})).sort((a, b) => b[1] - a[1]), [state.aircraft])
+  const chosen = shownState.aircraft.find(a => aircraftId(a) === selected)
+  const weatherAverage = weather.rows.length ? Math.round(weather.rows.reduce((sum, row) => sum + row.temp, 0) / weather.rows.length) : null
+  const liveCorridors = vicinity.filter(a => a.count > 0).length
+  const staleAircraft = state.aircraft.filter(a => (a.seen_seconds ?? 0) > 60).length
+  const feedAgeSeconds = state.retrievedAt ? Math.max(0, Math.round((Date.now() - Date.parse(state.retrievedAt)) / 1000)) : null
+  const feedQuality = !connected ? 'unavailable' : staleAircraft > Math.max(12, state.aircraft.length * .2) ? 'degraded' : feedAgeSeconds != null && feedAgeSeconds > 120 ? 'stale' : 'nominal'
+  const feedQualityLabel = feedQuality === 'nominal' ? 'NOMINAL' : feedQuality === 'degraded' ? 'DEGRADED' : feedQuality === 'stale' ? 'STALE' : 'UNAVAILABLE'
+  const kpis = [
+    { label: 'Active Flights', value: connected ? airborne.length : '—', detail: 'Currently in Indian airspace', icon: Plane, tone: 'green' },
+    { label: 'Provider Rows', value: connected ? state.aircraft.length : '—', detail: `${state.source || 'Live ADS-B'} aircraft positions`, icon: Clock3, tone: 'orange' },
+    { label: 'On Ground', value: connected ? onGround.length : '—', detail: 'Reported by aircraft telemetry', icon: PlaneLanding, tone: 'cyan' },
+    { label: 'Major Airports', value: String(radarAirports.length).padStart(2, '0'), detail: 'Mapped airport locations', icon: TowerControl, tone: 'purple' },
+    { label: 'Airspace Status', value: connected ? 'Tracking' : state.status === 'loading' ? 'Connecting' : 'Offline', detail: connected ? 'Live positions available' : 'Waiting for aircraft feed', icon: Radio, tone: 'mint' },
+    { label: 'Weather (India)', value: weatherAverage == null ? '—' : `${weatherAverage}°C`, detail: weather.status === 'connected' ? 'Live airport weather average' : 'Connecting weather feed', icon: CloudSun, tone: 'yellow' },
+  ]
+  return <div className="av-dashboard">
+    <section className="av-hero">
+      <div className="av-hero-copy"><div className="av-eyebrow"><span className={`av-live-tag ${connected ? '' : 'pending'}`}><i/>{connected ? 'LIVE' : state.status === 'loading' ? 'SYNC' : 'OFFLINE'}</span><span className={`av-feed-quality ${feedQuality}`}>{feedQualityLabel}</span><span>INDIAN AIRSPACE MONITORING</span></div><h1>Live Flight Map</h1><p>Real-time aircraft tracking with source status, stale-contact checks and honest provider coverage.</p></div>
+      <div className="av-last-updated"><div><span>Last Updated</span><strong>{clock(state.retrievedAt, true)}</strong><small>{state.retrievedAt ? new Date(state.retrievedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }) : 'Auto refresh · 30 seconds'}</small></div><button title="Refresh aircraft feed" aria-label="Refresh aircraft feed" disabled={state.refreshing} onClick={() => void refreshRadar()}><RefreshCw size={21} className={state.refreshing ? 'av-spin' : ''}/></button></div>
+    </section>
+    <div className="av-stat-grid">{kpis.map(({ label, value, detail, icon: Icon, tone }) => <section className="av-stat" key={label}><div className={`av-stat-icon ${tone}`}><Icon size={25} strokeWidth={1.7}/></div><div><h2>{label}</h2><strong className={typeof value === 'string' && value.length > 5 ? 'av-stat-word' : ''}>{value}</strong><p>{detail}</p></div></section>)}</div>
+    <div className="av-workspace">
+      <section className={`av-panel av-map-panel ${fullscreen ? 'av-fullscreen' : ''}`}>
+        <header className="av-map-header"><h2>India Live Flight Map</h2><span className="av-position-caption"><i className={connected ? 'connected' : ''}/> {frame ? 'Session replay' : 'Real-time aircraft positions (ADS-B)'}</span><div className="av-map-tabs" role="tablist" aria-label="Map layers">{(['Live', 'Routes', 'Corridors', 'Weather', 'ATC Zones'] as RadarLayer[]).map(item => <button key={item} role="tab" aria-selected={layer === item} className={layer === item ? 'active' : ''} onClick={() => setLayer(item)}>{item === 'Live' && <Radio size={10}/>} {item}</button>)}</div><button className="av-icon-button" aria-label={fullscreen ? 'Exit expanded map' : 'Expand map'} title="Expand map" onClick={() => setFullscreen(!fullscreen)}>{fullscreen ? <X size={15}/> : <Expand size={15}/>}</button></header>
+        {frame && <div className="av-replay-banner">Recorded {clock(frame.time, true)} <button onClick={() => setReplay(null)}>Return to live</button></div>}
+        <AviationRadarMap state={shownState} selected={selected} onSelect={a => setSelected(aircraftId(a))} layer={layer} fullscreen={fullscreen} weatherConnected={weather.status === 'connected'}/>
       </section>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(360px, 1fr) minmax(320px, 420px)', gap: 18, alignItems: 'stretch' }}>
-        <section style={{ background: 'linear-gradient(145deg, #f8fbff, #eef6ff)', border: '1px solid var(--color-border-primary)', borderRadius: 18, boxShadow: 'var(--shadow-sm)', padding: 18, minHeight: 560, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
-            {[
-              ['Active', stats.active, '#16a34a'],
-              ['Scheduled', stats.scheduled, '#d97706'],
-              ['Landed', stats.landed, '#0284c7'],
-            ].map(([label, value, color]) => (
-              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 11px', borderRadius: 999, background: '#fff', border: '1px solid var(--color-border-primary)' }}>
-                <span style={{ width: 8, height: 8, borderRadius: '50%', background: color as string }} />
-                <span style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontWeight: 750 }}>{label}</span>
-                <span style={{ fontSize: 13, color: 'var(--color-text-primary)', fontWeight: 900, fontFamily: 'var(--font-mono)' }}>{value}</span>
-              </div>
-            ))}
-          </div>
-
-          <div style={{ flex: 1, borderRadius: 18, background: 'linear-gradient(145deg, #071426, #0f2746 62%, #082038)', border: '1px solid rgba(14,165,233,0.25)', overflow: 'hidden', padding: 20, display: 'grid', gridTemplateRows: 'auto 1fr auto', gap: 16, color: '#e0f2fe', boxShadow: 'inset 0 0 40px rgba(14,165,233,0.12)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap' }}>
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                  <Radio size={15} style={{ color: '#38bdf8' }} />
-                  <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.12em', color: '#7dd3fc' }}>ATC OPERATIONS BOARD</span>
-                </div>
-                <h2 style={{ margin: 0, fontSize: 24, fontWeight: 950, color: '#f8fafc', letterSpacing: '-0.03em' }}>Air Traffic Control View</h2>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 12px', borderRadius: 999, background: 'rgba(16,185,129,0.14)', border: '1px solid rgba(16,185,129,0.28)', color: '#86efac', fontSize: 12, fontWeight: 850 }}>
-                <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 12px #22c55e' }} />
-                Provider feed connected
-              </div>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 1fr) minmax(220px, 0.8fr)', gap: 14, minHeight: 250 }}>
-              <div style={{ position: 'relative', minHeight: 250, borderRadius: 18, border: '1px solid rgba(125,211,252,0.18)', background: 'radial-gradient(circle at 50% 50%, rgba(37,99,235,0.35), rgba(2,6,23,0.05) 38%, rgba(2,6,23,0.28) 100%)', overflow: 'hidden' }}>
-                {[72, 132, 196].map((size) => (
-                  <div key={size} style={{ position: 'absolute', width: size, height: size, borderRadius: '50%', border: '1px dashed rgba(125,211,252,0.28)', top: `calc(50% - ${size / 2}px)`, left: `calc(50% - ${size / 2}px)` }} />
-                ))}
-                <div style={{ position: 'absolute', inset: '50% 18px auto', borderTop: '1px solid rgba(125,211,252,0.18)' }} />
-                <div style={{ position: 'absolute', inset: '18px auto 18px 50%', borderLeft: '1px solid rgba(125,211,252,0.18)' }} />
-                {featuredFlights.length === 0 ? (
-                  <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#bfdbfe', fontSize: 13, textAlign: 'center', padding: 20 }}>
-                    Waiting for aircraft rows from the provider feed.
-                  </div>
-                ) : featuredFlights.map((flight, index) => {
-                  const spots = [
-                    { top: '22%', left: '28%' },
-                    { top: '37%', left: '58%' },
-                    { top: '55%', left: '38%' },
-                    { top: '64%', left: '70%' },
-                    { top: '78%', left: '22%' },
-                  ]
-                  return (
-                    <div key={`${flight.flight_iata}-radar-${index}`} style={{ position: 'absolute', ...spots[index], transform: 'translate(-50%, -50%)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <div style={{ width: 34, height: 34, borderRadius: '50%', display: 'grid', placeItems: 'center', background: 'rgba(34,197,94,0.18)', border: '1px solid rgba(134,239,172,0.42)', color: '#86efac', boxShadow: '0 0 24px rgba(34,197,94,0.25)' }}>
-                        <Navigation size={16} />
-                      </div>
-                      <div style={{ padding: '7px 9px', borderRadius: 10, background: 'rgba(2,6,23,0.72)', border: '1px solid rgba(125,211,252,0.24)', backdropFilter: 'blur(8px)' }}>
-                        <div style={{ fontSize: 12, fontWeight: 950, color: '#f8fafc', fontFamily: 'var(--font-mono)' }}>{flight.flight_iata || 'FLT'}</div>
-                        <div style={{ fontSize: 10, color: '#93c5fd', fontFamily: 'var(--font-mono)' }}>{flight.dep_iata || '---'} → {flight.arr_iata || '---'}</div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-
-              <div style={{ display: 'grid', gap: 10 }}>
-                {[
-                  { icon: <Plane size={16} />, label: 'Aircraft Rows', value: flights.length.toLocaleString('en-IN') },
-                  { icon: <Gauge size={16} />, label: 'Avg Speed', value: avgSpeed ? `${avgSpeed} kts` : '—' },
-                  { icon: <Activity size={16} />, label: 'Avg Altitude', value: avgAltitude ? `${avgAltitude.toLocaleString('en-IN')} ft` : '—' },
-                  { icon: <Clock3 size={16} />, label: 'Last Checked', value: fmtTime(lastFetch) },
-                ].map(item => (
-                  <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: 12, borderRadius: 14, background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(125,211,252,0.14)' }}>
-                    <div style={{ width: 34, height: 34, borderRadius: 11, display: 'grid', placeItems: 'center', background: 'rgba(14,165,233,0.16)', color: '#7dd3fc' }}>{item.icon}</div>
-                    <div>
-                      <div style={{ fontSize: 10, color: '#93c5fd', fontWeight: 850, letterSpacing: '0.08em' }}>{item.label}</div>
-                      <div style={{ marginTop: 2, fontSize: 14, fontWeight: 950, color: '#f8fafc', fontFamily: 'var(--font-mono)' }}>{item.value}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
-              <div style={{ padding: 14, borderRadius: 14, background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(125,211,252,0.14)' }}>
-                <div style={{ fontSize: 11, color: '#93c5fd', fontWeight: 850, marginBottom: 8 }}>Busiest corridors</div>
-                {(busiestRoutes.length ? busiestRoutes : [['DEL → BOM', 0], ['BLR → DEL', 0], ['HYD → CCU', 0]]).map(([route, count]) => (
-                  <div key={route} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '5px 0', fontSize: 12, color: '#e0f2fe', fontFamily: 'var(--font-mono)' }}>
-                    <span>{route}</span>
-                    <strong>{count}</strong>
-                  </div>
-                ))}
-              </div>
-              <div style={{ padding: 14, borderRadius: 14, background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(125,211,252,0.14)' }}>
-                <div style={{ fontSize: 11, color: '#93c5fd', fontWeight: 850, marginBottom: 8 }}>Operational note</div>
-                <div style={{ fontSize: 12, lineHeight: 1.5, color: '#dbeafe' }}>
-                  The unreliable basemap has been replaced by a stable ATC board so users see useful telemetry without broken map keys or distorted India outlines.
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <aside style={{ background: 'var(--color-surface-bg)', border: '1px solid var(--color-border-primary)', borderRadius: 18, boxShadow: 'var(--shadow-sm)', overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 560 }}>
-          <div style={{ padding: '16px 18px', borderBottom: '1px solid var(--color-border-primary)', display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-            <div>
-              <div style={{ fontSize: 14, fontWeight: 850, color: 'var(--color-text-primary)' }}>Aircraft Feed</div>
-              <div style={{ marginTop: 3, fontSize: 11, color: 'var(--color-text-tertiary)' }}>{flights.length} provider rows returned</div>
-            </div>
-            <ShieldCheck size={18} style={{ color: flights.length ? 'var(--color-success)' : 'var(--color-warning)' }} />
-          </div>
-          <div style={{ flex: 1, overflowY: 'auto' }}>
-            {visibleFlights.length === 0 ? (
-              <div style={{ padding: 22, color: 'var(--color-text-secondary)', fontSize: 13, lineHeight: 1.55 }}>
-                No aircraft rows are available right now. The page retries every 30 seconds.
-              </div>
-            ) : visibleFlights.map((flight, index) => (
-              <div key={`${flight.flight_iata}-${index}`} style={{ padding: '14px 16px', borderBottom: '1px solid var(--color-border-primary)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-                    <div style={{ width: 30, height: 30, borderRadius: 10, display: 'grid', placeItems: 'center', background: `${statusColor(flight.status)}16`, color: statusColor(flight.status) }}>
-                      <Plane size={15} />
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 14, fontWeight: 900, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>{flight.flight_iata || 'UNKNOWN'}</div>
-                      <div style={{ marginTop: 2, fontSize: 11, color: 'var(--color-text-secondary)' }}>{flight.airline_name || flight.airline_iata || 'Unknown airline'}</div>
-                    </div>
-                  </div>
-                  <span style={{ fontSize: 9, fontWeight: 850, color: statusColor(flight.status), background: `${statusColor(flight.status)}18`, border: `1px solid ${statusColor(flight.status)}33`, borderRadius: 999, padding: '3px 8px' }}>
-                    {flight.status.toUpperCase()}
-                  </span>
-                </div>
-                <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap', color: 'var(--color-text-tertiary)', fontSize: 11, fontFamily: 'var(--font-mono)' }}>
-                  <span>{flight.dep_iata || '---'} → {flight.arr_iata || '---'}</span>
-                  {flight.altitude_ft != null && <span>{Math.round(flight.altitude_ft).toLocaleString()} ft</span>}
-                  {flight.ground_speed_kts != null && <span>{Math.round(flight.ground_speed_kts)} kts</span>}
-                </div>
-              </div>
-            ))}
-          </div>
-        </aside>
-      </div>
+      <section className="av-panel av-feed"><header className="av-panel-header"><div><h2>Aircraft Feed</h2><p>{state.status === 'loading' ? 'Connecting to live aircraft…' : `${shownState.aircraft.length} aircraft in this update`}</p></div><button className="av-text-button" onClick={() => onNavigate?.('aviationflights')}>View All <ArrowRight size={12}/></button></header><label className="av-search"><Search size={14}/><input aria-label="Search aircraft feed" placeholder="Search aircraft, callsign, registration…" value={query} onChange={e => setQuery(e.target.value)}/>{query && <button title="Clear aircraft search" onClick={() => setQuery('')}><X size={12}/></button>}</label>
+        <div className="av-feed-list">{aircraft.length ? aircraft.map((a, index) => { const freshness = contactFreshness(a); return <button className={`av-flight-row ${aircraftId(a) === selected ? 'selected' : ''}`} key={aircraftId(a)} onClick={() => { setSelected(aircraftId(a)); setLayer('Live') }}><Plane size={23} fill="currentColor" strokeWidth={1} style={{ color: ['#f23a39', '#861648', '#0658ff', '#f59e0b', '#65879c'][index % 5] }}/><div className="av-flight-id"><strong>{aircraftLabel(a)}</strong><span>{operatorName(a)}</span></div><div className="av-flight-details"><span>{a.registration || a.aircraft_type || 'ADS-B position'}</span><small>{telemetry(a.altitude_ft, 'ft')} · {telemetry(a.ground_speed_kts, 'kts')} · {a.track_deg == null ? 'track —' : `${Math.round(a.track_deg)}°`}</small></div><em className={`${a.on_ground ? 'ground' : ''} ${freshness.tone}`}>{freshness.label}</em></button> }) : <div className="av-empty"><Radio size={26}/><strong>{query ? 'No matching aircraft' : state.status === 'loading' ? 'Connecting to live traffic' : 'No live flight data available'}</strong><p>{query ? 'Try a callsign, airline or registration.' : 'The radar will update when fresh positions arrive.'}</p>{!query && <button className="av-text-button" disabled={state.refreshing} onClick={() => void refreshRadar()}>Retry connection <RefreshCw size={12}/></button>}</div>}</div>
+        <footer className="av-feed-footer"><i className={connected ? 'connected' : ''}/>{connected ? `${state.source} · refreshes every 30s` : 'Waiting for live provider'}</footer>
+      </section>
+      <aside className="av-analytics">
+        <section className="av-panel av-corridors"><header className="av-panel-header"><h2>ATC Corridor Activity</h2><button className="av-text-button" onClick={() => setPanel('Corridor Analysis')}>View All <ArrowRight size={12}/></button></header><p className="av-card-caption">Aircraft within 100 km of major airports</p><div className="av-activity-bars">{vicinity.slice(0, 5).map(a => <div className="av-activity-row" key={a.code}><span>Near {a.code}</span><div><i style={{ width: connected ? `${a.count / Math.max(1, ...vicinity.map(v => v.count)) * 100}%` : '0%' }}/></div><b>{connected ? a.count : '—'}</b></div>)}</div><span className="av-fine-print">Position counts · flight routes unavailable</span></section>
+        <section className="av-panel av-alerts"><header className="av-panel-header"><h2>Recent ATC / Operational Alerts</h2><button className="av-text-button" onClick={() => setPanel('Weather & Alerts')}>View All <ArrowRight size={12}/></button></header><div className="av-alert-row"><span className="av-alert-icon green"><Check size={11}/></span><div><strong>{connected ? 'Aircraft feed received' : 'Aircraft feed pending'}</strong><p>{connected ? `${state.aircraft.length} positions · ${state.source}` : 'Reconnecting every 30 seconds'}</p></div><time>{state.retrievedAt ? clock(state.retrievedAt).replace(' IST', '') : '—'}</time></div><div className="av-alert-row"><span className={`av-alert-icon ${feedQuality === 'nominal' ? 'green' : 'amber'}`}><Info size={11}/></span><div><strong>Feed quality {feedQualityLabel.toLowerCase()}</strong><p>{connected ? `${staleAircraft} stale contacts · ${feedAgeSeconds ?? '—'}s feed age` : 'No provider response yet.'}</p></div></div><div className="av-alert-row"><span className="av-alert-icon blue"><Activity size={11}/></span><div><strong>Telemetry coverage</strong><p>Altitude, speed, track and freshness where reported.</p></div></div></section>
+        <section className="av-panel av-overview"><h2>Indian Airspace Overview</h2><div>{[{ icon: Plane, value: connected ? airborne.length : '—', label: 'Airborne' }, { icon: TowerControl, value: radarAirports.length, label: 'Airports' }, { icon: BarChart3, value: connected ? liveCorridors : '—', label: 'Corridors' }, { icon: CloudSun, value: weatherAverage == null ? '—' : `${weatherAverage}°`, label: 'Weather' }].map(({ icon: Icon, value, label }) => <section key={label}><div><Icon size={18}/><b>{value}</b></div><span>{label}</span></section>)}</div></section>
+      </aside>
     </div>
-  )
+    <dialog ref={dialogRef} className="av-detail-dialog" onCancel={() => setPanel(null)} onClick={e => { if (e.target === e.currentTarget) setPanel(null) }}><header><div><span>AVIATION INTELLIGENCE</span><h2>{panel}</h2></div><button className="av-icon-button" aria-label="Close aviation details" onClick={() => setPanel(null)}><X size={20}/></button></header><div className="av-dialog-body">
+      {panel === 'Airlines' && <><div className="av-panel-summary"><section><b>{operators.length}</b><span>operators</span></section><section><b>{connected ? state.aircraft.length : '—'}</b><span>live rows</span></section><section><b>{staleAircraft}</b><span>stale &gt;60s</span></section></div>{chosen && <div className="av-selected-contact"><strong>{aircraftLabel(chosen)}</strong><span>{operatorName(chosen)} · {telemetry(chosen.altitude_ft, 'ft')} · {contactFreshness(chosen).label}</span></div>}<p>Operators are derived from live aircraft callsigns and registrations in the current provider response.</p>{operators.length ? operators.map(([name, count]) => <div className="av-detail-row" key={name}><span>{name}</span><b>{count} aircraft</b></div>) : <p>Operator counts will appear when the aircraft feed is available.</p>}</>}
+      {(panel === 'ATC Activity' || panel === 'Corridor Analysis') && <><div className="av-panel-summary"><section><b>{liveCorridors}</b><span>active airport zones</span></section><section><b>{connected ? airborne.length : '—'}</b><span>airborne</span></section><section><b>{clock(state.retrievedAt).replace(' IST', '')}</b><span>latest ADS-B</span></section></div><p>Aircraft are counted within 100 km of each airport. These are live position observations, not ATC clearances or filed routes.</p>{vicinity.map(a => <div className="av-detail-row" key={a.code}><span>{a.name} · {a.code}</span><b>{connected ? a.count : '—'} aircraft</b></div>)}</>}
+      {panel === 'Weather & Alerts' && <><div className="av-panel-summary"><section><b>{weatherAverage == null ? '—' : `${weatherAverage}°C`}</b><span>India avg</span></section><section><b>{weather.rows.length}</b><span>airport weather rows</span></section><section><b>{weather.status === 'connected' ? 'Live' : '—'}</b><span>Open-Meteo</span></section></div><p>Weather is pulled live for mapped Indian airport locations. Operational ATC advisories are still not connected, so the app does not invent runway, turbulence or clearance alerts.</p>{weather.rows.length ? weather.rows.map(row => <div className="av-detail-row" key={row.code}><span>{row.code} · {weatherLabel(row.weatherCode)}</span><b>{Math.round(row.temp)}°C · {Math.round(row.wind)} km/h wind</b></div>) : <p>Weather rows are loading from the provider.</p>}<button className="av-primary-button" onClick={() => { setPanel(null); setLayer('Weather') }}>View weather layer</button></>}
+      {panel === 'Historical Replay' && <><div className="av-panel-summary"><section><b>{state.history.length}</b><span>saved frames</span></section><section><b>{connected ? state.aircraft.length : '—'}</b><span>latest rows</span></section><section><b>30s</b><span>refresh cycle</span></section></div><p>Replay a captured update from this session. Up to 30 updates are retained while the app is open.</p>{state.history.length ? [...state.history].reverse().map(h => <button className="av-detail-row" key={h.time} onClick={() => { setReplay(h.time); setPanel(null) }}><span>{clock(h.time, true)}</span><b>{h.aircraft.length} aircraft <ArrowRight size={12}/></b></button>) : <p>No aircraft updates have been recorded yet.</p>}</>}
+      {panel === 'Fuel & Emissions' && <><div className="av-panel-summary"><section><b>{connected ? state.aircraft.filter(a => a.aircraft_type).length : '—'}</b><span>type rows</span></section><section><b>{connected ? state.aircraft.filter(a => a.altitude_ft != null).length : '—'}</b><span>altitude rows</span></section><section><b>No</b><span>fuel feed</span></section></div><h3>Aircraft performance data required</h3><p>Fuel burn and emissions require aircraft performance, engine and flight-duration data. These values are not supplied by the current tracking feed, so this panel stays honest until a real emissions source is connected.</p>{chosen && <div className="av-detail-row"><span>Selected aircraft</span><b>{aircraftLabel(chosen)} · {chosen.aircraft_type || 'Type unavailable'}</b></div>}</>}
+      {panel === 'Reports & Export' && <><div className="av-panel-summary"><section><b>{feedQualityLabel}</b><span>feed state</span></section><section><b>{staleAircraft}</b><span>stale contacts</span></section><section><b>{state.source || '—'}</b><span>source</span></section></div><h3>Export the current aircraft update</h3><p>Download callsign, registration, position, altitude, speed, heading, vertical rate and freshness. Missing values stay blank; no route or ATC values are invented.</p><button className="av-primary-button" disabled={!state.aircraft.length} onClick={() => exportRadar(state.aircraft)}><Download size={16}/> Download {state.aircraft.length} aircraft</button><small>Source: {state.source || 'Awaiting provider'} · {clock(state.retrievedAt)}</small></>}
+    </div></dialog>
+  </div>
 }

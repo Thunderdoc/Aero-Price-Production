@@ -1,8 +1,8 @@
 import { initializeApp, getApps, type FirebaseApp } from 'firebase/app'
 import {
   createUserWithEmailAndPassword,
-  fetchSignInMethodsForEmail,
   getAuth,
+  onAuthStateChanged,
   GoogleAuthProvider,
   sendEmailVerification,
   sendPasswordResetEmail,
@@ -47,6 +47,18 @@ export function getFirebaseAuth() {
   return auth
 }
 
+export function getFirebaseIdToken() {
+  const firebaseAuth = getFirebaseAuth()
+  if (!firebaseAuth) return Promise.resolve(null)
+  if (firebaseAuth.currentUser) return firebaseAuth.currentUser.getIdToken()
+  return new Promise<string | null>((resolve) => {
+    const unsubscribe = onAuthStateChanged(firebaseAuth, async (firebaseUser) => {
+      unsubscribe()
+      resolve(firebaseUser ? await firebaseUser.getIdToken() : null)
+    })
+  })
+}
+
 export function initFirebaseAnalytics() {
   const firebaseApp = getFirebaseApp()
   if (!firebaseApp || !firebaseConfig.measurementId) return Promise.resolve(null)
@@ -73,18 +85,7 @@ export async function sendFirebasePasswordReset(email: string) {
   if (!firebaseAuth) {
     throw new Error('Firebase authentication is not configured.')
   }
-  const methods = await fetchSignInMethodsForEmail(firebaseAuth, email)
-  if (methods.length === 0) {
-    const err = new Error('No Firebase account exists for this email.')
-    Object.assign(err, { code: 'auth/user-not-found' })
-    throw err
-  }
-  if (!methods.includes('password')) {
-    const err = new Error('This account uses Google sign-in and has no password to reset.')
-    Object.assign(err, { code: 'auth/no-password-provider' })
-    throw err
-  }
-  return sendPasswordResetEmail(firebaseAuth, email)
+  return sendPasswordResetEmail(firebaseAuth, email.trim().toLowerCase())
 }
 
 export async function createFirebaseEmailUser(email: string, password: string, name: string) {

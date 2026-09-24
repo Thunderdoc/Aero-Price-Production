@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 
 export type UserRole = 'PUBLIC' | 'ANALYST' | 'ADMIN'
 export type UserPlan = 'FREE' | 'SUBSCRIBER' | 'GOVERNMENT' | 'ADMIN'
@@ -63,13 +63,19 @@ function roleForWorkspace(email: string, workspace?: AuthWorkspace): Pick<AuthUs
 }
 
 function loadStoredUser(): AuthUser | null {
-  localStorage.removeItem(STORAGE_KEY)
-  localStorage.removeItem(TOKEN_KEY)
-  return null
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY)
+    if (!stored) return null
+    const parsed = JSON.parse(stored) as AuthUser
+    return parsed?.email && parsed?.role ? parsed : null
+  } catch {
+    localStorage.removeItem(STORAGE_KEY)
+    return null
+  }
 }
 
 function loadStoredToken(): string | null {
-  return null
+  return localStorage.getItem(TOKEN_KEY)
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -77,6 +83,19 @@ const AuthContext = createContext<AuthContextValue | null>(null)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(loadStoredUser)
   const [token, setToken] = useState<string | null>(loadStoredToken)
+
+  useEffect(() => {
+    let active = true
+    import('../services/firebase').then(async ({ getFirebaseIdToken }) => {
+      const idToken = await getFirebaseIdToken()
+      if (!active || !idToken) return
+      setToken(idToken)
+      localStorage.setItem(TOKEN_KEY, idToken)
+    }).catch(() => {
+      // Keep the restored session; Firebase may be unavailable temporarily.
+    })
+    return () => { active = false }
+  }, [])
 
   async function login(email: string, password: string): Promise<{ success: boolean; error?: string }> {
     const emailLower = email.trim().toLowerCase()
@@ -105,10 +124,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         initials: displayName.slice(0, 2).toUpperCase(),
       }
       setUser(authedUser)
-      setToken(null)
+      const idToken = await firebaseUser.getIdToken()
+      setToken(idToken)
       localStorage.removeItem('aeroprice_pending_workspace')
       localStorage.setItem(STORAGE_KEY, JSON.stringify(authedUser))
-      localStorage.removeItem(TOKEN_KEY)
+      localStorage.setItem(TOKEN_KEY, idToken)
       return { success: true }
     } catch (firebaseErr) {
       const code = typeof firebaseErr === 'object' && firebaseErr && 'code' in firebaseErr ? String((firebaseErr as { code?: string }).code) : ''
@@ -141,9 +161,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         initials: displayName.slice(0, 2).toUpperCase(),
       }
       setUser(authedUser)
-      setToken(null)
+      const idToken = await firebaseUser.getIdToken()
+      setToken(idToken)
       localStorage.setItem(STORAGE_KEY, JSON.stringify(authedUser))
-      localStorage.removeItem(TOKEN_KEY)
+      localStorage.setItem(TOKEN_KEY, idToken)
       return { success: true }
     } catch (err) {
       const code = typeof err === 'object' && err && 'code' in err ? String((err as { code?: string }).code) : ''
@@ -216,7 +237,7 @@ export function canAccess(role: UserRole, plan: UserPlan, page: string): boolean
   const adminOnly = ['collection', 'admin']
   const analystPlus = ['government', 'methodology', 'exports', 'sources']
   const subscriberPlus: string[] = []
-  const publicFreePages = ['overview', 'routes', 'insights', 'map', 'alerts']
+  const publicFreePages = ['overview', 'routes', 'insights', 'map', 'alerts', 'historicalfares']
 
   if (role === 'PUBLIC' && plan === 'FREE' && !publicFreePages.includes(page)) return false
   if (adminOnly.includes(page)) return role === 'ADMIN'

@@ -645,6 +645,38 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           color: #087cfb;
           flex: 0 0 auto;
         }
+        html.dark .ap-login::after {
+          background:
+            linear-gradient(90deg, rgba(2,8,23,.84) 0%, rgba(2,8,23,.62) 48%, rgba(5,13,28,.60) 100%),
+            radial-gradient(circle at 26% 30%, rgba(37,99,235,.22), transparent 34%);
+        }
+        html.dark .ap-card {
+          background: rgba(22,32,50,.96);
+          color: var(--color-text-primary);
+          border-color: rgba(148,163,184,.26);
+          box-shadow: 0 34px 90px rgba(0,0,0,.45);
+        }
+        html.dark .ap-card::before {
+          background: radial-gradient(circle at 18% 0%, rgba(59,130,246,.16), transparent 28%), radial-gradient(circle at 100% 8%, rgba(14,165,233,.10), transparent 24%);
+        }
+        html.dark .ap-ministry-logo { background: rgba(30,41,59,.80); border-color: rgba(148,163,184,.22); }
+        html.dark .ap-prototype { color: #cbd5e1; background: #263347; border-color: rgba(148,163,184,.22); }
+        html.dark .ap-card h2,
+        html.dark .ap-field label { color: #f8fbff; }
+        html.dark .ap-card-sub,
+        html.dark .ap-meta { color: #b8c7db; }
+        html.dark .ap-tabs { background: #111c2e; border-color: rgba(148,163,184,.22); }
+        html.dark .ap-mode-toggle { background: #102a4d; border-color: rgba(96,165,250,.30); }
+        html.dark .ap-tab,
+        html.dark .ap-mode-toggle button { color: #bfcee3; }
+        html.dark .ap-tab.active,
+        html.dark .ap-mode-toggle button.active { background: #263347; color: #78b7ff; box-shadow: 0 8px 18px rgba(0,0,0,.22); }
+        html.dark .ap-input { background: #111c2e; border-color: rgba(148,163,184,.30); color: #f8fbff; }
+        html.dark .ap-input::placeholder { color: #8293aa; }
+        html.dark .ap-input-wrap > svg:first-child,
+        html.dark .ap-eye { color: #a7b8ce; }
+        html.dark .ap-google { background: #263347; border-color: rgba(148,163,184,.34); color: #f8fbff; box-shadow: 0 10px 26px rgba(0,0,0,.20); }
+        html.dark .ap-security { border-top-color: rgba(148,163,184,.22); color: #b8c7db; }
         button:focus-visible, a:focus-visible, input:focus-visible {
           outline: 3px solid rgba(8,124,251,.35);
           outline-offset: 2px;

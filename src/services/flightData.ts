@@ -155,8 +155,7 @@ export async function fetchLiveFlights(
     // Fall through to live telemetry generator
   }
 
-  const flights = getLiveDomesticFlights(depIata, arrIata)
-  return { flights, source: 'REAL' }
+  return { flights: [], source: 'REAL', error: 'No live schedule rows returned by the connected provider.' }
 }
 
 /** Fetch Indian domestic flights across the 6 major corridors for the map */
@@ -208,9 +207,9 @@ export async function fetchAllCorridorFlights(): Promise<Array<{ flights: LiveFl
     // Continue to fallback
   }
 
-  // Return full real active Indian domestic fleet telemetry
-  const allDomestic = getLiveDomesticFlights()
-  return [{ flights: allDomestic, source: 'REAL' as const }]
+  // Never substitute a simulated fleet for a provider response. Aviation screens
+  // must be honest when the live radar source has no rows available.
+  return [{ flights: [], source: 'REAL' as const }]
 }
 
 // ── EF API (ak_live_ key) ─────────────────────────────────────────────────────

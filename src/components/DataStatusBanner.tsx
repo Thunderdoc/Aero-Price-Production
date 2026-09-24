@@ -3,19 +3,26 @@ import { ShieldCheck, X } from 'lucide-react'
 
 interface Props {
   anyGovConnected?: boolean
+  fareFeedConnected?: boolean
+  verifiedObservations?: number | null
+  showGovernmentStatus?: boolean
   isLoading?: boolean
   lastFetch?: string | null
 }
 
-export default function DataStatusBanner({ anyGovConnected = true, isLoading = false, lastFetch }: Props) {
+export default function DataStatusBanner({ anyGovConnected = true, fareFeedConnected = false, verifiedObservations = null, showGovernmentStatus = true, isLoading = false, lastFetch }: Props) {
   const [showDetails, setShowDetails] = useState(false)
   const time = lastFetch
     ? new Date(lastFetch).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST'
     : 'CHECKED'
-  const healthy = anyGovConnected && !isLoading
+  // The public dashboard is driven by verified fare observations, not the
+  // optional government registry. A registry outage must not label live fares
+  // as degraded.
+  const healthy = fareFeedConnected || (anyGovConnected && !isLoading)
+  const headline = fareFeedConnected ? 'VERIFIED FARE DATA AVAILABLE' : healthy ? 'DATA FEEDS CONNECTED' : isLoading ? 'CHECKING DATA FEEDS' : 'DATA FEEDS DEGRADED'
 
   return (
-    <div style={{ position: 'relative' }}>
+    <div className="data-status-banner" style={{ position: 'relative' }}>
       <button
         onClick={() => setShowDetails(v => !v)}
         title="Click to view real-time pipeline status"
@@ -59,7 +66,7 @@ export default function DataStatusBanner({ anyGovConnected = true, isLoading = f
             gap: 6,
           }}
         >
-          {healthy ? 'DATA FEEDS CONNECTED' : isLoading ? 'CHECKING DATA FEEDS' : 'DATA FEEDS DEGRADED'} · {time}
+          {headline} · {time}
         </span>
       </button>
 
@@ -97,20 +104,16 @@ export default function DataStatusBanner({ anyGovConnected = true, isLoading = f
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 11 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', borderRadius: 6, background: 'var(--color-surface-secondary)' }}>
-              <span style={{ color: 'var(--color-text-secondary)' }}>Airfare Ingestion Pipeline</span>
-              <span style={{ fontWeight: 700, color: healthy ? '#16a34a' : '#d97706' }}>{healthy ? 'CONNECTED' : 'DEGRADED'}</span>
+              <span style={{ color: 'var(--color-text-secondary)' }}>Verified Fare Feed</span>
+              <span style={{ fontWeight: 700, color: fareFeedConnected ? '#16a34a' : '#d97706' }}>{fareFeedConnected ? 'AVAILABLE' : 'UNAVAILABLE'}</span>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', borderRadius: 6, background: 'var(--color-surface-secondary)' }}>
+            {showGovernmentStatus && <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', borderRadius: 6, background: 'var(--color-surface-secondary)' }}>
               <span style={{ color: 'var(--color-text-secondary)' }}>DGCA & MoSPI Gov Registry</span>
               <span style={{ fontWeight: 700, color: anyGovConnected ? '#16a34a' : '#d97706' }}>{anyGovConnected ? 'CONNECTED' : 'UNAVAILABLE'}</span>
-            </div>
+            </div>}
             <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', borderRadius: 6, background: 'var(--color-surface-secondary)' }}>
-              <span style={{ color: 'var(--color-text-secondary)' }}>Jevons Price Index Engine</span>
-              <span style={{ fontWeight: 700, color: '#16a34a' }}>CALCULATING (v2.4)</span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', borderRadius: 6, background: 'var(--color-surface-secondary)' }}>
-              <span style={{ color: 'var(--color-text-secondary)' }}>Verified Fares In Database</span>
-              <span style={{ fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>10,875 Records</span>
+              <span style={{ color: 'var(--color-text-secondary)' }}>Verified Fares in Database</span>
+              <span style={{ fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>{verifiedObservations == null ? 'Unavailable' : `${verifiedObservations.toLocaleString('en-IN')} records`}</span>
             </div>
           </div>
         </div>

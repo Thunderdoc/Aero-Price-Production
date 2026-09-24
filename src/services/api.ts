@@ -58,9 +58,12 @@ async function apiFetch<T>(path: string, token?: string, init?: RequestInit): Pr
 
 export interface HealthResponse {
   status: string
-  db_ok: boolean
+  database: 'connected' | 'error'
   real_observations: number
-  sources: Record<string, { status: string; challenge_reason?: string }>
+  live_sources: number
+  total_sources: number
+  last_collection: string | null
+  data_status: 'LIVE' | 'NO_LIVE_DATA'
   timestamp: string
 }
 
@@ -79,12 +82,47 @@ export interface DashboardResponse {
   last_collection: string | null
   index_status: string
   index_value: number | null
+  current_fare_rate?: number | null
+  routes_tracked?: number | null
+  price_drops?: number | null
+  cpi_transport?: number | null
+  cpi_period?: string | null
+  cpi_base_year?: number | null
   note: string
   timestamp: string
 }
 
 export async function apiDashboard(token?: string): Promise<DashboardResponse> {
   return apiFetch('/api/dashboard', token)
+}
+
+export type FareMovementStatus =
+  | 'SIGNIFICANT_INCREASE'
+  | 'MODERATE_INCREASE'
+  | 'STABLE'
+  | 'MODERATE_DECREASE'
+  | 'SIGNIFICANT_DECREASE'
+
+export interface FareMovementResponse {
+  available: boolean
+  current_period?: string
+  previous_period?: string
+  price_drops: number | null
+  routes_with_change?: number
+  routes: Array<{
+    route: string
+    previous_fare: number
+    current_fare: number
+    change_pct: number
+    status: FareMovementStatus
+  }>
+  states: Record<string, { change_pct: number; status: FareMovementStatus; routes: number }>
+  modeled_states?: Record<string, { change_pct: number; status: FareMovementStatus; routes: number; provenance: 'MODELED'; basis: string; period: string }>
+  message?: string | null
+}
+
+export async function apiFareMovement(token?: string): Promise<FareMovementResponse> {
+  return apiFetch('/api/dashboard/fare-movement', token)
 }
 
 export interface IndexHistoryResponse {
@@ -306,15 +344,67 @@ export async function apiSourceHealth(token?: string) {
 
 // ── Admin ──────────────────────────────────────────────────────────────────
 
-export async function apiAdminUsers(token: string) {
+export async function apiAdminUsers(token?: string): Promise<{ users: Array<Record<string, any>> }> {
   return apiFetch('/api/admin/users', token)
+}
+
+export async function apiSubmitFeedback(message: string, token?: string) {
+  return apiFetch('/api/admin/feedback', token, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message }),
+  })
+}
+
+export async function apiAdminFeedback(token?: string): Promise<{ feedback: Array<Record<string, any>> }> {
+  return apiFetch('/api/admin/feedback', token)
+}
+
+export async function apiUpdateFeedback(id: string, status: 'NEW' | 'REVIEWED', token?: string) {
+  return apiFetch(`/api/admin/feedback/${encodeURIComponent(id)}`, token, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  })
+}
+
+export async function apiCreateAccessRequest(featureKey: string, featureName: string, token?: string) {
+  return apiFetch('/api/access-requests', token, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ feature_key: featureKey, feature_name: featureName }),
+  })
+}
+
+export async function apiMyAccessRequests(token?: string): Promise<{ requests: Array<Record<string, any>> }> {
+  return apiFetch('/api/access-requests', token)
+}
+
+export async function apiAdminAccessRequests(token?: string): Promise<{ requests: Array<Record<string, any>> }> {
+  return apiFetch('/api/admin/access-requests', token)
+}
+
+export async function apiApproveAccessRequest(id: string, token?: string) {
+  return apiFetch(`/api/admin/access-requests/${encodeURIComponent(id)}/approve`, token, { method: 'POST' })
+}
+
+export async function apiRejectAccessRequest(id: string, reason?: string, token?: string) {
+  return apiFetch(`/api/admin/access-requests/${encodeURIComponent(id)}/reject`, token, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rejection_reason: reason || null }),
+  })
+}
+
+export async function apiNotifications(token?: string) {
+  return apiFetch('/api/notifications', token)
 }
 
 export async function apiAuditLog(token: string, limit = 50) {
   return apiFetch(`/api/admin/audit-log?limit=${limit}`, token)
 }
 
-export async function apiSystemMetrics(token: string) {
+export async function apiSystemMetrics(token: string): Promise<{ hasAnyConfiguredApi?: boolean; [key: string]: any }> {
   return apiFetch('/api/admin/system-metrics', token)
 }
 
