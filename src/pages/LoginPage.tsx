@@ -926,6 +926,28 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
             {googleLoading ? 'Connecting...' : 'Continue with Google'}
           </button>
 
+          <a
+            href="https://99240040193.github.io/aero-price-production_our_team_details/"
+            target="_blank"
+            rel="noreferrer"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              minHeight: 42,
+              marginTop: 12,
+              border: '1px solid rgba(7, 91, 232, 0.24)',
+              borderRadius: 12,
+              color: '#075be8',
+              background: 'rgba(255,255,255,0.72)',
+              fontWeight: 750,
+              textDecoration: 'none',
+              fontSize: 14,
+            }}
+          >
+            SIH 2026 · Meet the Team
+          </a>
+
           <div className="ap-security" aria-label="Security notes">
             <div><ShieldCheck size={22} /><span>Secure access</span></div>
             <div><Users size={22} /><span>Role-based workspaces</span></div>
