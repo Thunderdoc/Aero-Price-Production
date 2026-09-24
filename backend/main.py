@@ -5,6 +5,7 @@ FastAPI application entrypoint.
 Start: uvicorn main:app --reload --port 8000
 """
 import logging
+from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -72,9 +73,19 @@ async def lifespan(app: FastAPI):
             replace_existing=True,
         )
         scheduler.start()
+        # Populate a fresh deployment shortly after startup instead of waiting
+        # for the first hourly interval. The collection still uses only
+        # configured, authorized providers and never creates synthetic fares.
+        scheduler.add_job(
+            _scheduled_collection,
+            trigger="date",
+            run_date=datetime.now(timezone.utc) + timedelta(seconds=8),
+            id="initial_collection",
+            replace_existing=True,
+        )
         logger.info(
             f"Scheduler started. Collection interval: {settings.COLLECTION_INTERVAL_MINUTES}min. "
-            "Note: all airline sources will return CHALLENGE_DETECTED until NDC credentials are configured."
+            "Initial collection scheduled in 8 seconds; only configured authorized providers will be used."
         )
 
         # Refreshes run on the scheduler or on an authenticated UI request.
