@@ -188,7 +188,7 @@ export async function fetchAllCorridorFlights(): Promise<Array<{ flights: LiveFl
             flight_iata: callsign || String(a.registration ?? a.icao24 ?? ''),
             airline_name: airlines[prefix] ?? 'Live ADS-B aircraft',
             airline_iata: prefix,
-            dep_iata: 'LIVE', dep_city: '', arr_iata: 'TRACK', arr_city: '',
+            dep_iata: 'AIRSPACE', dep_city: 'India airspace', arr_iata: 'LIVE', arr_city: 'Live position',
             dep_scheduled: '', arr_scheduled: '', status: 'active',
             dep_actual: null, arr_actual: null,
             latitude: Number(a.latitude), longitude: Number(a.longitude),
