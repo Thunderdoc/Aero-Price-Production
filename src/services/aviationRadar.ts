@@ -27,7 +27,7 @@ export function refreshRadar(): Promise<void> {
       const response = await fetch(`${BASE_URL}/api/aviation/live?limit=150`, { signal: AbortSignal.timeout(45000) })
       if (!response.ok) throw new Error('Tracking feed unavailable')
       const body = await response.json()
-      if (!Array.isArray(body.aircraft) || !['LIVE_ADSB', 'LIVE_TRACKING_API'].includes(body.data_origin)) throw new Error('Invalid tracking response')
+      if (!Array.isArray(body.aircraft) || !['LIVE_ADSB', 'LIVE_OPENSKY', 'LIVE_TRACKING_API'].includes(body.data_origin)) throw new Error('Invalid tracking response')
       const ids = new Set<string>()
       const aircraft = (body.aircraft as Aircraft[]).filter(a => {
         const id = a.icao24 || a.callsign

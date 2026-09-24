@@ -4,6 +4,7 @@ The response intentionally distinguishes position telemetry from schedules and
 fares. ADS-B data does not reliably contain origin/destination airport data.
 """
 from datetime import datetime, timezone
+import time
 from typing import Any
 
 import httpx
@@ -13,12 +14,46 @@ from app.core.config import settings
 router = APIRouter(prefix="/aviation", tags=["aviation"])
 
 ADSB_LOL_URL = "https://api.adsb.lol/v2/point/22.9734/78.6569/1000"
+OPENSKY_URL = "https://opensky-network.org/api/states/all"
 AVIATION_EDGE_URL = "https://aviation-edge.com/v2/public/flights"
 AVIATIONSTACK_URL = "https://api.aviationstack.com/v1/flights"
+CACHE_TTL_SECONDS = 45
+_live_cache: dict[str, Any] = {"expires_at": 0.0, "aircraft": [], "source": "", "data_origin": "", "retrieved_at": None}
 
 
 def _number(value: Any):
     return value if isinstance(value, (int, float)) else None
+
+
+def _normalize_opensky_states(states: Any, limit: int) -> list[dict]:
+    """Normalize OpenSky state vectors into the public aircraft contract."""
+    if not isinstance(states, list):
+        return []
+    aircraft = []
+    for item in states:
+        if not isinstance(item, list) or len(item) < 14:
+            continue
+        lat, lon = _number(item[6]), _number(item[5])
+        if lat is None or lon is None or not (6.0 <= lat <= 37.8 and 67.0 <= lon <= 98.0):
+            continue
+        aircraft.append({
+            "icao24": str(item[0] or "").strip(), "callsign": str(item[1] or "").strip(),
+            "registration": "", "aircraft_type": "", "latitude": lat, "longitude": lon,
+            "altitude_ft": round(float(item[7]) * 3.28084) if _number(item[7]) is not None else None,
+            "ground_speed_kts": round(float(item[9]) * 1.94384) if _number(item[9]) is not None else None,
+            "track_deg": _number(item[10]),
+            "vertical_rate_fpm": round(float(item[11]) * 196.8504) if _number(item[11]) is not None else None,
+            "on_ground": bool(item[8]), "seen_seconds": None,
+        })
+        if len(aircraft) >= limit:
+            break
+    return aircraft
+
+
+def _live_payload(source: str, data_origin: str, aircraft: list[dict], note: str) -> dict:
+    retrieved_at = datetime.now(timezone.utc).isoformat()
+    _live_cache.update({"expires_at": time.monotonic() + CACHE_TTL_SECONDS, "aircraft": aircraft, "source": source, "data_origin": data_origin, "retrieved_at": retrieved_at})
+    return {"source": source, "data_origin": data_origin, "retrieved_at": retrieved_at, "count": len(aircraft), "aircraft": aircraft, "note": note}
 
 
 async def _aviation_edge_aircraft(client: httpx.AsyncClient, limit: int) -> list[dict]:
@@ -110,58 +145,58 @@ async def flight_schedules(
 
 @router.get("/live")
 async def live_aircraft(limit: int = Query(default=150, ge=1, le=300)):
-    """Return recent aircraft positions within India from ADSB.lol."""
-    try:
-        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
-            if settings.AVIATION_EDGE_API_KEY:
-                try:
-                    aircraft = await _aviation_edge_aircraft(client, limit)
-                    if aircraft:
-                        return {
-                            "source": "Aviation Edge", "data_origin": "LIVE_TRACKING_API",
-                            "retrieved_at": datetime.now(timezone.utc).isoformat(), "count": len(aircraft),
-                            "aircraft": aircraft, "note": "Live positions from configured Aviation Edge account.",
-                        }
-                except httpx.HTTPError:
-                    # Do not take tracking offline merely because the optional provider fails.
-                    pass
+    """Return live aircraft with ADSB.lol primary and OpenSky fallback."""
+    limit = min(limit, 300)
+    if time.monotonic() < float(_live_cache["expires_at"]):
+        return {"source": _live_cache["source"], "data_origin": _live_cache["data_origin"],
+                "retrieved_at": _live_cache["retrieved_at"], "count": len(_live_cache["aircraft"]),
+                "aircraft": _live_cache["aircraft"][:limit], "note": "Cached live positions (45-second provider cache)."}
+
+    errors = []
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+        if settings.AVIATION_EDGE_API_KEY:
+            try:
+                aircraft = await _aviation_edge_aircraft(client, limit)
+                if aircraft:
+                    return _live_payload("Aviation Edge", "LIVE_TRACKING_API", aircraft, "Live positions from configured Aviation Edge account.")
+            except (httpx.HTTPError, ValueError) as exc:
+                errors.append(exc)
+
+        try:
             response = await client.get(ADSB_LOL_URL, headers={"User-Agent": "AeroPrice-India/2.1"})
             response.raise_for_status()
             payload = response.json()
-    except (httpx.HTTPError, ValueError) as exc:
-        raise HTTPException(status_code=502, detail="Live ADS-B provider is temporarily unavailable.") from exc
+            aircraft = []
+            for item in payload.get("ac", []):
+                lat, lon = _number(item.get("lat")), _number(item.get("lon"))
+                if lat is None or lon is None or not (6.0 <= lat <= 37.8 and 67.0 <= lon <= 98.0):
+                    continue
+                seen = _number(item.get("seen"))
+                if seen is not None and seen > 90:
+                    continue
+                aircraft.append({"icao24": str(item.get("hex") or "").strip(), "callsign": str(item.get("flight") or "").strip(),
+                    "registration": str(item.get("r") or "").strip(), "aircraft_type": str(item.get("t") or "").strip(),
+                    "latitude": lat, "longitude": lon, "altitude_ft": _number(item.get("alt_baro")),
+                    "ground_speed_kts": _number(item.get("gs")), "track_deg": _number(item.get("track")),
+                    "vertical_rate_fpm": _number(item.get("baro_rate")), "on_ground": item.get("alt_baro") == "ground", "seen_seconds": seen})
+                if len(aircraft) >= limit:
+                    break
+            if aircraft:
+                return _live_payload("ADSB.lol", "LIVE_ADSB", aircraft, "Live transponder positions; routes and fares are not inferred.")
+        except (httpx.HTTPError, ValueError, AttributeError) as exc:
+            errors.append(exc)
 
-    aircraft = []
-    for item in payload.get("ac", []):
-        lat, lon = _number(item.get("lat")), _number(item.get("lon"))
-        if lat is None or lon is None or not (6.0 <= lat <= 37.8 and 67.0 <= lon <= 98.0):
-            continue
-        seen = _number(item.get("seen"))
-        if seen is not None and seen > 90:
-            continue
-        aircraft.append({
-            "icao24": str(item.get("hex") or "").strip(),
-            "callsign": str(item.get("flight") or "").strip(),
-            "registration": str(item.get("r") or "").strip(),
-            "aircraft_type": str(item.get("t") or "").strip(),
-            "latitude": lat,
-            "longitude": lon,
-            "altitude_ft": _number(item.get("alt_baro")),
-            "ground_speed_kts": _number(item.get("gs")),
-            "track_deg": _number(item.get("track")),
-            "vertical_rate_fpm": _number(item.get("baro_rate")),
-            "on_ground": item.get("alt_baro") == "ground",
-            "seen_seconds": seen,
-        })
-        if len(aircraft) >= limit:
-            break
+        try:
+            response = await client.get(OPENSKY_URL, params={"lamin": 6, "lomin": 67, "lamax": 37.8, "lomax": 98})
+            response.raise_for_status()
+            aircraft = _normalize_opensky_states(response.json().get("states", []), limit)
+            if aircraft:
+                return _live_payload("OpenSky", "LIVE_OPENSKY", aircraft, "Live OpenSky positions used as the ADSB.lol fallback.")
+        except (httpx.HTTPError, ValueError, AttributeError) as exc:
+            errors.append(exc)
 
-    return {
-        "source": "ADSB.lol",
-        "data_origin": "LIVE_ADSB",
-        "license": "ODbL-1.0",
-        "retrieved_at": datetime.now(timezone.utc).isoformat(),
-        "count": len(aircraft),
-        "aircraft": aircraft,
-        "note": "Live transponder positions; routes and fares are not inferred.",
-    }
+    if _live_cache["aircraft"]:
+        return {"source": _live_cache["source"], "data_origin": _live_cache["data_origin"],
+                "retrieved_at": _live_cache["retrieved_at"], "count": len(_live_cache["aircraft"]),
+                "aircraft": _live_cache["aircraft"][:limit], "note": "Provider temporarily unavailable; showing the last cached positions."}
+    raise HTTPException(status_code=502, detail="Live aircraft providers are temporarily unavailable.")
