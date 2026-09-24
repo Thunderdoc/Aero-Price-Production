@@ -31,6 +31,10 @@ logging.basicConfig(
     level=getattr(logging, settings.LOG_LEVEL),
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
+# Provider request URLs can contain server-side credentials in query strings.
+# Never emit httpx/httpcore request URLs at production INFO level.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler()
