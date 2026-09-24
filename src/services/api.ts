@@ -5,10 +5,12 @@
  * backend and returns an honest unavailable state when it cannot be reached.
  */
 
-// Local development is a first-class mode: the bundled FastAPI server runs on
-// port 8000. Deployments can override this with VITE_API_URL.
+// Local development uses the bundled FastAPI server. Production builds use a
+// configured API origin when supplied, otherwise same-origin /api routes. The
+// old unconditional localhost fallback made deployed browsers call the user's
+// own computer and left every provider card stuck in CONNECTING.
 export const BASE_URL = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '')
-  || 'http://localhost:8000'
+  || (import.meta.env.DEV ? 'http://localhost:8000' : '')
 
 // ── Auth ───────────────────────────────────────────────────────────────────
 
