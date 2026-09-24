@@ -249,6 +249,10 @@ export default function AdminDashboard() {
   useEffect(() => {
     async function loadUsers() {
       if (tab !== 'users') return
+      // Firebase restores the session asynchronously. Do not send an
+      // unauthenticated request on the first render and then leave a stale
+      // 401 toast visible after the authenticated request succeeds.
+      if (!token) return
       try {
         const result = await apiAdminUsers(token ?? undefined)
         const remoteUsers = Array.isArray(result?.users)
@@ -275,7 +279,7 @@ export default function AdminDashboard() {
           })
         }
       } catch (error) {
-        showToast(`Unable to load Firebase users: ${error instanceof Error ? error.message : 'Admin API unavailable'}`)
+        showToast(`Unable to load users: ${error instanceof Error ? error.message : 'Admin API unavailable'}`)
       }
     }
     void loadUsers()
