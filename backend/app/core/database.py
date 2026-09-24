@@ -1,4 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy import text
 from sqlalchemy.orm import DeclarativeBase
 from app.core.config import settings
 
@@ -32,3 +33,13 @@ async def get_db() -> AsyncSession:
 async def create_all_tables():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Render deployments may already contain the original source_health
+        # table. create_all() does not alter existing tables, so add the
+        # telemetry columns introduced after the first production release.
+        if conn.dialect.name == "postgresql":
+            await conn.execute(text("""
+                ALTER TABLE source_health
+                ADD COLUMN IF NOT EXISTS enabled BOOLEAN DEFAULT FALSE,
+                ADD COLUMN IF NOT EXISTS quota_used INTEGER DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS freshness_minutes INTEGER
+            """))

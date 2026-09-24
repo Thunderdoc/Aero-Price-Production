@@ -485,6 +485,12 @@ async def run_collection(
                                     logger.warning("Raw payload store failed (non-fatal): %s", raw_err)
 
                     except Exception as e:
+                        # A provider/source-health write can fail after a
+                        # database constraint or schema error. PostgreSQL
+                        # marks the transaction aborted until rollback;
+                        # recover before trying the next provider so one bad
+                        # source cannot poison the entire collection run.
+                        await db.rollback()
                         logger.error(
                             f"Adapter {adapter.source_id} raised unexpectedly "
                             f"for {route} T+{advance_days}: {e}"
