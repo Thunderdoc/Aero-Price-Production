@@ -18,7 +18,10 @@ async def is_duplicate(db: AsyncSession, record: FareRecord) -> bool:
     """
     if not record.raw_hash:
         return False
-    window = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    # Pass a datetime to PostgreSQL's timestamptz column. Sending an ISO
+    # string makes asyncpg compare timestamp with time zone to varchar and
+    # aborts the entire collection transaction.
+    window = datetime.now(timezone.utc) - timedelta(hours=24)
     existing = await db.scalar(
         select(FareObservation.observation_id)
         .where(and_(
