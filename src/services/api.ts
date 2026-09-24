@@ -9,7 +9,11 @@
 // configured API origin when supplied, otherwise same-origin /api routes. The
 // old unconditional localhost fallback made deployed browsers call the user's
 // own computer and left every provider card stuck in CONNECTING.
-export const BASE_URL = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '')
+// Accept both the backend origin and an accidentally supplied `/api` suffix
+// so production never constructs `/api/api/...` request URLs.
+export const BASE_URL = (import.meta.env.VITE_API_URL as string | undefined)
+  ?.replace(/\/$/, '')
+  .replace(/\/api$/, '')
   || (import.meta.env.DEV ? 'http://localhost:8000' : '')
 
 // ── Auth ───────────────────────────────────────────────────────────────────
