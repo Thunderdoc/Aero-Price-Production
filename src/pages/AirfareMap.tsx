@@ -9,7 +9,7 @@ import { corridors as sampleCorridors, type Corridor } from '../data/sampleData'
 import { AIRPORTS } from '../data/airports'
 import { useLiveData } from '../hooks/useLiveData'
 import TrendIndicator from '../components/TrendIndicator'
-import { fetchAllCorridorFlights, type LiveFlight } from '../services/flightData'
+import { useAviationRadar } from '../services/aviationRadar'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -589,43 +589,23 @@ function RouteSidebar({ corridors, selectedId, onSelect }: RouteSidebarProps) {
 
 export default function AirfareMap() {
   const { connectionStatus } = useLiveData()
-  const [realFlights, setRealFlights] = useState<LiveFlight[]>([])
-  const [apiStatus, setApiStatus] = useState<'loading' | 'REAL' | 'UNAVAILABLE'>('loading')
+  const radar = useAviationRadar(true)
+  const apiStatus: 'loading' | 'REAL' | 'UNAVAILABLE' = radar.status === 'connected'
+    ? 'REAL'
+    : radar.status === 'loading'
+      ? 'loading'
+      : 'UNAVAILABLE'
 
-  // Fetch real flights from AviationStack on mount
-  useEffect(() => {
-    let cancelled = false
-    fetchAllCorridorFlights().then(results => {
-      if (cancelled) return
-      const allFlights = results.flatMap(r => r.flights)
-      if (allFlights.length > 0) {
-        setRealFlights(allFlights)
-        setApiStatus('REAL')
-      } else {
-        setApiStatus('UNAVAILABLE')
-      }
-    }).catch(() => {
-      if (!cancelled) setApiStatus('UNAVAILABLE')
-    })
-    return () => { cancelled = true }
-  }, [])
-
-  // Only provider-backed flights are rendered. Normalize provider records to
-  // the marker shape and ignore rows without usable coordinates.
-  const liveFlights = realFlights.flatMap((flight, index) => {
-    const fallbackAirport = AIRPORTS[flight.dep_iata] ?? AIRPORTS[flight.arr_iata]
-    const lat = Number(flight.latitude ?? fallbackAirport?.lat)
-    const lng = Number(flight.longitude ?? fallbackAirport?.lng)
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return []
-    return [{
-      icao24: `${flight.flight_iata || flight.registration || 'provider'}-${index}`,
-      lat,
-      lng,
-      callsign: flight.flight_iata || flight.registration || 'Provider flight',
-      altitude: Math.max(0, Number(flight.altitude_ft ?? 0) * 0.3048),
-    }]
-  })
-  const realFlightCount = realFlights.length
+  // Use the backend's live ADS-B contract directly. This avoids requiring an
+  // optional AviationStack schedules key just to place real aircraft markers.
+  const liveFlights = radar.aircraft.map(flight => ({
+    icao24: flight.icao24 || flight.callsign,
+    lat: flight.latitude,
+    lng: flight.longitude,
+    callsign: flight.callsign || flight.registration || flight.icao24,
+    altitude: Math.max(0, Number(flight.altitude_ft ?? 0) * 0.3048),
+  }))
+  const realFlightCount = liveFlights.length
 
   // sampleData corridors used for map arcs — sourced from Kaggle 2019 Indian flight prices dataset
   const corridors: Corridor[] = sampleCorridors
