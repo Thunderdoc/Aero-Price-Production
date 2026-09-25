@@ -6,8 +6,12 @@ import StatusBadge from '../components/StatusBadge'
 import TrendIndicator from '../components/TrendIndicator'
 import DataFreshness from '../components/DataFreshness'
 import { LineChart } from '../components/MiniChart'
-import { corridors, regionalData, routeWeights, priceHistoryData } from '../data/sampleData'
 import { useGovData } from '../hooks/useGovData'
+
+// Route fare matrices are intentionally empty until verified fare
+// observations arrive from an authorized provider. Do not render the old
+// checked-in sample corridors as government statistics.
+const corridors: any[] = []
 
 const MONTHS = ['Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep']
 
@@ -151,8 +155,8 @@ export default function GovernmentIntelligence() {
         ) : (
           <>
             <XCircle size={14} style={{ color: 'var(--color-warning)' }} />
-            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-success)', fontFamily: 'var(--font-sans)', letterSpacing: '0.05em' }}>30-YEAR LONGITUDINAL DATABASE ACTIVE</span>
-            <span style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>DGCA (1995–2026) · MoSPI CPI Transport Series · Live Airspace Telemetry</span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-warning)', fontFamily: 'var(--font-sans)', letterSpacing: '0.05em' }}>VERIFIED DATA AWAITING IMPORT</span>
+            <span style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>DGCA, MoSPI, PPAC, and data.gov.in sources are monitored without synthetic values.</span>
           </>
         )}
       </div>
@@ -313,7 +317,7 @@ export default function GovernmentIntelligence() {
             <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>SECTOR HEATMAP — FARE BY BOOKING WINDOW</div>
             <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginTop: 2 }}>Standard fare: one-way · adult · economy · cheapest non-stop</div>
           </div>
-          <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--color-success)', background: 'var(--color-success-bg)', padding: '2px 6px', borderRadius: 3, fontFamily: 'var(--font-sans)' }}>DGCA 30Y MATRIX</span>
+          <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--color-warning)', background: 'var(--color-warning-bg)', padding: '2px 6px', borderRadius: 3, fontFamily: 'var(--font-sans)' }}>AWAITING VERIFIED FARES</span>
         </div>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ borderCollapse: 'collapse', fontSize: 11, fontFamily: 'var(--font-mono)', width: '100%' }}>
@@ -352,7 +356,7 @@ export default function GovernmentIntelligence() {
             <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>ADVANCE-PURCHASE ELASTICITY</div>
             <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginTop: 2 }}>Fare vs days-in-advance per corridor</div>
           </div>
-          <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--color-success)', background: 'var(--color-success-bg)', padding: '2px 6px', borderRadius: 3, fontFamily: 'var(--font-sans)' }}>DGCA &amp; MoSPI 30Y INDEX</span>
+          <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--color-warning)', background: 'var(--color-warning-bg)', padding: '2px 6px', borderRadius: 3, fontFamily: 'var(--font-sans)' }}>AWAITING VERIFIED FARES</span>
         </div>
         {/* Corridor tabs */}
         <div style={{ display: 'flex', gap: 'var(--space-xs)', flexWrap: 'wrap', marginBottom: 'var(--space-lg)' }}>
