@@ -32,6 +32,11 @@ TIMEOUT = 30.0
 MAX_RETRIES = 3
 BACKOFF_BASE_S = 2.0  # wait 2s, 4s, 8s between retries
 
+
+def _safe_error(error: Exception) -> str:
+    """Return an error message without leaking query-string credentials."""
+    return re.sub(r"([?&]api-key=)[^&\s]+", r"\1[REDACTED]", str(error))[:500]
+
 GOV_DATASET_REGISTRY = [
     {
         "dataset_id": "dgca-pax",
@@ -130,12 +135,12 @@ async def _official_get(url: str) -> dict:
             last_exc = e
             # 4xx = not retryable (content not found, bad URL)
             if 400 <= e.response.status_code < 500:
-                logger.warning(f"Official source {url}: HTTP {e.response.status_code} — not retrying")
+                logger.warning(f"Official source {_safe_error(url)}: HTTP {e.response.status_code} — not retrying")
                 raise
-            logger.warning(f"Official source {url}: attempt {attempt}/{MAX_RETRIES} → HTTP {e.response.status_code}")
+            logger.warning(f"Official source {_safe_error(url)}: attempt {attempt}/{MAX_RETRIES} → HTTP {e.response.status_code}")
         except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as e:
             last_exc = e
-            logger.warning(f"Official source {url}: attempt {attempt}/{MAX_RETRIES} → {type(e).__name__}")
+            logger.warning(f"Official source {_safe_error(url)}: attempt {attempt}/{MAX_RETRIES} → {type(e).__name__}")
 
         if attempt < MAX_RETRIES:
             wait = BACKOFF_BASE_S * (2 ** (attempt - 1))
@@ -164,6 +169,8 @@ async def _upsert_dataset_status(
             row.record_count = record_count
         if failure_reason:
             row.failure_reason = failure_reason
+        elif status in ("CONNECTED", "HEALTHY"):
+            row.failure_reason = None
         if reference_period:
             row.reference_period = reference_period
     else:
@@ -244,8 +251,9 @@ async def fetch_dgca_monthly(db: AsyncSession) -> dict:
         return {"status": "CONNECTED", "records": records_saved}
 
     except Exception as e:
-        logger.error(f"DGCA monthly fetch failed: {e}")
-        await _upsert_dataset_status(db, "dgca-pax", "FAILED", failure_reason=str(e)[:500])
+        reason = _safe_error(e)
+        logger.error(f"DGCA monthly fetch failed: {reason}")
+        await _upsert_dataset_status(db, "dgca-pax", "FAILED", failure_reason=reason)
         return {"status": "FAILED", "error": str(e)}
 
 
@@ -374,8 +382,9 @@ async def fetch_mospi_cpi(db: AsyncSession) -> dict:
         return {"status": status, "records": total, "saved": saved, "updated": updated}
 
     except Exception as e:
-        logger.error(f"MoSPI fetch failed: {e}")
-        await _upsert_dataset_status(db, "mospi-esankhyiki", "FAILED", failure_reason=str(e)[:500])
+        reason = _safe_error(e)
+        logger.error(f"MoSPI fetch failed: {reason}")
+        await _upsert_dataset_status(db, "mospi-esankhyiki", "FAILED", failure_reason=reason)
         return {"status": "FAILED", "error": str(e)}
 
 
@@ -416,8 +425,9 @@ async def fetch_dgca_circulars(db: AsyncSession) -> dict:
             return {"status": "STALE", "records": 0}
 
     except Exception as e:
-        logger.error(f"DGCA circulars fetch failed: {e}")
-        await _upsert_dataset_status(db, "dgca-circulars", "FAILED", failure_reason=str(e)[:500])
+        reason = _safe_error(e)
+        logger.error(f"DGCA circulars fetch failed: {reason}")
+        await _upsert_dataset_status(db, "dgca-circulars", "FAILED", failure_reason=reason)
         return {"status": "FAILED", "error": str(e)}
 
 
@@ -434,8 +444,9 @@ async def fetch_dgca_fleet_source(db: AsyncSession) -> dict:
             failure_reason="Official source reachable; a machine-readable fleet table has not been published.")
         return {"status": "CONNECTED", "records": 0, "latency_ms": result["latency_ms"]}
     except Exception as e:
-        logger.error(f"DGCA fleet source check failed: {e}")
-        await _upsert_dataset_status(db, "dgca-fleet", "FAILED", failure_reason=str(e)[:500])
+        reason = _safe_error(e)
+        logger.error(f"DGCA fleet source check failed: {reason}")
+        await _upsert_dataset_status(db, "dgca-fleet", "FAILED", failure_reason=reason)
         return {"status": "FAILED", "error": str(e)}
 
 
@@ -489,8 +500,9 @@ async def fetch_ppac_atf_source(db: AsyncSession) -> dict:
             failure_reason="Imported official ATF export-duty rows; this is not a retail fuel-price quote.")
         return {"status": "HEALTHY", "records": saved, "latency_ms": result["latency_ms"]}
     except Exception as e:
-        logger.error(f"PPAC ATF source check failed: {e}")
-        await _upsert_dataset_status(db, "ppac-atf", "FAILED", failure_reason=str(e)[:500])
+        reason = _safe_error(e)
+        logger.error(f"PPAC ATF source check failed: {reason}")
+        await _upsert_dataset_status(db, "ppac-atf", "FAILED", failure_reason=reason)
         return {"status": "FAILED", "error": str(e)}
 
 
@@ -529,9 +541,15 @@ async def fetch_datagov_aviation(db: AsyncSession) -> dict:
             reference_period=str(payload.get("title") or "Official resource API"))
         return {"status": "CONNECTED", "records": len(records), "new_records": saved, "latency_ms": result["latency_ms"]}
     except Exception as e:
-        logger.error(f"data.gov.in aviation fetch failed: {e}")
-        await _upsert_dataset_status(db, "data-gov-in", "FAILED", failure_reason=str(e)[:500])
-        return {"status": "FAILED", "error": str(e)}
+        reason = _safe_error(e)
+        if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429:
+            reason = "data.gov.in rate limit reached; previously imported official records were retained."
+            await _upsert_dataset_status(db, "data-gov-in", "STALE", failure_reason=reason)
+            logger.warning(f"data.gov.in aviation fetch rate-limited: {reason}")
+            return {"status": "STALE", "records": 0, "reason": reason}
+        logger.error(f"data.gov.in aviation fetch failed: {reason}")
+        await _upsert_dataset_status(db, "data-gov-in", "FAILED", failure_reason=reason)
+        return {"status": "FAILED", "error": reason}
 
 
 async def run_gov_fetches(db: AsyncSession):
