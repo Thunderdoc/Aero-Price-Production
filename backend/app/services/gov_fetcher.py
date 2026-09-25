@@ -68,6 +68,15 @@ GOV_DATASET_REGISTRY = [
         "source_url": "https://data.gov.in/",
     },
     {
+        "dataset_id": "ppac-atf",
+        "source_name": "PPAC Aviation Turbine Fuel Publications",
+        "organization": "Petroleum Planning & Analysis Cell",
+        "access_type": "PUBLIC",
+        "api_key_required": "NO",
+        "format": "HTML/PDF",
+        "source_url": settings.PPAC_ATF_URL,
+    },
+    {
         "dataset_id": "dgca-fleet",
         "source_name": "DGCA Aircraft Fleet Reference",
         "organization": "Directorate General of Civil Aviation",
@@ -417,6 +426,27 @@ async def fetch_dgca_fleet_source(db: AsyncSession) -> dict:
         return {"status": "FAILED", "error": str(e)}
 
 
+async def fetch_ppac_atf_source(db: AsyncSession) -> dict:
+    """Verify PPAC's official ATF publication endpoint.
+
+    PPAC publishes ATF values through changing HTML/PDF publication pages. We
+    record reachability and provenance here; no value is stored until a table
+    row can be parsed and validated with a period, location, unit and price.
+    """
+    try:
+        result = await _official_get(settings.PPAC_ATF_URL)
+        text = BeautifulSoup(result["contents"], "lxml").get_text(" ", strip=True).lower()
+        if "aviation turbine fuel" not in text and "atf" not in text:
+            raise RuntimeError("PPAC response contained no ATF publication marker")
+        await _upsert_dataset_status(db, "ppac-atf", "HEALTHY", record_count=0,
+            failure_reason="Official publication reachable; structured ATF rows require PDF/table parsing.")
+        return {"status": "HEALTHY", "records": 0, "latency_ms": result["latency_ms"]}
+    except Exception as e:
+        logger.error(f"PPAC ATF source check failed: {e}")
+        await _upsert_dataset_status(db, "ppac-atf", "FAILED", failure_reason=str(e)[:500])
+        return {"status": "FAILED", "error": str(e)}
+
+
 async def run_gov_fetches(db: AsyncSession):
     """Run all government data fetches. Called by scheduler and /government/refresh."""
     logger.info("Starting government data refresh")
@@ -425,5 +455,6 @@ async def run_gov_fetches(db: AsyncSession):
     results["mospi_cpi"] = await fetch_mospi_cpi(db)
     results["dgca_circulars"] = await fetch_dgca_circulars(db)
     results["dgca_fleet"] = await fetch_dgca_fleet_source(db)
+    results["ppac_atf"] = await fetch_ppac_atf_source(db)
     logger.info(f"Government data refresh complete: {results}")
     return results

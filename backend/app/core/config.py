@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     # current CPI Transport file. Blank deliberately means "not configured".
     MOSPI_CPI_CSV_URL: str = ""
     DATAGOV_AVIATION_DATASET_ID: str = ""
+    DATAGOV_API_KEY: str = ""
+    PPAC_ATF_URL: str = "https://ppac.gov.in/prices/price-of-atf"
 
     # CORS
     ALLOWED_ORIGINS: str = "http://localhost:5173,http://localhost:8443"
