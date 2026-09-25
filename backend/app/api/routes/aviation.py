@@ -160,9 +160,12 @@ async def live_aircraft(limit: int = Query(default=150, ge=1, le=300)):
     """Return live aircraft with ADSB.lol primary and OpenSky fallback."""
     limit = min(limit, 300)
     if time.monotonic() < float(_live_cache["expires_at"]):
-        return {"source": _live_cache["source"], "data_origin": _live_cache["data_origin"], "provider_status": "CACHED",
+        # This is a short refresh cache of a successful provider response, not
+        # stale fallback data. Keep the feed LIVE until the provider actually
+        # fails after the cache expires.
+        return {"source": _live_cache["source"], "data_origin": _live_cache["data_origin"], "provider_status": "LIVE",
                 "retrieved_at": _live_cache["retrieved_at"], "count": len(_live_cache["aircraft"]),
-                "aircraft": _live_cache["aircraft"][:limit], "note": "Cached live positions (45-second provider cache)."}
+                "aircraft": _live_cache["aircraft"][:limit], "note": "Recent live provider response (45-second refresh cache)."}
 
     errors = []
     async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
