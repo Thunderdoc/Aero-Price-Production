@@ -88,7 +88,9 @@ class Settings(BaseSettings):
 
     @property
     def allowed_origins_list(self) -> List[str]:
-        return [o.strip() for o in self.ALLOWED_ORIGINS.split(",")]
+        # Browsers send an Origin without a trailing slash. Normalize the
+        # Render/Vercel setting so either pasted form works reliably.
+        return [origin.strip().rstrip("/") for origin in self.ALLOWED_ORIGINS.split(",") if origin.strip()]
 
     @property
     def sqlalchemy_database_url(self) -> str:

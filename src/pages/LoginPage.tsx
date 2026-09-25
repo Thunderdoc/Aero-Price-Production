@@ -331,6 +331,29 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           border-top: 1px solid rgba(226,232,240,.16);
           padding-top: 18px;
         }
+        .ap-team-link {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 44px;
+          padding: 0 18px;
+          border: 1px solid rgba(147,197,253,.55);
+          border-radius: 12px;
+          color: #fff;
+          background: linear-gradient(135deg, rgba(8,124,251,.92), rgba(37,99,235,.78));
+          font-weight: 800;
+          text-decoration: none;
+          font-size: 14px;
+          letter-spacing: .01em;
+          box-shadow: 0 10px 24px rgba(2,8,23,.28), inset 0 1px 0 rgba(255,255,255,.2);
+          transition: background .2s ease, transform .2s ease, box-shadow .2s ease;
+        }
+        .ap-team-link:hover {
+          color: #fff;
+          background: linear-gradient(135deg, rgba(14,165,233,.98), rgba(37,99,235,.95));
+          transform: translateY(-2px);
+          box-shadow: 0 14px 28px rgba(2,8,23,.34), inset 0 1px 0 rgba(255,255,255,.24);
+        }
         .ap-panel {
           position: relative;
           z-index: 1;
@@ -612,8 +635,23 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           border: 1px solid #b9c5e6;
           background: #fff;
           color: #091052;
-          margin-top: 9px;
+          margin-top: 16px;
           box-shadow: 0 10px 26px rgba(15,23,42,.08);
+        }
+        .ap-google-wrap {
+          margin-top: 16px;
+          padding-top: 14px;
+          border-top: 1px solid #e2e8f0;
+        }
+        .ap-google-label {
+          display: block;
+          margin-bottom: 8px;
+          color: #64748b;
+          font-size: 11px;
+          font-weight: 750;
+          text-align: center;
+          letter-spacing: .04em;
+          text-transform: uppercase;
         }
         .ap-submit:disabled, .ap-google:disabled {
           opacity: .65;
@@ -755,6 +793,9 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           .ap-security {
             grid-template-columns: 1fr;
           }
+          .ap-team-link {
+            width: 100%;
+          }
         }
       `}</style>
 
@@ -790,6 +831,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           <span>✈ Route intelligence</span>
           <span>◈ Secure access</span>
           <span>◎ DGCA workspace</span>
+          <a className="ap-team-link" href="https://99240040193.github.io/aero-price-production_our_team_details/" target="_blank" rel="noreferrer">Meet the team ↗</a>
         </footer>
       </section>
 
@@ -916,37 +958,18 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
             </button>
           </form>
 
-          <button className="ap-google" type="button" onClick={handleGoogleAuth} disabled={googleLoading}>
-            <svg width="19" height="19" viewBox="0 0 24 24" aria-hidden="true">
-              <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-              <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-              <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
-              <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
-            </svg>
-            {googleLoading ? 'Connecting...' : 'Continue with Google'}
-          </button>
-
-          <a
-            href="https://99240040193.github.io/aero-price-production_our_team_details/"
-            target="_blank"
-            rel="noreferrer"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              minHeight: 42,
-              marginTop: 12,
-              border: '1px solid rgba(7, 91, 232, 0.24)',
-              borderRadius: 12,
-              color: '#075be8',
-              background: 'rgba(255,255,255,0.72)',
-              fontWeight: 750,
-              textDecoration: 'none',
-              fontSize: 14,
-            }}
-          >
-            SIH 2026 · Meet the Team
-          </a>
+          <div className="ap-google-wrap">
+            <span className="ap-google-label">Or use a connected account</span>
+            <button className="ap-google" type="button" onClick={handleGoogleAuth} disabled={googleLoading}>
+              <svg width="19" height="19" viewBox="0 0 24 24" aria-hidden="true">
+                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+              </svg>
+              {googleLoading ? 'Connecting...' : 'Continue with Google'}
+            </button>
+          </div>
 
           <div className="ap-security" aria-label="Security notes">
             <div><ShieldCheck size={22} /><span>Secure access</span></div>
