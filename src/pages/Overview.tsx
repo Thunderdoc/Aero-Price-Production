@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ArrowRight, BarChart3, Bell, CalendarDays, CheckCircle2, GitBranch, Map as MapIcon, Plane, Tag, TrendingDown, TrendingUp } from 'lucide-react'
 import UpgradeModal from '../components/UpgradeModal'
 import { useAuth } from '../contexts/AuthContext'
-import { apiDashboard, apiFareMovement, apiFares, BASE_URL, isBackendAvailable } from '../services/api'
+import { apiDashboard, apiFareMovement, apiFares, BASE_URL } from '../services/api'
 
 // Version the public hero asset so Vercel/browser caches cannot keep an older
 // dashboard image after a deployment.
@@ -234,21 +234,21 @@ export default function Overview({ onNavigate }: Props) {
 
   useEffect(() => {
     let active = true
-    isBackendAvailable().then(available => {
-      if (!available) return
-      apiDashboard(token ?? undefined).then(data => {
-        if (!active) return
-        setRoutesTracked(data.routes_tracked ?? null)
-        setVerifiedObservations(data.real_observations ?? null)
-        setPriceDrops(data.price_drops ?? null)
-        setLatestIndex(data.index_value ?? null)
-      }).catch(() => {})
-      apiFareMovement(token ?? undefined).then(data => {
-        if (!active) return
-        setFareMovement(data)
-        setPriceDrops(data.price_drops ?? null)
-      }).catch(() => {})
-    })
+    // Do not gate these requests behind a short health probe. Vercel cold
+    // starts can exceed the probe timeout while the actual API request still
+    // succeeds, which previously left every dashboard KPI stuck at null.
+    apiDashboard(token ?? undefined).then(data => {
+      if (!active) return
+      setRoutesTracked(data.routes_tracked ?? null)
+      setVerifiedObservations(data.real_observations ?? null)
+      setPriceDrops(data.price_drops ?? null)
+      setLatestIndex(data.index_value ?? null)
+    }).catch(() => {})
+    apiFareMovement(token ?? undefined).then(data => {
+      if (!active) return
+      setFareMovement(data)
+      setPriceDrops(data.price_drops ?? null)
+    }).catch(() => {})
     return () => { active = false }
   }, [token])
 
