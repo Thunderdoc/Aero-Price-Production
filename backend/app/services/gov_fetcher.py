@@ -306,9 +306,13 @@ async def fetch_mospi_cpi(db: AsyncSession) -> dict:
                     })
                     login.raise_for_status()
                     login_body = login.json()
-                    token = (login_body.get("token") or login_body.get("Token") or login_body.get("access_token")
-                             or login_body.get("response", {}).get("token") or login_body.get("response", {}).get("Token")
-                             or login_body.get("response", {}).get("access_token"))
+                    response_body = login_body.get("response")
+                    response_token = response_body if isinstance(response_body, str) else (
+                        response_body.get("token") or response_body.get("Token")
+                        or response_body.get("access_token") if isinstance(response_body, dict) else None
+                    )
+                    token = (login_body.get("token") or login_body.get("Token")
+                             or login_body.get("access_token") or response_token)
                     if not token:
                         raise RuntimeError("MoSPI login succeeded without an access token")
                     headers["Authorization"] = f"Bearer {token}"
