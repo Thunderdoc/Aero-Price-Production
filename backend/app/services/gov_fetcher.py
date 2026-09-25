@@ -296,16 +296,19 @@ async def fetch_mospi_cpi(db: AsyncSession) -> dict:
             headers = {"accept": "application/json", "Content-Type": "application/json"}
             if settings.MOSPI_API_EMAIL and settings.MOSPI_API_PASSWORD:
                 async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True, trust_env=False, verify=mospi_tls) as client:
-                    # The current portal accepts the registration username;
-                    # older documentation describes the same value as email.
-                    # Send both names so either deployed schema is supported.
+                    # The current portal uses the registration username. The
+                    # registration guide describes that username as an email
+                    # address, but the login route rejects duplicate identity
+                    # fields, so send only the canonical username field.
                     login = await client.post("https://api.mospi.gov.in/api/users/login", json={
                         "username": settings.MOSPI_API_EMAIL,
-                        "email": settings.MOSPI_API_EMAIL,
                         "password": settings.MOSPI_API_PASSWORD,
                     })
                     login.raise_for_status()
-                    login_body = login.json()
+                    try:
+                        login_body = login.json()
+                    except ValueError as exc:
+                        raise RuntimeError("MoSPI login returned a non-JSON response") from exc
                     response_body = login_body.get("response")
                     response_token = response_body if isinstance(response_body, str) else (
                         response_body.get("token") or response_body.get("Token")
