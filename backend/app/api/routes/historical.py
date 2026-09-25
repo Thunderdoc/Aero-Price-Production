@@ -6,8 +6,9 @@ reference. It is intentionally excluded from the live price index.
 from datetime import datetime, timezone
 from pathlib import Path
 import hashlib
+from datetime import date
 
-import pandas as pd
+from openpyxl import load_workbook
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,8 +30,15 @@ ORIGIN = "HISTORICAL_SNAPSHOT"
 
 
 def _date(value) -> str:
-    parsed = pd.to_datetime(value, dayfirst=True, errors="coerce")
-    return parsed.strftime("%Y-%m-%d") if not pd.isna(parsed) else "2019-01-01"
+    if isinstance(value, (datetime, date)):
+        return value.strftime("%Y-%m-%d")
+    text = str(value or "").strip()
+    for fmt in ("%d/%m/%Y", "%d/%m/%Y %H:%M", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return "2019-01-01"
 
 
 @router.get("/summary")
@@ -70,17 +78,24 @@ async def backfill_historical_snapshot(
         raise HTTPException(status_code=404, detail=f"Historical workbook not found: {WORKBOOK.name}")
 
     try:
-        frame = pd.read_excel(WORKBOOK)
+        workbook = load_workbook(WORKBOOK, read_only=True, data_only=True)
+        sheet = workbook.active
+        rows = sheet.iter_rows(values_only=True)
+        headers = [str(value or "") for value in next(rows)]
+        frame_rows = [dict(zip(headers, row)) for row in rows]
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Could not read historical workbook: {exc}") from exc
 
     imported = 0
     now = datetime.now(timezone.utc)
-    for row in frame.to_dict(orient="records"):
+    for row in frame_rows:
         origin_city, destination_city = str(row.get("Source", "")), str(row.get("Destination", ""))
         origin, destination = CITY_CODES.get(origin_city), CITY_CODES.get(destination_city)
-        fare = pd.to_numeric(row.get("Price"), errors="coerce")
-        if not origin or not destination or pd.isna(fare) or float(fare) <= 0:
+        try:
+            fare = float(row.get("Price"))
+        except (TypeError, ValueError):
+            fare = 0.0
+        if not origin or not destination or fare <= 0:
             continue
         raw = f"{origin_city}|{destination_city}|{row.get('Date_of_Journey')}|{row.get('Airline')}|{fare}"
         db.add(FareObservation(
