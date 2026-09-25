@@ -296,7 +296,11 @@ async def fetch_mospi_cpi(db: AsyncSession) -> dict:
             headers = {"accept": "application/json", "Content-Type": "application/json"}
             if settings.MOSPI_API_EMAIL and settings.MOSPI_API_PASSWORD:
                 async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True, trust_env=False, verify=mospi_tls) as client:
+                    # The current portal accepts the registration username;
+                    # older documentation describes the same value as email.
+                    # Send both names so either deployed schema is supported.
                     login = await client.post("https://api.mospi.gov.in/api/users/login", json={
+                        "username": settings.MOSPI_API_EMAIL,
                         "email": settings.MOSPI_API_EMAIL,
                         "password": settings.MOSPI_API_PASSWORD,
                     })
