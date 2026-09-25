@@ -11,10 +11,14 @@
 // own computer and left every provider card stuck in CONNECTING.
 // Accept both the backend origin and an accidentally supplied `/api` suffix
 // so production never constructs `/api/api/...` request URLs.
-export const BASE_URL = (import.meta.env.VITE_API_URL as string | undefined)
-  ?.replace(/\/$/, '')
-  .replace(/\/api$/, '')
-  || (import.meta.env.DEV ? 'http://localhost:8000' : '')
+// Production must use the same-origin Vercel API. A stale VITE_API_URL from a
+// previous Render deployment would otherwise send the browser to a different
+// backend, where the verified demo account and snapshot are not available.
+export const BASE_URL = import.meta.env.DEV
+  ? ((import.meta.env.VITE_API_URL as string | undefined)
+      ?.replace(/\/$/, '')
+      .replace(/\/api$/, '') || 'http://localhost:8000')
+  : ''
 
 // ── Auth ───────────────────────────────────────────────────────────────────
 
