@@ -19,6 +19,7 @@ AVIATION_EDGE_URL = "https://aviation-edge.com/v2/public/flights"
 AVIATIONSTACK_URL = "https://api.aviationstack.com/v1/flights"
 CACHE_TTL_SECONDS = 45
 _live_cache: dict[str, Any] = {"expires_at": 0.0, "aircraft": [], "source": "", "data_origin": "", "retrieved_at": None}
+_schedule_cache: dict[str, dict[str, Any]] = {}
 
 
 def _number(value: Any):
@@ -53,7 +54,7 @@ def _normalize_opensky_states(states: Any, limit: int) -> list[dict]:
 def _live_payload(source: str, data_origin: str, aircraft: list[dict], note: str) -> dict:
     retrieved_at = datetime.now(timezone.utc).isoformat()
     _live_cache.update({"expires_at": time.monotonic() + CACHE_TTL_SECONDS, "aircraft": aircraft, "source": source, "data_origin": data_origin, "retrieved_at": retrieved_at})
-    return {"source": source, "data_origin": data_origin, "retrieved_at": retrieved_at, "count": len(aircraft), "aircraft": aircraft, "note": note}
+    return {"source": source, "data_origin": data_origin, "provider_status": "LIVE", "retrieved_at": retrieved_at, "count": len(aircraft), "aircraft": aircraft, "note": note}
 
 
 async def _aviation_edge_aircraft(client: httpx.AsyncClient, limit: int) -> list[dict]:
@@ -99,8 +100,12 @@ async def flight_schedules(
     Position telemetry remains at /aviation/live; this endpoint intentionally
     does not infer a route from an ADS-B transponder signal.
     """
+    cache_key = f"{departure.upper()}:{(arrival or '').upper()}"
+    cached = _schedule_cache.get(cache_key)
     if not settings.AVIATIONSTACK_API_KEY:
-        raise HTTPException(status_code=503, detail="AviationStack is not configured on this server.")
+        if cached:
+            return {**cached, "status": "LAST_KNOWN", "note": "Current schedule provider is not configured; showing the last valid response."}
+        return {"source": "No schedule provider", "data_origin": "POSITION_ONLY", "retrieved_at": None, "count": 0, "flights": [], "status": "POSITION_ONLY", "note": "No authorized schedule provider is configured."}
     params = {
         "access_key": settings.AVIATIONSTACK_API_KEY,
         "dep_iata": departure.upper(),
@@ -113,13 +118,15 @@ async def flight_schedules(
             response = await client.get(AVIATIONSTACK_URL, params=params)
             response.raise_for_status()
             payload = response.json()
-    except httpx.HTTPStatusError as exc:
-        raise HTTPException(status_code=502, detail=f"AviationStack returned HTTP {exc.response.status_code}.") from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise HTTPException(status_code=502, detail="AviationStack is temporarily unavailable.") from exc
+    except (httpx.HTTPError, ValueError):
+        if cached:
+            return {**cached, "status": "LAST_KNOWN", "note": "Schedule provider failed; showing the last valid response."}
+        return {"source": "Aircraft position feed", "data_origin": "POSITION_ONLY", "retrieved_at": None, "count": 0, "flights": [], "status": "POSITION_ONLY", "note": "No schedule response; use the live aircraft feed for current positions."}
     if payload.get("error"):
         # Never return a provider key or request URL in the browser response.
-        raise HTTPException(status_code=502, detail=f"AviationStack rejected the request: {payload['error'].get('message', 'unknown error')}")
+        if cached:
+            return {**cached, "status": "LAST_KNOWN", "note": "Schedule provider rejected the request; showing the last valid response."}
+        return {"source": "Aircraft position feed", "data_origin": "POSITION_ONLY", "retrieved_at": None, "count": 0, "flights": [], "status": "POSITION_ONLY", "note": "No schedule response; use the live aircraft feed for current positions."}
     rows = []
     for item in payload.get("data", []):
         dep, arr, airline, flight = item.get("departure", {}), item.get("arrival", {}), item.get("airline", {}), item.get("flight", {})
@@ -137,10 +144,15 @@ async def flight_schedules(
             "dep_actual": dep.get("actual"),
             "arr_actual": arr.get("actual"),
         })
-    return {
+    payload_out = {
         "source": "AviationStack", "data_origin": "LIVE_SCHEDULE_API",
-        "retrieved_at": datetime.now(timezone.utc).isoformat(), "count": len(rows), "flights": rows,
+        "retrieved_at": datetime.now(timezone.utc).isoformat(), "count": len(rows), "flights": rows, "status": "LIVE",
     }
+    if rows:
+        _schedule_cache[cache_key] = payload_out
+    elif cached:
+        return {**cached, "status": "LAST_KNOWN", "note": "Provider returned no current rows; showing the last valid response."}
+    return payload_out
 
 
 @router.get("/live")
@@ -148,7 +160,7 @@ async def live_aircraft(limit: int = Query(default=150, ge=1, le=300)):
     """Return live aircraft with ADSB.lol primary and OpenSky fallback."""
     limit = min(limit, 300)
     if time.monotonic() < float(_live_cache["expires_at"]):
-        return {"source": _live_cache["source"], "data_origin": _live_cache["data_origin"],
+        return {"source": _live_cache["source"], "data_origin": _live_cache["data_origin"], "provider_status": "CACHED",
                 "retrieved_at": _live_cache["retrieved_at"], "count": len(_live_cache["aircraft"]),
                 "aircraft": _live_cache["aircraft"][:limit], "note": "Cached live positions (45-second provider cache)."}
 
@@ -196,7 +208,9 @@ async def live_aircraft(limit: int = Query(default=150, ge=1, le=300)):
             errors.append(exc)
 
     if _live_cache["aircraft"]:
-        return {"source": _live_cache["source"], "data_origin": _live_cache["data_origin"],
+        return {"source": _live_cache["source"], "data_origin": _live_cache["data_origin"], "provider_status": "CACHED",
                 "retrieved_at": _live_cache["retrieved_at"], "count": len(_live_cache["aircraft"]),
                 "aircraft": _live_cache["aircraft"][:limit], "note": "Provider temporarily unavailable; showing the last cached positions."}
-    raise HTTPException(status_code=502, detail="Live aircraft providers are temporarily unavailable.")
+    return {"source": "Aircraft providers", "data_origin": "ERROR", "provider_status": "ERROR",
+            "retrieved_at": None, "count": 0, "aircraft": [],
+            "note": "Live aircraft providers are temporarily unavailable."}

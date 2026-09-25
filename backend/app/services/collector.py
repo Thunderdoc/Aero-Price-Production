@@ -31,9 +31,6 @@ from app.collectors.challenge import (
     SpiceJetAdapter, AirIndiaExpressAdapter,
 )
 from app.collectors.aggregators.amadeus import AmadeusAdapter
-from app.collectors.aggregators.serpapi_google_flights import SerpApiGoogleFlightsAdapter
-from app.collectors.google_flights import GoogleFlightsAdapter
-from app.collectors.google_flights_playwright import GoogleFlightsPlaywrightAdapter
 from app.collectors.duffel import DuffelAdapter, SOURCE_ID as DUFFEL_SOURCE_ID
 
 logger = logging.getLogger(__name__)
@@ -200,29 +197,6 @@ DUFFEL_SOURCE = {
 }
 AIRFARE_SOURCE_REGISTRY.append(DUFFEL_SOURCE)
 
-SERPAPI_SOURCE = {
-    "id": "serpapi-google-flights", "name": "SerpApi Google Flights", "type": "AGGREGATOR",
-    "status": "CONFIGURED" if settings.SERPAPI_API_KEY else "NOT_CONFIGURED", "robots_txt": "ALLOWED",
-    "captcha_detected": False, "api_available": True,
-    "note": "Authorized Google Flights results. Collected at T+7 once per route to protect quota.",
-    "credential_vars": ["SERPAPI_API_KEY"],
-}
-AIRFARE_SOURCE_REGISTRY.append(SERPAPI_SOURCE)
-
-OPEN_SOURCE_FLIGHTS_SOURCE = {
-    "id": "google-flights", "name": "Google Flights (open-source fast-flights)", "type": "AGGREGATOR",
-    "status": "CONFIGURED", "robots_txt": "UNKNOWN", "captcha_detected": False,
-    "api_available": True,
-    "note": "No-key, low-volume collector. May return CHALLENGE_DETECTED if Google limits automated requests.",
-    "credential_vars": [],
-}
-AIRFARE_SOURCE_REGISTRY.append(OPEN_SOURCE_FLIGHTS_SOURCE)
-PLAYWRIGHT_SOURCE = {
-    "id": "google-flights-playwright", "name": "Google Flights (Playwright public UI)", "type": "AGGREGATOR",
-    "status": "CONFIGURED", "robots_txt": "UNKNOWN", "captcha_detected": False, "api_available": True,
-    "note": "Low-volume public UI collector; may be BLOCKED by Google without bypassing controls.", "credential_vars": [],
-}
-AIRFARE_SOURCE_REGISTRY.append(PLAYWRIGHT_SOURCE)
 
 
 def _make_adapters() -> list[FareSourceAdapter]:
@@ -245,12 +219,8 @@ def _make_adapters() -> list[FareSourceAdapter]:
         "AMADEUS_BASE_URL": settings.AMADEUS_BASE_URL,
     }
     duffel_cfg = {"DUFFEL_API_TOKEN": settings.DUFFEL_API_TOKEN}
-    serpapi_cfg = {"SERPAPI_API_KEY": settings.SERPAPI_API_KEY}
 
     adapters: list[FareSourceAdapter] = [
-        GoogleFlightsPlaywrightAdapter(),
-        GoogleFlightsAdapter({"GOOGLE_FLIGHTS_ENABLED": True}),
-        SerpApiGoogleFlightsAdapter(serpapi_cfg),
         DuffelAdapter(duffel_cfg),     # authorized Duffel REST API — REAL or SANDBOX_TEST
         IndiGoAdapter(airline_cfg),    # CHALLENGE_DETECTED until NDC credentials provided
         AirIndiaAdapter(airline_cfg),

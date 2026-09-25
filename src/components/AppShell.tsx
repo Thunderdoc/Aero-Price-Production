@@ -601,7 +601,7 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
 
           {/* Right status */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 'auto', flexShrink: 0 }}>
-            {isAviation ? <div className={`av-feed-status ${radar.status === 'connected' ? '' : 'pending'}`} aria-live="polite"><span><i/>{radar.status === 'connected' ? 'LIVE DATA FEEDS' : radar.status === 'loading' ? 'CONNECTING' : 'FEED UNAVAILABLE'}{radar.retrievedAt && radar.status === 'connected' ? ` · ${new Date(radar.retrievedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }).toUpperCase()} IST` : ''}</span><span><Radio size={10}/>{radar.status === 'connected' ? 'PROVIDER CONNECTED' : 'PROVIDER PENDING'}</span></div> : <DataStatusBanner
+            {isAviation ? <div className={`av-feed-status ${radar.status === 'connected' ? '' : 'pending'}`} aria-live="polite"><span><i/>{radar.status === 'connected' ? 'LIVE DATA FEEDS' : radar.status === 'cached' ? 'CACHED DATA' : radar.status === 'loading' ? 'CONNECTING' : 'RETRYING FEED'}{radar.retrievedAt ? ` · ${new Date(radar.retrievedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }).toUpperCase()} IST` : ''}</span><span><Radio size={10}/>{radar.status === 'connected' ? 'PROVIDER CONNECTED' : radar.status === 'cached' ? 'LAST VALID RESPONSE' : 'REFRESHING'}</span></div> : <DataStatusBanner
               anyGovConnected={govData.anyConnected}
               fareFeedConnected={fareFeed.connected}
               verifiedObservations={fareFeed.observations}

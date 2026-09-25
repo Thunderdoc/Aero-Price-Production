@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Bell, Trash2, Plus, Lock, Mail, MessageSquare, CheckCircle, BarChart3, FileDown } from 'lucide-react'
+import { Bell, Trash2, Plus, Lock, Mail, CheckCircle, BarChart3, FileDown } from 'lucide-react'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
 import { Modal } from '../components/ui/Modal'
@@ -12,7 +12,7 @@ const CITY_OPTIONS = ['DEL', 'BOM', 'BLR', 'MAA', 'CCU', 'HYD', 'AMD', 'GOI']
 
 interface TrackForm {
   from: string; to: string; date: string; threshold: number
-  notifyEmail: boolean; notifyWhatsApp: boolean; frequency: 'IMMEDIATE' | 'DAILY'
+  notifyEmail: boolean; frequency: 'IMMEDIATE' | 'DAILY'
 }
 interface UserPriceAlert {
   id: string; route: string; targetFare: number; currentFare: number | null; triggered: boolean; createdAt: string
@@ -20,7 +20,7 @@ interface UserPriceAlert {
 
 const INITIAL_FORM: TrackForm = {
   from: 'DEL', to: 'BOM', date: '', threshold: 5000,
-  notifyEmail: true, notifyWhatsApp: false, frequency: 'IMMEDIATE',
+  notifyEmail: true, frequency: 'IMMEDIATE',
 }
 
 const inputStyle: React.CSSProperties = {
@@ -55,7 +55,6 @@ export default function PriceAlerts({ onNavigate }: { onNavigate?: (page: Page) 
   const [showUpgrade, setShowUpgrade] = useState(false)
   const [form, setForm] = useState<TrackForm>(INITIAL_FORM)
   const [emailEnabled, setEmailEnabled] = useState(true)
-  const [whatsappEnabled, setWhatsappEnabled] = useState(false)
   const [savedKey, setSavedKey] = useState<string | null>(null)
 
   function flashSaved(key: string) {
@@ -261,7 +260,6 @@ export default function PriceAlerts({ onNavigate }: { onNavigate?: (page: Page) 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {([
             { icon: Mail, label: 'Email Notifications', sub: 'Get fare alerts in your inbox', key: 'email', enabled: emailEnabled, toggle: () => { setEmailEnabled(v => !v); flashSaved('email') } },
-            { icon: MessageSquare, label: 'WhatsApp Notifications', sub: 'Get alerts via WhatsApp', key: 'whatsapp', enabled: whatsappEnabled, toggle: () => { setWhatsappEnabled(v => !v); flashSaved('whatsapp') } },
           ] as const).map(({ icon: Icon, label, sub, key, enabled, toggle }) => (
             <div key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderRadius: 8, background: 'var(--color-surface-secondary)' }}>
               <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>

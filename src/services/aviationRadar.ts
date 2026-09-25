@@ -9,7 +9,8 @@ export type Aircraft = {
 }
 export type RadarSnapshot = {
   aircraft: Aircraft[]; source: string; retrievedAt: string | null
-  status: 'loading' | 'connected' | 'unavailable'; refreshing: boolean
+  status: 'loading' | 'connected' | 'cached' | 'empty' | 'unavailable'; refreshing: boolean
+  providerStatus?: 'LIVE' | 'CACHED' | 'EMPTY' | 'ERROR'
   history: { time: string; aircraft: Aircraft[] }[]
 }
 let snapshot: RadarSnapshot = { aircraft: [], source: '', retrievedAt: null, status: 'loading', refreshing: false, history: [] }
@@ -35,10 +36,11 @@ export function refreshRadar(): Promise<void> {
         ids.add(id); return true
       })
       const time = typeof body.retrieved_at === 'string' && Number.isFinite(Date.parse(body.retrieved_at)) ? body.retrieved_at : null
-      publish({ aircraft, source: body.source || 'Aircraft feed', retrievedAt: time, status: 'connected', refreshing: false,
+      const providerStatus = body.provider_status === 'CACHED' ? 'CACHED' : aircraft.length ? 'LIVE' : 'EMPTY'
+      publish({ aircraft: aircraft.length ? aircraft : snapshot.aircraft, source: body.source || 'Aircraft feed', retrievedAt: time ?? snapshot.retrievedAt, status: providerStatus === 'CACHED' ? 'cached' : providerStatus === 'LIVE' ? 'connected' : 'empty', providerStatus, refreshing: false,
         history: time ? [...snapshot.history, { time, aircraft }].slice(-30) : snapshot.history })
     } catch {
-      publish({ ...snapshot, aircraft: [], status: 'unavailable', refreshing: false })
+      publish({ ...snapshot, status: snapshot.aircraft.length ? 'cached' : 'unavailable', providerStatus: snapshot.aircraft.length ? 'CACHED' : 'ERROR', refreshing: false })
     } finally { pending = null }
   })()
   return pending

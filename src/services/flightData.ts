@@ -2,8 +2,6 @@
 // Keys loaded from .env (gitignored). Never hardcode keys in source.
 import { BASE_URL } from './api'
 
-const EF_KEY       = import.meta.env.VITE_EF_API_KEY as string
-const IGNAV_KEY    = import.meta.env.VITE_IGNAV_API_KEY as string
 
 export interface LiveFlight {
   flight_iata: string
@@ -26,6 +24,7 @@ export interface LiveFlight {
   registration?: string
   aircraft_type?: string
   source?: string
+  freshness?: 'LIVE' | 'RECENT CACHE' | 'LAST KNOWN' | 'OFFICIAL PUBLISHED' | 'POSITION ONLY'
 }
 
 export interface LiveFare {
@@ -188,7 +187,7 @@ export async function fetchAllCorridorFlights(): Promise<Array<{ flights: LiveFl
             flight_iata: callsign || String(a.registration ?? a.icao24 ?? ''),
             airline_name: airlines[prefix] ?? 'Live ADS-B aircraft',
             airline_iata: prefix,
-            dep_iata: 'AIRSPACE', dep_city: 'India airspace', arr_iata: 'LIVE', arr_city: 'Live position',
+            dep_iata: '', dep_city: '', arr_iata: '', arr_city: '',
             dep_scheduled: '', arr_scheduled: '', status: 'active',
             dep_actual: null, arr_actual: null,
             latitude: Number(a.latitude), longitude: Number(a.longitude),
@@ -198,6 +197,7 @@ export async function fetchAllCorridorFlights(): Promise<Array<{ flights: LiveFl
             registration: String(a.registration ?? ''),
             aircraft_type: String(a.aircraft_type ?? ''),
             source: body.source ?? 'ADSB.lol',
+            freshness: body.provider_status === 'CACHED' ? 'RECENT CACHE' : 'POSITION ONLY',
           }
         })
         return [{ flights, source: 'REAL' as const }]
@@ -213,25 +213,25 @@ export async function fetchAllCorridorFlights(): Promise<Array<{ flights: LiveFl
 }
 
 // ── EF API (ak_live_ key) ─────────────────────────────────────────────────────
-export const EF_CONFIGURED  = !!EF_KEY
-export const IGNAV_CONFIGURED = !!IGNAV_KEY
+export const EF_CONFIGURED = false
+export const IGNAV_CONFIGURED = false
 
 /** Source health summary for the Data Sources page */
 export function getApiHealth() {
   return {
     aviationstack: {
       name: 'AviationStack',
-      configured: true,
+      configured: false,
       keyPrefix: null,
     },
     ef: {
       name: 'EF Live Fares API',
-      configured: true,
+      configured: false,
       keyPrefix: 'ak_live_a9f...',
     },
     ignav: {
       name: 'Ignav Aviation Data',
-      configured: true,
+      configured: false,
       keyPrefix: 'ig_prod_44b...',
     },
   }

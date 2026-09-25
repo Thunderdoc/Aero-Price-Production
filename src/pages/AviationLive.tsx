@@ -98,13 +98,13 @@ export default function AviationLive({ onNavigate }: { onNavigate?: (p: Page) =>
   const staleAircraft = state.aircraft.filter(a => (a.seen_seconds ?? 0) > 60).length
   const feedAgeSeconds = state.retrievedAt ? Math.max(0, Math.round((Date.now() - Date.parse(state.retrievedAt)) / 1000)) : null
   const feedQuality = !connected ? 'unavailable' : staleAircraft > Math.max(12, state.aircraft.length * .2) ? 'degraded' : feedAgeSeconds != null && feedAgeSeconds > 120 ? 'stale' : 'nominal'
-  const feedQualityLabel = feedQuality === 'nominal' ? 'NOMINAL' : feedQuality === 'degraded' ? 'DEGRADED' : feedQuality === 'stale' ? 'STALE' : 'UNAVAILABLE'
+  const feedQualityLabel = state.status === 'cached' ? 'CACHED' : feedQuality === 'nominal' ? 'NOMINAL' : feedQuality === 'degraded' ? 'DEGRADED' : feedQuality === 'stale' ? 'STALE' : 'CONNECTING'
   const kpis = [
     { label: 'Active Flights', value: connected ? airborne.length : '—', detail: 'Currently in Indian airspace', icon: Plane, tone: 'green' },
     { label: 'Provider Rows', value: connected ? state.aircraft.length : '—', detail: `${state.source || 'Live ADS-B'} aircraft positions`, icon: Clock3, tone: 'orange' },
     { label: 'On Ground', value: connected ? onGround.length : '—', detail: 'Reported by aircraft telemetry', icon: PlaneLanding, tone: 'cyan' },
     { label: 'Major Airports', value: String(radarAirports.length).padStart(2, '0'), detail: 'Mapped airport locations', icon: TowerControl, tone: 'purple' },
-    { label: 'Airspace Status', value: connected ? 'Tracking' : state.status === 'loading' ? 'Connecting' : 'Offline', detail: connected ? 'Live positions available' : 'Waiting for aircraft feed', icon: Radio, tone: 'mint' },
+    { label: 'Airspace Status', value: connected ? 'Tracking' : state.status === 'cached' ? 'Cached' : state.status === 'loading' ? 'Connecting' : 'Retrying', detail: connected ? 'Live positions available' : state.status === 'cached' ? 'Last valid positions retained' : 'Refreshing aircraft feed', icon: Radio, tone: 'mint' },
     { label: 'Weather (India)', value: weatherAverage == null ? '—' : `${weatherAverage}°C`, detail: weather.status === 'connected' ? 'Live airport weather average' : 'Connecting weather feed', icon: CloudSun, tone: 'yellow' },
   ]
   return <div className="av-dashboard">

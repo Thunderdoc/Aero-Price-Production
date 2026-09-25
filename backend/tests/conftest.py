@@ -2,18 +2,10 @@
 pytest configuration for AeroPrice backend tests.
 Uses an in-memory SQLite database for isolation.
 """
-import asyncio
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from app.models.base import Base
 from app.models import fare, collection, index, government, user  # register all models
-
-
-@pytest.fixture(scope="session")
-def event_loop():
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
 
 
 @pytest.fixture(scope="function")
