@@ -18,6 +18,7 @@ if os.getenv("DATABASE_URL", "").strip() == "":
         shutil.copy2(snapshot, runtime_db)
     os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{runtime_db}"
     os.environ.setdefault("COLLECTION_ENABLED", "false")
+    os.environ["AEROPRICE_SNAPSHOT_FALLBACK"] = "1"
 
 from main import app  # noqa: E402
 

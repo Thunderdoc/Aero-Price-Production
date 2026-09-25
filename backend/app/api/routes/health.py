@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text, select, func
 from datetime import datetime, timezone
+import os
 from app.core.database import get_db
 from app.models.fare import FareObservation
 from app.models.collection import CollectionRun, SourceHealth
@@ -30,6 +31,7 @@ async def health_check(db: AsyncSession = Depends(get_db)):
     sources = await db.execute(select(SourceHealth))
     source_rows = sources.scalars().all()
     live_sources = sum(1 for s in source_rows if s.status == "LIVE")
+    snapshot_fallback = os.getenv("AEROPRICE_SNAPSHOT_FALLBACK") == "1"
 
     return {
         "status": "ok" if db_ok else "degraded",
@@ -39,7 +41,9 @@ async def health_check(db: AsyncSession = Depends(get_db)):
         "live_sources": live_sources,
         "total_sources": len(source_rows),
         "last_collection": last_run.isoformat() if last_run else None,
-        "data_status": "LIVE" if live_sources > 0 else "NO_LIVE_DATA",
+        "data_status": "CACHED_SNAPSHOT" if snapshot_fallback else ("LIVE" if live_sources > 0 else "NO_LIVE_DATA"),
+        "storage_mode": "VERIFIED_SNAPSHOT_READONLY" if snapshot_fallback else "PERSISTENT_DATABASE",
+        "collection_enabled": not snapshot_fallback,
         "version": "2.0.0",
         "project": "SIH26056",
     }
