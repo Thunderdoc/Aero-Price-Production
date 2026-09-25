@@ -60,6 +60,7 @@ function authHeaders(token?: string): Record<string, string> {
 async function apiFetch<T>(path: string, token?: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(`${BASE_URL}${path}`, {
     ...init,
+    cache: 'no-store',
     headers: { ...authHeaders(token), ...(init?.headers ?? {}) },
   })
   if (resp.status === 401 && typeof window !== 'undefined') {
@@ -455,7 +456,10 @@ let _backendAvailable: boolean | null = null
 export async function isBackendAvailable(): Promise<boolean> {
   if (_backendAvailable !== null) return _backendAvailable
   try {
-    const resp = await fetch(`${BASE_URL}/api/health`, { signal: AbortSignal.timeout(3000) })
+    const resp = await fetch(`${BASE_URL}/api/health?_=${Date.now()}`, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(3000),
+    })
     // A transient cold-start/database error must not poison the browser
     // session. Cache only healthy responses; the next request should retry
     // after a temporary 500 instead of permanently rendering empty data.
