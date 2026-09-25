@@ -185,6 +185,20 @@ export async function apiFares(
   return apiFetch(`/api/fares?${qs}`, token)
 }
 
+export async function apiLiveFares(route: string, travelDate: string, token?: string): Promise<{
+  status: string
+  provider_status: string
+  route: string
+  travel_date: string
+  source: string
+  data_origin: string
+  observations: FareObservationApi[]
+  rejected_count: number
+  error?: string | null
+}> {
+  return apiFetch(`/api/fares/live?route=${encodeURIComponent(route)}&travel_date=${encodeURIComponent(travelDate)}`, token)
+}
+
 export async function apiFareSummary(route: string, token?: string) {
   return apiFetch(`/api/fares/summary/${route}`, token)
 }

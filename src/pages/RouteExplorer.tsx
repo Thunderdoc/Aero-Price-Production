@@ -3,7 +3,7 @@ import { AlertTriangle, ArrowLeftRight, Info, RefreshCw } from 'lucide-react'
 import { Button } from '../components/ui/Button'
 import { Modal } from '../components/ui/Modal'
 import { BarChart, LineChart } from '../components/MiniChart'
-import { apiAnomalies, apiFares, apiForecast, isBackendAvailable, type AnomalyResponse, type FareObservationApi, type ForecastResponse } from '../services/api'
+import { apiAnomalies, apiFares, apiLiveFares, apiForecast, isBackendAvailable, type AnomalyResponse, type FareObservationApi, type ForecastResponse } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
 
 const card: React.CSSProperties = { background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', padding: 'var(--space-xl)', boxShadow: 'var(--shadow-sm)', border: '1px solid var(--color-border-primary)' }
@@ -60,7 +60,7 @@ export default function RouteExplorer() {
     setLoading(true)
     setMessage(null)
     try {
-      const response = await apiFares({ route, travel_date: date, limit: 250 }, token ?? undefined)
+      const response = await apiLiveFares(route, date, token ?? undefined)
       const next = response.observations.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL')
       setRows(next)
       setFilteredToDate(Boolean(date))

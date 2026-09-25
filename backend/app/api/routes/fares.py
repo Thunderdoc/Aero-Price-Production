@@ -2,11 +2,14 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from typing import Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date, timedelta
+import uuid
 from app.core.database import get_db
 from app.core.auth import get_current_user
 from app.core.config import settings
 from app.models.fare import FareObservation
+from app.collectors.aggregators.fast_flights import FastFlightsAdapter
+from app.processing.quality import validate_batch
 
 router = APIRouter(prefix="/fares", tags=["fares"])
 
@@ -131,7 +134,7 @@ async def list_fares(
     }
 
 
-@router.get("/{observation_id}")
+@router.get("/observation/{observation_id}")
 async def get_fare_by_id(
     observation_id: str,
     db: AsyncSession = Depends(get_db),
@@ -148,6 +151,44 @@ async def get_fare_by_id(
             detail=f"Observation has data_origin={obs.data_origin} which is not available in live mode.",
         )
     return _fare_dict(obs)
+
+
+@router.get("/live")
+async def live_fares(
+    route: str,
+    travel_date: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Query the no-key public fare interface on demand.
+
+    This endpoint deliberately does not write to the database. It provides a
+    near-live route result when the deployment has only the verified snapshot;
+    scheduled persistence still belongs in the worker/PostgreSQL deployment.
+    """
+    normalized_route = route.upper()
+    travel = travel_date or (date.today() + timedelta(days=7)).isoformat()
+    try:
+        parsed = date.fromisoformat(travel)
+    except ValueError:
+        return {"status": "INVALID_DATE", "route": normalized_route, "observations": [], "message": "travel_date must be YYYY-MM-DD"}
+    if parsed <= date.today():
+        return {"status": "INVALID_DATE", "route": normalized_route, "observations": [], "message": "travel_date must be in the future"}
+    advance = max(1, (parsed - date.today()).days)
+    result = await FastFlightsAdapter().collect(normalized_route, travel, advance, str(uuid.uuid4()))
+    valid, rejected, rejected_count = validate_batch(result.records)
+    return {
+        "status": result.status if valid else ("NO_DATA" if not result.error else result.status),
+        "provider_status": result.status,
+        "route": normalized_route,
+        "travel_date": travel,
+        "source": result.source_id,
+        "data_origin": "REAL" if valid else "NO_DATA",
+        "observations": [_fare_record_dict(record) for record in valid],
+        "rejected_count": rejected_count,
+        "error": result.error,
+        "latency_ms": result.latency_ms,
+    }
 
 
 @router.get("/summary/{route}")
@@ -226,4 +267,34 @@ def _fare_dict(o: FareObservation) -> dict:
         "collected_at": o.collected_at.isoformat() if o.collected_at else None,
         "quality_flags": o.quality_flags,
         "is_valid": o.is_valid,
+    }
+
+
+def _fare_record_dict(o) -> dict:
+    return {
+        "observation_id": None,
+        "collection_run_id": None,
+        "route": o.route,
+        "origin": o.origin,
+        "destination": o.destination,
+        "airline": o.airline,
+        "flight_number": o.flight_number,
+        "travel_date": o.travel_date,
+        "advance_days": o.advance_days,
+        "fare_family": o.fare_family,
+        "cabin": o.cabin,
+        "base_fare": o.base_fare,
+        "taxes": o.taxes,
+        "fees": o.fees,
+        "total_fare": o.total_fare,
+        "currency": o.currency,
+        "availability_status": o.availability_status,
+        "source": o.source,
+        "data_origin": o.data_origin,
+        "collected_at": datetime.now(timezone.utc).isoformat(),
+        "quality_flags": o.quality_flags,
+        "is_valid": True,
+        "departure_time": o.departure_time,
+        "arrival_time": o.arrival_time,
+        "stops": o.stops,
     }
