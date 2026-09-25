@@ -87,9 +87,21 @@ async def lifespan(app: FastAPI):
             id="initial_collection",
             replace_existing=True,
         )
+        # Import official government publications after startup instead of
+        # leaving a new deployment empty until the first six-hour interval.
+        # Providers remain provenance-safe: unavailable/unauthorized feeds
+        # report no data rather than creating placeholder records.
+        scheduler.add_job(
+            _scheduled_gov_fetch,
+            trigger="date",
+            run_date=datetime.now(timezone.utc) + timedelta(seconds=12),
+            id="initial_gov_fetch",
+            replace_existing=True,
+        )
         logger.info(
             f"Scheduler started. Collection interval: {settings.COLLECTION_INTERVAL_MINUTES}min. "
-            "Initial collection scheduled in 8 seconds; only configured authorized providers will be used."
+            "Initial collection scheduled in 8 seconds and government refresh in 12 seconds; "
+            "only configured authorized providers will be used."
         )
 
         # Refreshes run on the scheduler or on an authenticated UI request.
