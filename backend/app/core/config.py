@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     DGCA_FLEET_URL: str = "https://dgca.gov.in/digigov-portal/"
     MOSPI_ESANKHYIKI_URL: str = "https://esankhyiki.mospi.gov.in/"
     MOSPI_CPI_API_URL: str = "https://api.mospi.gov.in/api/cpi/getCPIData"
+    MOSPI_API_EMAIL: str = ""
+    MOSPI_API_PASSWORD: str = ""
     # Set this to a verified official CSV download URL when MoSPI publishes the
     # current CPI Transport file. Blank deliberately means "not configured".
     MOSPI_CPI_CSV_URL: str = ""

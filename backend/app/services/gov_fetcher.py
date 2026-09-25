@@ -252,15 +252,24 @@ async def fetch_mospi_cpi(db: AsyncSession) -> dict:
         updated = 0
 
         async def request(params: dict) -> dict:
+            headers = {"accept": "application/json", "Content-Type": "application/json"}
+            if settings.MOSPI_API_EMAIL and settings.MOSPI_API_PASSWORD:
+                async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True, trust_env=False) as client:
+                    login = await client.post("https://api.mospi.gov.in/api/login", json={
+                        "email": settings.MOSPI_API_EMAIL,
+                        "password": settings.MOSPI_API_PASSWORD,
+                    })
+                    login.raise_for_status()
+                    login_body = login.json()
+                    token = login_body.get("token") or login_body.get("access_token") or login_body.get("response", {}).get("token")
+                    if not token:
+                        raise RuntimeError("MoSPI login succeeded without an access token")
+                    headers["Authorization"] = f"Bearer {token}"
             url = f"{settings.MOSPI_CPI_API_URL}?{urlencode(params)}"
-            proc = await asyncio.create_subprocess_exec(
-                "curl.exe", "--fail", "--silent", "--show-error", "--max-time", "30", url,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            )
-            out, err = await proc.communicate()
-            if proc.returncode != 0:
-                raise RuntimeError(f"MoSPI request failed: {err.decode(errors='replace')[:160]}")
-            payload = json.loads(out)
+            async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True, trust_env=False, headers=headers) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                payload = response.json()
             if payload.get("statusCode") is not True:
                 raise RuntimeError(f"MoSPI rejected query: {str(payload.get('error') or payload.get('msg'))[:160]}")
             return payload
