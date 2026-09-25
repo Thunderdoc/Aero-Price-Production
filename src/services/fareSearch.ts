@@ -33,7 +33,7 @@ export interface FareSearchResult {
   query: FareSearchParams
 }
 
-/** Search real Indian domestic fares via SerpAPI Google Flights or live pricing engine */
+/** Search only backend observations from configured authorized fare providers. */
 export async function searchFares(params: FareSearchParams): Promise<FareSearchResult> {
   const cabin = params.cabin === 'business' ? 'BUSINESS' : 'ECONOMY'
   try {

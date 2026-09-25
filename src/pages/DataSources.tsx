@@ -153,14 +153,14 @@ export default function DataSources() {
 
   const connectedAirfare = displaySources.filter(s => ['CONNECTED', 'HEALTHY'].includes(s.status as string)).length
   const govConnected = datasets.filter(d => ['CONNECTED', 'HEALTHY', 'STALE'].includes(d.status)).length
-  const totalRecords = displaySources.reduce((acc, s) => acc + (s.records_received ?? 0), 0) + 10875
+  const totalRecords = displaySources.reduce((acc, s) => acc + (s.records_received ?? 0), 0)
 
   const summaryItems = [
     { label: 'AIRFARE FEEDS', value: `${connectedAirfare}/${displaySources.length}`, color: 'var(--color-success)', dot: 'var(--color-success)' },
     { label: 'GOV REGISTRIES', value: `${govConnected}/${datasets.length}`, color: 'var(--color-success)', dot: 'var(--color-success)' },
-    { label: 'SYSTEM LATENCY', value: '28 ms', color: 'var(--color-brand-primary)', dot: 'var(--color-brand-primary)' },
+    { label: 'SYSTEM LATENCY', value: '—', color: 'var(--color-text-tertiary)', dot: null },
     { label: 'TOTAL SYNCED RECORDS', value: totalRecords.toLocaleString('en-IN'), color: 'var(--color-text-primary)', dot: null },
-    { label: 'PIPELINE UPTIME', value: '99.98%', color: 'var(--color-success)', dot: 'var(--color-success)' },
+    { label: 'PIPELINE UPTIME', value: '—', color: 'var(--color-text-tertiary)', dot: null },
   ]
 
   async function handleRefreshAll() {
