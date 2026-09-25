@@ -121,7 +121,7 @@ const DEFAULT_ANOMALIES: EnrichedAnomaly[] = [
 
 export default function Anomalies() {
   const { token } = useAuth()
-  const [anomalies, setAnomalies] = useState<EnrichedAnomaly[]>(DEFAULT_ANOMALIES)
+  const [anomalies, setAnomalies] = useState<EnrichedAnomaly[]>([])
   const [loading, setLoading] = useState(false)
   const [running, setRunning] = useState(false)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
@@ -150,10 +150,10 @@ export default function Anomalies() {
           }))
         )
       } else {
-        setAnomalies(DEFAULT_ANOMALIES)
+        setAnomalies([])
       }
     } catch {
-      setAnomalies(DEFAULT_ANOMALIES)
+      setAnomalies([])
     } finally {
       setLoading(false)
     }
@@ -166,15 +166,14 @@ export default function Anomalies() {
   async function runDetection() {
     setRunning(true)
     setSuccessMsg(null)
-    await new Promise(r => setTimeout(r, 650))
     try {
       await apiRunAnomalyDetection(token ?? undefined)
+      await load()
+      setSuccessMsg('Anomaly detection completed; results were refreshed from verified observations.')
     } catch {
-      // Soft fallback
+      setSuccessMsg('Anomaly detection could not run because verified fare data is unavailable.')
     }
-    setAnomalies(DEFAULT_ANOMALIES)
     setRunning(false)
-    setSuccessMsg('Anomaly detection completed: 10,875 fares scanned across 12 corridors. 6 statistically significant outliers flagged.')
     setTimeout(() => setSuccessMsg(null), 6000)
   }
 
