@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
-import { GOV_DATASETS } from '../services/govFetcher'
-import { apiDgcaCirculars, apiDgcaMonthly, apiGovDatasets, apiGovRefresh, apiMospiCpi } from '../services/api'
+import { apiDataGovAviation, apiDgcaCirculars, apiDgcaMonthly, apiGovDatasets, apiGovRefresh, apiMospiCpi, apiPpacAtf } from '../services/api'
 import type { GovDataset, DgcaCircular, DgcaMonthlyRecord, MospiCpiRecord } from '../types/observation'
 import { useAuth } from '../contexts/AuthContext'
 
@@ -9,6 +8,8 @@ export interface GovDataState {
   dgcaMonthly: DgcaMonthlyRecord[]
   dgcaCirculars: DgcaCircular[]
   mospiCpi: MospiCpiRecord[]
+  ppacAtf: Array<{ effective_date: string; atf_export_duty_per_litre: number }>
+  dataGovAviationCount: number
   isLoading: boolean
   anyConnected: boolean
   lastFetch: string | null
@@ -143,6 +144,8 @@ export function useGovData(): GovDataState {
   const [dgcaMonthly, setDgcaMonthly] = useState<DgcaMonthlyRecord[]>([])
   const [dgcaCirculars, setDgcaCirculars] = useState<DgcaCircular[]>([])
   const [mospiCpi, setMospiCpi] = useState<MospiCpiRecord[]>([])
+  const [ppacAtf, setPpacAtf] = useState<Array<{ effective_date: string; atf_export_duty_per_litre: number }>>([])
+  const [dataGovAviationCount, setDataGovAviationCount] = useState(0)
   const [isLoading, setIsLoading] = useState(false)
   const [lastFetch, setLastFetch] = useState<string | null>(null)
   const [hasLiveResponse, setHasLiveResponse] = useState(false)
@@ -150,11 +153,13 @@ export function useGovData(): GovDataState {
   async function fetchAll() {
     setIsLoading(true)
     try {
-      const [registry, pax, circulars, cpi] = await Promise.all([
+      const [registry, pax, circulars, cpi, ppac, dataGov] = await Promise.all([
         apiGovDatasets(token ?? undefined),
         apiDgcaMonthly(token ?? undefined),
         apiDgcaCirculars(token ?? undefined),
         apiMospiCpi(token ?? undefined),
+        apiPpacAtf(token ?? undefined),
+        apiDataGovAviation(token ?? undefined),
       ])
       if (registry && (registry as any).datasets?.length) {
         setDatasets(
@@ -193,6 +198,11 @@ export function useGovData(): GovDataState {
         setMospiCpi(cpiRecords)
       }
 
+      // PPAC/data.gov responses are kept separate from CPI/DGCA so their
+      // measure and provenance cannot be confused with fare observations.
+      if (Array.isArray((ppac as any)?.records)) setPpacAtf((ppac as any).records)
+      setDataGovAviationCount(Number((dataGov as any)?.count || 0))
+
       setLastFetch(new Date().toISOString())
       setHasLiveResponse(true)
     } catch {
@@ -226,6 +236,8 @@ export function useGovData(): GovDataState {
     dgcaMonthly,
     dgcaCirculars,
     mospiCpi,
+    ppacAtf,
+    dataGovAviationCount,
     isLoading,
     lastFetch,
     refresh,

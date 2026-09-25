@@ -307,6 +307,14 @@ export async function apiDgcaCirculars(token?: string) {
   return apiFetch('/api/government/dgca/circulars', token)
 }
 
+export async function apiPpacAtf(token?: string) {
+  return apiFetch<{ count: number; data_origin: string; measure: string; unit: string; note: string; records: Array<{ effective_date: string; atf_export_duty_per_litre: number }> }>('/api/government/ppac/atf', token)
+}
+
+export async function apiDataGovAviation(token?: string) {
+  return apiFetch<{ count: number; data_origin: string; records: Array<{ resource_id: string; record: Record<string, unknown> }> }>('/api/government/data-gov/aviation', token)
+}
+
 export async function apiGovRefresh(token?: string) {
   return apiFetch('/api/government/refresh', token, { method: 'POST' })
 }
