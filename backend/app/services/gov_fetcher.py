@@ -12,6 +12,7 @@ import time
 import hashlib
 import json
 import logging
+import re
 from calendar import month_abbr
 from datetime import datetime, timezone
 from urllib.parse import urlencode
@@ -21,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.config import settings
 from app.models.government import (
-    GovDataset, DgcaMonthlyRecord, MospiCpiRecord, MospiTransportSeries, DgcaCircular
+    GovDataset, DgcaMonthlyRecord, MospiCpiRecord, MospiTransportSeries, DgcaCircular, PpacAtfRecord
 )
 
 logger = logging.getLogger(__name__)
@@ -427,20 +428,54 @@ async def fetch_dgca_fleet_source(db: AsyncSession) -> dict:
 
 
 async def fetch_ppac_atf_source(db: AsyncSession) -> dict:
-    """Verify PPAC's official ATF publication endpoint.
+    """Import the official PPAC ATF export-duty table with provenance.
 
-    PPAC publishes ATF values through changing HTML/PDF publication pages. We
-    record reachability and provenance here; no value is stored until a table
-    row can be parsed and validated with a period, location, unit and price.
+    PPAC publishes this historical table as an HTML rendering of its official
+    publication. It is an ATF duty series, not a market quote, so the API
+    exposes the measure explicitly and never uses it as an airfare value.
     """
     try:
         result = await _official_get(settings.PPAC_ATF_URL)
-        text = BeautifulSoup(result["contents"], "lxml").get_text(" ", strip=True).lower()
+        soup = BeautifulSoup(result["contents"], "lxml")
+        text = soup.get_text(" ", strip=True).lower()
         if "aviation turbine fuel" not in text and "atf" not in text:
             raise RuntimeError("PPAC response contained no ATF publication marker")
-        await _upsert_dataset_status(db, "ppac-atf", "HEALTHY", record_count=0,
-            failure_reason="Official publication reachable; structured ATF rows require PDF/table parsing.")
-        return {"status": "HEALTHY", "records": 0, "latency_ms": result["latency_ms"]}
+        saved = 0
+        retrieved_at = datetime.now(timezone.utc)
+        for table in soup.find_all("table"):
+            for row in table.find_all("tr"):
+                cells = [c.get_text(" ", strip=True) for c in row.find_all(["td", "th"])]
+                # PPAC currently mixes zero-padded and non-padded dates and
+                # uses both dots and hyphens across table revisions.
+                if len(cells) < 8 or not re.match(r"^\d{1,2}[./-]\d{1,2}[./-]\d{4}$", cells[0]):
+                    continue
+                date_value = cells[0].replace("/", ".").replace("-", ".")
+                atf_value = cells[7].replace(",", "").replace("₹", "").replace("Rs.", "").strip()
+                if atf_value in {"", "-", "—"}:
+                    continue
+                try:
+                    duty = float(atf_value)
+                except ValueError:
+                    continue
+                existing = await db.scalar(select(PpacAtfRecord).where(PpacAtfRecord.effective_date == date_value))
+                if existing:
+                    existing.atf_export_duty_per_litre = duty
+                    existing.source_url = settings.PPAC_ATF_URL
+                    existing.retrieved_at = retrieved_at
+                else:
+                    db.add(PpacAtfRecord(
+                        effective_date=date_value,
+                        atf_export_duty_per_litre=duty,
+                        source_url=settings.PPAC_ATF_URL,
+                        retrieved_at=retrieved_at,
+                    ))
+                saved += 1
+        await db.commit()
+        if not saved:
+            raise RuntimeError("PPAC page was reachable but no validated ATF duty rows were found")
+        await _upsert_dataset_status(db, "ppac-atf", "HEALTHY", record_count=saved,
+            failure_reason="Imported official ATF export-duty rows; this is not a retail fuel-price quote.")
+        return {"status": "HEALTHY", "records": saved, "latency_ms": result["latency_ms"]}
     except Exception as e:
         logger.error(f"PPAC ATF source check failed: {e}")
         await _upsert_dataset_status(db, "ppac-atf", "FAILED", failure_reason=str(e)[:500])

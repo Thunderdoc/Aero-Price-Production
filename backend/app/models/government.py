@@ -65,6 +65,25 @@ class MospiTransportSeries(Base):
     retrieved_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
 
 
+class PpacAtfRecord(Base):
+    """Official PPAC ATF export-duty observations.
+
+    This is deliberately a duty series, not a retail/airport fuel-price
+    series. Keeping the measure explicit prevents it being used as a false
+    proxy for ticket prices or current ATF quotes.
+    """
+    __tablename__ = "ppac_atf_records"
+    __table_args__ = (UniqueConstraint("effective_date", name="uq_ppac_atf_effective_date"),)
+
+    id = Column(String(36), primary_key=True, default=new_uuid)
+    effective_date = Column(String(10), nullable=False)
+    atf_export_duty_per_litre = Column(Float, nullable=True)
+    unit = Column(String(20), nullable=False, default="INR_PER_LITRE")
+    measure = Column(String(40), nullable=False, default="ATF_EXPORT_DUTY")
+    source_url = Column(Text, nullable=False)
+    retrieved_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
+
+
 class DgcaCircular(Base):
     """DGCA circulars and press releases."""
     __tablename__ = "dgca_circulars"

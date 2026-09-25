@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 from app.core.database import get_db
 from app.core.auth import require_analyst
-from app.models.government import DgcaMonthlyRecord, MospiTransportSeries, DgcaCircular, GovDataset
+from app.models.government import DgcaMonthlyRecord, MospiTransportSeries, DgcaCircular, GovDataset, PpacAtfRecord
 from app.services.gov_fetcher import run_gov_fetches
 
 router = APIRouter(prefix="/government", tags=["government"])
@@ -124,6 +124,34 @@ async def dgca_circulars(
                 "url": c.url,
             }
             for c in circulars
+        ],
+    }
+
+
+@router.get("/ppac/atf")
+async def ppac_atf(
+    db: AsyncSession = Depends(get_db),
+):
+    """Return official PPAC ATF duty observations with their measure label."""
+    rows = await db.execute(select(PpacAtfRecord).order_by(PpacAtfRecord.effective_date.desc()))
+    records = rows.scalars().all()
+    return {
+        "count": len(records),
+        "source": "PPAC",
+        "data_origin": "OFFICIAL" if records else "NO_DATA",
+        "measure": "ATF_EXPORT_DUTY",
+        "unit": "INR_PER_LITRE",
+        "note": "Official export-duty series; not a retail or airport fuel-price quote.",
+        "records": [
+            {
+                "effective_date": r.effective_date,
+                "atf_export_duty_per_litre": r.atf_export_duty_per_litre,
+                "measure": r.measure,
+                "unit": r.unit,
+                "source_url": r.source_url,
+                "retrieved_at": r.retrieved_at.isoformat(),
+            }
+            for r in records
         ],
     }
 

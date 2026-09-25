@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     MOSPI_CPI_CSV_URL: str = ""
     DATAGOV_AVIATION_DATASET_ID: str = ""
     DATAGOV_API_KEY: str = ""
-    PPAC_ATF_URL: str = "https://ppac.gov.in/prices/price-of-atf"
+    PPAC_ATF_URL: str = "https://ppac.gov.in/prices/excise-duty-on-export-of-petrol-diesel-atf-and-special-additional-excise-duty-saed-on-domestic-crude-oil-production"
 
     # CORS
     ALLOWED_ORIGINS: str = "http://localhost:5173,http://localhost:8443"
