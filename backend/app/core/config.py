@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     DGCA_CIRCULARS_URL: str = "https://dgca.gov.in/digigov-portal/?page=newsdetail/officecircular/officecircular.html"
     DGCA_FLEET_URL: str = "https://dgca.gov.in/digigov-portal/"
     MOSPI_ESANKHYIKI_URL: str = "https://esankhyiki.mospi.gov.in/"
-    MOSPI_CPI_API_URL: str = "https://api.mospi.gov.in/api/cpi/getCPIData"
+    MOSPI_CPI_API_URL: str = "https://api.mospi.gov.in/api/getCPIIndex"
     MOSPI_API_EMAIL: str = ""
     MOSPI_API_PASSWORD: str = ""
     # Set this to a verified official CSV download URL when MoSPI publishes the
