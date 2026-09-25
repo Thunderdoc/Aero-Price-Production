@@ -56,7 +56,9 @@ export function useAviationRadar(enabled = true) {
   useEffect(() => {
     if (!enabled) return
     consumers++
-    if (!timer) { void refreshRadar(); timer = setInterval(() => void refreshRadar(), 30000) }
+    // Poll frequently enough to recover from a short provider interruption;
+    // cached positions remain visible between attempts.
+    if (!timer) { void refreshRadar(); timer = setInterval(() => void refreshRadar(), 10000) }
     return () => { if (--consumers === 0) { clearInterval(timer); timer = undefined; if (retryTimer) { clearTimeout(retryTimer); retryTimer = undefined } } }
   }, [enabled])
   return state
