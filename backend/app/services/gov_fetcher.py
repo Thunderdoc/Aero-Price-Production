@@ -330,6 +330,8 @@ async def fetch_mospi_cpi(db: AsyncSession) -> dict:
                     "level": params.get("level", "Group"),
                     "series": params.get("series", "Current"),
                     "year": params.get("year"),
+                    "state_code": 1,
+                    "sector_code": 3,
                 }
                 if params.get("month_code") is not None:
                     api_params["month"] = params["month_code"]
@@ -339,8 +341,11 @@ async def fetch_mospi_cpi(db: AsyncSession) -> dict:
                     "Series": "Current_series_2012",
                     "Format": "JSON",
                     "Year": params.get("year"),
-                    "State_code": 99,
-                    "Sector": 3,
+                    # The current endpoint accepts the filter names in
+                    # snake_case even though the remaining legacy fields are
+                    # documented with initial capitals.
+                    "state_code": 99,
+                    "sector_code": 3,
                 }
             url = f"{url}?{urlencode({k: v for k, v in api_params.items() if v is not None})}"
             async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True, trust_env=False, verify=mospi_tls, headers=headers) as client:
