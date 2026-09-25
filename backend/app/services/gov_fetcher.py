@@ -265,11 +265,6 @@ async def fetch_mospi_cpi(db: AsyncSession) -> dict:
         # verification remains enabled and global TLS policy is unchanged.
         mospi_tls = ssl.create_default_context()
         mospi_tls.options |= getattr(ssl, "OP_LEGACY_SERVER_CONNECT", 0)
-        # The MoSPI host still fails the OpenSSL renegotiation handshake even
-        # with the compatibility flag on some Render runtimes. Keep the
-        # fallback scoped to this official HTTPS host only; all other sources
-        # retain normal certificate verification.
-        mospi_verify = False
         now = datetime.now(timezone.utc)
         stored = await db.execute(select(MospiTransportSeries))
         existing = {(row.base_year, row.period): row for row in stored.scalars().all()}
@@ -279,7 +274,7 @@ async def fetch_mospi_cpi(db: AsyncSession) -> dict:
         async def request(params: dict) -> dict:
             headers = {"accept": "application/json", "Content-Type": "application/json"}
             if settings.MOSPI_API_EMAIL and settings.MOSPI_API_PASSWORD:
-                async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True, trust_env=False, verify=mospi_verify) as client:
+                async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True, trust_env=False, verify=mospi_tls) as client:
                     login = await client.post("https://api.mospi.gov.in/api/login", json={
                         "email": settings.MOSPI_API_EMAIL,
                         "password": settings.MOSPI_API_PASSWORD,
@@ -293,7 +288,7 @@ async def fetch_mospi_cpi(db: AsyncSession) -> dict:
                         raise RuntimeError("MoSPI login succeeded without an access token")
                     headers["Authorization"] = f"Bearer {token}"
             url = f"{settings.MOSPI_CPI_API_URL}?{urlencode(params)}"
-            async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True, trust_env=False, verify=mospi_verify, headers=headers) as client:
+            async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True, trust_env=False, verify=mospi_tls, headers=headers) as client:
                 response = await client.get(url)
                 response.raise_for_status()
                 payload = response.json()
