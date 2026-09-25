@@ -1,9 +1,10 @@
+import json
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 from app.core.database import get_db
 from app.core.auth import require_analyst
-from app.models.government import DgcaMonthlyRecord, MospiTransportSeries, DgcaCircular, GovDataset, PpacAtfRecord
+from app.models.government import DgcaMonthlyRecord, MospiTransportSeries, DgcaCircular, GovDataset, PpacAtfRecord, DataGovAviationRecord
 from app.services.gov_fetcher import run_gov_fetches
 
 router = APIRouter(prefix="/government", tags=["government"])
@@ -151,6 +152,24 @@ async def ppac_atf(
                 "source_url": r.source_url,
                 "retrieved_at": r.retrieved_at.isoformat(),
             }
+            for r in records
+        ],
+    }
+
+
+@router.get("/data-gov/aviation")
+async def data_gov_aviation(
+    db: AsyncSession = Depends(get_db),
+):
+    rows = await db.execute(select(DataGovAviationRecord).order_by(DataGovAviationRecord.retrieved_at.desc()).limit(1000))
+    records = rows.scalars().all()
+    return {
+        "count": len(records),
+        "source": "data.gov.in",
+        "data_origin": "OFFICIAL" if records else "NO_DATA",
+        "records": [
+            {"resource_id": r.resource_id, "record": json.loads(r.record_json),
+             "source_url": r.source_url, "retrieved_at": r.retrieved_at.isoformat()}
             for r in records
         ],
     }

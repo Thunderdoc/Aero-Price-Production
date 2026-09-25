@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.config import settings
 from app.models.government import (
-    GovDataset, DgcaMonthlyRecord, MospiCpiRecord, MospiTransportSeries, DgcaCircular, PpacAtfRecord
+    GovDataset, DgcaMonthlyRecord, MospiCpiRecord, MospiTransportSeries, DgcaCircular, PpacAtfRecord, DataGovAviationRecord
 )
 
 logger = logging.getLogger(__name__)
@@ -66,7 +66,7 @@ GOV_DATASET_REGISTRY = [
         "access_type": "PUBLIC",
         "api_key_required": "NO",
         "format": "JSON",
-        "source_url": "https://data.gov.in/",
+        "source_url": "https://www.data.gov.in/catalog/monthly-air-traffic-statistics",
     },
     {
         "dataset_id": "ppac-atf",
@@ -482,6 +482,46 @@ async def fetch_ppac_atf_source(db: AsyncSession) -> dict:
         return {"status": "FAILED", "error": str(e)}
 
 
+async def fetch_datagov_aviation(db: AsyncSession) -> dict:
+    """Import records from the configured official data.gov.in resource API."""
+    resource_id = settings.DATAGOV_AVIATION_DATASET_ID.strip()
+    api_key = settings.DATAGOV_API_KEY.strip()
+    if not resource_id or not api_key:
+        await _upsert_dataset_status(db, "data-gov-in", "NOT_CONFIGURED",
+            failure_reason="Set DATAGOV_AVIATION_DATASET_ID and DATAGOV_API_KEY to enable the official resource API.")
+        return {"status": "NOT_CONFIGURED", "records": 0}
+    source_url = f"https://api.data.gov.in/resource/{resource_id}"
+    try:
+        result = await _official_get(source_url + "?" + urlencode({"api-key": api_key, "format": "json", "limit": 1000}))
+        payload = json.loads(result["contents"])
+        records = payload.get("records") if isinstance(payload, dict) else None
+        if not isinstance(records, list):
+            raise RuntimeError("data.gov.in response did not contain a records array")
+        retrieved_at = datetime.now(timezone.utc)
+        saved = 0
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            raw = json.dumps(record, sort_keys=True, separators=(",", ":"))
+            record_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+            existing = await db.scalar(select(DataGovAviationRecord).where(
+                DataGovAviationRecord.resource_id == resource_id,
+                DataGovAviationRecord.record_hash == record_hash,
+            ))
+            if not existing:
+                db.add(DataGovAviationRecord(resource_id=resource_id, record_hash=record_hash,
+                    record_json=raw, source_url=source_url, retrieved_at=retrieved_at))
+                saved += 1
+        await db.commit()
+        await _upsert_dataset_status(db, "data-gov-in", "CONNECTED", record_count=len(records),
+            reference_period=str(payload.get("title") or "Official resource API"))
+        return {"status": "CONNECTED", "records": len(records), "new_records": saved, "latency_ms": result["latency_ms"]}
+    except Exception as e:
+        logger.error(f"data.gov.in aviation fetch failed: {e}")
+        await _upsert_dataset_status(db, "data-gov-in", "FAILED", failure_reason=str(e)[:500])
+        return {"status": "FAILED", "error": str(e)}
+
+
 async def run_gov_fetches(db: AsyncSession):
     """Run all government data fetches. Called by scheduler and /government/refresh."""
     logger.info("Starting government data refresh")
@@ -491,5 +531,6 @@ async def run_gov_fetches(db: AsyncSession):
     results["dgca_circulars"] = await fetch_dgca_circulars(db)
     results["dgca_fleet"] = await fetch_dgca_fleet_source(db)
     results["ppac_atf"] = await fetch_ppac_atf_source(db)
+    results["data_gov_aviation"] = await fetch_datagov_aviation(db)
     logger.info(f"Government data refresh complete: {results}")
     return results

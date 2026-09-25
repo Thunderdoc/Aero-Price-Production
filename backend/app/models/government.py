@@ -84,6 +84,19 @@ class PpacAtfRecord(Base):
     retrieved_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
 
 
+class DataGovAviationRecord(Base):
+    """Raw records imported from a configured data.gov.in resource API."""
+    __tablename__ = "datagov_aviation_records"
+    __table_args__ = (UniqueConstraint("resource_id", "record_hash", name="uq_datagov_resource_record"),)
+
+    id = Column(String(36), primary_key=True, default=new_uuid)
+    resource_id = Column(String(120), nullable=False)
+    record_hash = Column(String(64), nullable=False)
+    record_json = Column(Text, nullable=False)
+    source_url = Column(Text, nullable=False)
+    retrieved_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
+
+
 class DgcaCircular(Base):
     """DGCA circulars and press releases."""
     __tablename__ = "dgca_circulars"
