@@ -92,7 +92,7 @@ export default function RouteExplorer() {
     return () => { active = false }
   }, [token])
 
-  useEffect(() => { void loadRoute() }, [route, token])
+  useEffect(() => { void loadRoute(searchDate) }, [route, token, searchDate])
 
   useEffect(() => {
     apiForecast(route, 7, token ?? undefined).then(setForecast).catch(() => setForecast(null))
