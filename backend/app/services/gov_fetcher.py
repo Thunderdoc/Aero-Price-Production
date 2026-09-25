@@ -20,7 +20,7 @@ from urllib.parse import urlencode
 import httpx
 from bs4 import BeautifulSoup
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import func, select
 from app.core.config import settings
 from app.models.government import (
     GovDataset, DgcaMonthlyRecord, MospiCpiRecord, MospiTransportSeries, DgcaCircular, PpacAtfRecord, DataGovAviationRecord
@@ -569,7 +569,9 @@ async def fetch_datagov_aviation(db: AsyncSession) -> dict:
         return {"status": "NOT_CONFIGURED", "records": 0}
     source_url = f"https://api.data.gov.in/resource/{resource_id}"
     try:
-        result = await _official_get(source_url + "?" + urlencode({"api-key": api_key, "format": "json", "limit": 1000}))
+        # Keep the scheduled request bounded.  data.gov.in can return 500/429
+        # for large pages even when the resource and credentials are valid.
+        result = await _official_get(source_url + "?" + urlencode({"api-key": api_key, "format": "json", "limit": 100}))
         payload = json.loads(result["contents"])
         records = payload.get("records") if isinstance(payload, dict) else None
         if not isinstance(records, list):
@@ -595,11 +597,19 @@ async def fetch_datagov_aviation(db: AsyncSession) -> dict:
         return {"status": "CONNECTED", "records": len(records), "new_records": saved, "latency_ms": result["latency_ms"]}
     except Exception as e:
         reason = _safe_error(e)
-        if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429:
-            reason = "data.gov.in rate limit reached; previously imported official records were retained."
-            await _upsert_dataset_status(db, "data-gov-in", "STALE", failure_reason=reason)
-            logger.warning(f"data.gov.in aviation fetch rate-limited: {reason}")
-            return {"status": "STALE", "records": 0, "reason": reason}
+        retained = int(await db.scalar(select(func.count()).select_from(DataGovAviationRecord).where(
+            DataGovAviationRecord.resource_id == resource_id
+        )) or 0)
+        if retained:
+            if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429:
+                reason = "data.gov.in rate limit reached; previously imported official records were retained."
+            elif isinstance(e, httpx.HTTPStatusError) and e.response.status_code >= 500:
+                reason = f"data.gov.in returned HTTP {e.response.status_code}; previously imported official records were retained."
+            else:
+                reason = f"data.gov.in refresh unavailable ({reason}); previously imported official records were retained."
+            await _upsert_dataset_status(db, "data-gov-in", "STALE", record_count=retained, failure_reason=reason)
+            logger.warning(f"data.gov.in aviation refresh stale: {reason}")
+            return {"status": "STALE", "records": retained, "reason": reason}
         logger.error(f"data.gov.in aviation fetch failed: {reason}")
         await _upsert_dataset_status(db, "data-gov-in", "FAILED", failure_reason=reason)
         return {"status": "FAILED", "error": reason}
