@@ -188,7 +188,7 @@ export async function fetchAllCorridorFlights(): Promise<Array<{ flights: LiveFl
             airline_name: airlines[prefix] ?? 'Live ADS-B aircraft',
             airline_iata: prefix,
             dep_iata: '', dep_city: '', arr_iata: '', arr_city: '',
-            dep_scheduled: '', arr_scheduled: '', status: 'active',
+            dep_scheduled: '', arr_scheduled: '', status: body.provider_status === 'CACHED' ? 'cached' : 'active',
             dep_actual: null, arr_actual: null,
             latitude: Number(a.latitude), longitude: Number(a.longitude),
             altitude_ft: a.altitude_ft as number | null,
