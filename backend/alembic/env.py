@@ -13,7 +13,7 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.models.base import Base
-from app.models import fare, collection, index, government, user  # ensure models registered
+from app.models import auth_account, fare, collection, index, government, user  # ensure models registered
 
 target_metadata = Base.metadata
 

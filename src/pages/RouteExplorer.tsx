@@ -60,7 +60,7 @@ export default function RouteExplorer() {
     setLoading(true)
     setMessage(null)
     try {
-      const response = await apiLiveFares(route, date, token ?? undefined)
+      const response = await apiLiveFares(route, date ?? searchDate, token ?? undefined)
       let next = response.observations.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL')
       // The on-demand provider can temporarily fail or time out even while
       // the verified snapshot is healthy. Keep the route usable by falling

@@ -13,13 +13,14 @@ const AIRFARE_STATUS_CONFIG = {
   AUTH_REQUIRED: { label: 'AUTH REQUIRED', color: 'var(--color-info)', bg: 'var(--color-info-bg)', icon: Shield, borderColor: 'var(--color-info)', badgeCls: 'ap-badge ap-badge-official' },
   NOT_CONFIGURED: { label: 'NOT CONFIGURED', color: 'var(--color-text-tertiary)', bg: 'var(--color-surface-secondary)', icon: Clock, borderColor: 'var(--color-border-primary)', badgeCls: 'ap-badge ap-badge-sandbox' },
   CONNECTED: { label: 'CONNECTED', color: 'var(--color-success)', bg: 'var(--color-success-bg)', icon: CheckCircle, borderColor: 'var(--color-success)', badgeCls: 'ap-badge ap-badge-live' },
+  HEALTHY: { label: 'HEALTHY', color: 'var(--color-success)', bg: 'var(--color-success-bg)', icon: CheckCircle, borderColor: 'var(--color-success)', badgeCls: 'ap-badge ap-badge-live' },
   FAILED: { label: 'FAILED', color: 'var(--color-danger)', bg: 'var(--color-danger-bg)', icon: XCircle, borderColor: 'var(--color-danger)', badgeCls: 'ap-badge ap-badge-offline' },
 }
 
 export function AirfareSourceCard({ source }: AirfareSourceCardProps) {
   const cfg = AIRFARE_STATUS_CONFIG[source.status]
   const Icon = cfg.icon
-  const isActive = source.status === 'CONNECTED'
+  const isActive = source.status === 'CONNECTED' || source.status === 'HEALTHY'
 
   return (
     <div className="ap-card" style={{ padding: 'var(--space-xl)', display: 'flex', flexDirection: 'column', gap: 'var(--space-md)', borderLeft: `3px solid ${cfg.borderColor}` }}>

@@ -5,7 +5,7 @@ Uses an in-memory SQLite database for isolation.
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from app.models.base import Base
-from app.models import fare, collection, index, government, user  # register all models
+from app.models import auth_account, fare, collection, index, government, user  # register all models
 
 
 @pytest.fixture(scope="function")

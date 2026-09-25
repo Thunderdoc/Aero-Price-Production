@@ -118,12 +118,12 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
       }
       setAuthMode('login')
       setPass('')
-      setNotice(`Verification email sent to ${trimmedEmail}. Verify your Firebase email first, then sign in.`)
+      setNotice(`Account created for ${trimmedEmail}. You can sign in now.`)
       return
     }
 
     setLoading(true)
-    const result = await login(trimmedEmail, pass)
+    const result = await login(trimmedEmail, pass, rememberMe)
     setLoading(false)
 
     if (!result.success) {
@@ -131,17 +131,11 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
       return
     }
 
-    const stored = localStorage.getItem('aeroprice_auth')
-    const authedRole = stored ? JSON.parse(stored).role as UserRole : null
+    const authedRole = result.user?.role ?? null
     if (!authedRole || !role.expectedRoles.includes(authedRole)) {
       logout()
       setError(`This account is not authorized for the ${role.label} workspace. Use the correct approved account.`)
       return
-    }
-
-    if (!rememberMe) {
-      localStorage.removeItem('aeroprice_auth')
-      localStorage.removeItem('aeroprice_token')
     }
 
     onLogin(role.destination)

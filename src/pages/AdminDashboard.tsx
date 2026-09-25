@@ -10,7 +10,7 @@ import indiaMap from '../assets/india_map_clean.png'
 
 const _h = getApiHealth()
 
-const AIRFARE_SOURCES_ADMIN = []
+const AIRFARE_SOURCES_ADMIN: Array<{ id: string; name: string; status: string; enabled: boolean; obs: string }> = []
 /* Operational status is loaded from backend health, never from fixtures. */
 /*
   { id: 'firebase-auth', name: 'Firebase Authentication', status: 'LIVE', enabled: true, obs: 'email verification and Google sign-in active' },
@@ -22,7 +22,7 @@ const AIRFARE_SOURCES_ADMIN = []
 ]
 */
 
-const INITIAL_AUDIT = []
+const INITIAL_AUDIT: Array<{ ts: string; actor: string; action: string; detail: string }> = []
 /*
   { ts: '2026-09-21T14:45:00Z', actor: 'admin@aeroprice.in', action: 'INDEX_PUB', detail: 'Jevons Airfare Index published at 108.45 (+8.45% YoY) across 24 corridors' },
   { ts: '2026-09-21T14:30:02Z', actor: 'system', action: 'GOV_FETCH', detail: 'DGCA Monthly Passenger & MoSPI CPI Transport feeds synced successfully' },

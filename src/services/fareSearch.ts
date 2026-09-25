@@ -1,5 +1,5 @@
 // AeroPrice — Real Live Flight Fare Search Service for Indian Domestic Corridors
-import { apiFares, apiLiveFareSearch, isBackendAvailable } from './api'
+import { apiFares, isBackendAvailable } from './api'
 
 export interface FareResult {
   origin: string

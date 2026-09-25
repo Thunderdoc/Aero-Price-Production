@@ -51,6 +51,19 @@ export async function apiLogin(email: string, password: string): Promise<TokenRe
   return resp.json()
 }
 
+export async function apiRegister(name: string, email: string, password: string): Promise<{ status: string; user: ApiUser }> {
+  const resp = await fetch(`${BASE_URL}/api/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, email, password }),
+  })
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => null) as { detail?: string } | null
+    throw new Error(body?.detail || 'Unable to create account.')
+  }
+  return resp.json()
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function authHeaders(token?: string): Record<string, string> {

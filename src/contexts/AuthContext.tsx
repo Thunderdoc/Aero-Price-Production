@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
-import { apiLogin, AUTH_EXPIRED_EVENT } from '../services/api'
+import { apiLogin, apiRegister, AUTH_EXPIRED_EVENT } from '../services/api'
 
 export type UserRole = 'PUBLIC' | 'ANALYST' | 'ADMIN'
 export type UserPlan = 'FREE' | 'SUBSCRIBER' | 'GOVERNMENT' | 'ADMIN'
@@ -17,7 +17,7 @@ export interface AuthUser {
 interface AuthContextValue {
   user: AuthUser | null
   token: string | null
-  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>
+  login: (email: string, password: string, remember?: boolean) => Promise<{ success: boolean; error?: string; user?: AuthUser }>
   loginWithGoogle: (workspace?: AuthWorkspace) => Promise<{ success: boolean; error?: string }>
   createAccount: (name: string, email: string, password: string, workspace?: AuthWorkspace) => Promise<{ success: boolean; error?: string }>
   resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>
@@ -26,6 +26,8 @@ interface AuthContextValue {
 
 const STORAGE_KEY = 'aeroprice_auth'
 const TOKEN_KEY = 'aeroprice_token'
+const SESSION_STORAGE_KEY = 'aeroprice_session_auth'
+const SESSION_TOKEN_KEY = 'aeroprice_session_token'
 
 function envEmailList(value?: string): string[] {
   return (value ?? '')
@@ -70,18 +72,35 @@ function roleForWorkspace(email: string, workspace?: AuthWorkspace): Pick<AuthUs
 
 function loadStoredUser(): AuthUser | null {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY)
+    const stored = localStorage.getItem(STORAGE_KEY) ?? sessionStorage.getItem(SESSION_STORAGE_KEY)
     if (!stored) return null
     const parsed = JSON.parse(stored) as AuthUser
     return parsed?.email && parsed?.role ? parsed : null
   } catch {
     localStorage.removeItem(STORAGE_KEY)
+    sessionStorage.removeItem(SESSION_STORAGE_KEY)
     return null
   }
 }
 
 function loadStoredToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY)
+  return localStorage.getItem(TOKEN_KEY) ?? sessionStorage.getItem(SESSION_TOKEN_KEY)
+}
+
+function saveStoredSession(user: AuthUser, token: string, remember: boolean) {
+  const persistentStore = remember ? localStorage : sessionStorage
+  const transientStore = remember ? sessionStorage : localStorage
+  persistentStore.setItem(remember ? STORAGE_KEY : SESSION_STORAGE_KEY, JSON.stringify(user))
+  persistentStore.setItem(remember ? TOKEN_KEY : SESSION_TOKEN_KEY, token)
+  transientStore.removeItem(remember ? SESSION_STORAGE_KEY : STORAGE_KEY)
+  transientStore.removeItem(remember ? SESSION_TOKEN_KEY : TOKEN_KEY)
+}
+
+function clearStoredSession() {
+  localStorage.removeItem(STORAGE_KEY)
+  localStorage.removeItem(TOKEN_KEY)
+  sessionStorage.removeItem(SESSION_STORAGE_KEY)
+  sessionStorage.removeItem(SESSION_TOKEN_KEY)
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -94,8 +113,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const handleAuthExpired = () => {
       setUser(null)
       setToken(null)
-      localStorage.removeItem(STORAGE_KEY)
-      localStorage.removeItem(TOKEN_KEY)
+      clearStoredSession()
     }
     window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired)
     return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired)
@@ -115,7 +133,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => { active = false }
   }, [])
 
-  async function login(email: string, password: string): Promise<{ success: boolean; error?: string }> {
+  async function login(email: string, password: string, remember = true): Promise<{ success: boolean; error?: string; user?: AuthUser }> {
     const emailLower = email.trim().toLowerCase()
 
     try {
@@ -132,9 +150,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         setUser(authedUser)
         setToken(response.access_token)
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(authedUser))
-        localStorage.setItem(TOKEN_KEY, response.access_token)
-        return { success: true }
+        saveStoredSession(authedUser, response.access_token, remember)
+        return { success: true, user: authedUser }
       }
       const credential = await signInFirebaseEmailUser(emailLower, password)
       const firebaseUser = credential.user
@@ -144,8 +161,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!firebaseUser.emailVerified) {
         setUser(null)
         setToken(null)
-        localStorage.removeItem(STORAGE_KEY)
-        localStorage.removeItem(TOKEN_KEY)
+        clearStoredSession()
         return { success: false, error: 'Email is not verified. Please verify your Firebase email before signing in.' }
       }
       const mappedAccess = roleForFirebaseEmail(firebaseUser.email || emailLower)
@@ -161,9 +177,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const idToken = await firebaseUser.getIdToken()
       setToken(idToken)
       localStorage.removeItem('aeroprice_pending_workspace')
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(authedUser))
-      localStorage.setItem(TOKEN_KEY, idToken)
-      return { success: true }
+      saveStoredSession(authedUser, idToken, remember)
+      return { success: true, user: authedUser }
     } catch (firebaseErr) {
       const code = typeof firebaseErr === 'object' && firebaseErr && 'code' in firebaseErr ? String((firebaseErr as { code?: string }).code) : ''
       // Keep the deployed prototype usable when Firebase rejects a local/demo
@@ -182,9 +197,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         setUser(authedUser)
         setToken(response.access_token)
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(authedUser))
-        localStorage.setItem(TOKEN_KEY, response.access_token)
-        return { success: true }
+        saveStoredSession(authedUser, response.access_token, remember)
+        return { success: true, user: authedUser }
       } catch {
         // Preserve the useful Firebase-specific error below when both auth
         // paths reject the supplied credentials.
@@ -220,8 +234,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(authedUser)
       const idToken = await firebaseUser.getIdToken()
       setToken(idToken)
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(authedUser))
-      localStorage.setItem(TOKEN_KEY, idToken)
+      saveStoredSession(authedUser, idToken, true)
       return { success: true }
     } catch (err) {
       const code = typeof err === 'object' && err && 'code' in err ? String((err as { code?: string }).code) : ''
@@ -236,6 +249,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function createAccount(name: string, email: string, password: string, workspace?: AuthWorkspace): Promise<{ success: boolean; error?: string }> {
+    if (USE_BACKEND_AUTH) {
+      if (workspace && workspace !== 'USER') {
+        return { success: false, error: 'DGCA and Admin accounts require approved credentials. Only User accounts can self-register.' }
+      }
+      try {
+        await apiRegister(name.trim(), email.trim().toLowerCase(), password)
+        return { success: true }
+      } catch (err) {
+        return { success: false, error: err instanceof Error ? err.message : 'Unable to create account.' }
+      }
+    }
     try {
       const { createFirebaseEmailUser } = await import('../services/firebase')
       const credential = await createFirebaseEmailUser(email.trim().toLowerCase(), password, name)
@@ -245,8 +269,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await credential.user.reload()
       setUser(null)
       setToken(null)
-      localStorage.removeItem(STORAGE_KEY)
-      localStorage.removeItem(TOKEN_KEY)
+      clearStoredSession()
       return { success: true }
     } catch (err) {
       const code = typeof err === 'object' && err && 'code' in err ? String((err as { code?: string }).code) : ''
@@ -276,8 +299,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   function logout() {
     setUser(null)
     setToken(null)
-    localStorage.removeItem(STORAGE_KEY)
-    localStorage.removeItem(TOKEN_KEY)
+    clearStoredSession()
   }
 
   return <AuthContext.Provider value={{ user, token, login, loginWithGoogle, createAccount, resetPassword, logout }}>{children}</AuthContext.Provider>

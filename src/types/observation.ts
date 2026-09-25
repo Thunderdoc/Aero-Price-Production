@@ -48,6 +48,7 @@ export type AirfareSourceStatus =
   | 'SOURCE_BLOCKED'
   | 'AUTH_REQUIRED'
   | 'NOT_CONFIGURED'
+  | 'HEALTHY'
   | 'CONNECTED'
   | 'FAILED'
 
