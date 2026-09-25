@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 from app.core.database import get_db
+from app.core.auth import require_analyst
 from app.models.government import DgcaMonthlyRecord, MospiTransportSeries, DgcaCircular, GovDataset
 from app.services.gov_fetcher import run_gov_fetches
 
