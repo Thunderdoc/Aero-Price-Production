@@ -2,7 +2,9 @@ import { useState } from 'react'
 import { Plane, TrendingUp, Search, ExternalLink, X, ShieldCheck, Activity } from 'lucide-react'
 import { AIRLINE_STATS } from '../data/kaggleData'
 
-const AIRLINES = [
+const AIRLINES: Array<{ iata: string; name: string; share: number; routes: number; obs: number; avgFare: number; status: string; color: string }> = []
+/* Airline market-share and fare rows require a verified dataset. */
+/*
   { iata:'6E', name:'IndiGo',          share:57.2, routes:85, obs:24190, avgFare:4820, status:'ACTIVE_FEED', color:'#2563eb' },
   { iata:'AI', name:'Air India',        share:14.1, routes:62, obs:11480, avgFare:6450, status:'ACTIVE_FEED', color:'#dc2626' },
   { iata:'SG', name:'SpiceJet',         share:8.3,  routes:41, obs:4890,  avgFare:4150, status:'ACTIVE_FEED', color:'#d97706' },
@@ -10,8 +12,10 @@ const AIRLINES = [
   { iata:'IX', name:'Air India Express',share:5.9,  routes:35, obs:4110,  avgFare:3980, status:'ACTIVE_FEED', color:'#ea580c' },
   { iata:'OG', name:'Others (Alliance)',share:8.4,  routes:18, obs:2450,  avgFare:5200, status:'ACTIVE_FEED', color:'#6b7280' },
 ]
+*/
 
-const ROUTES_PER_AIRLINE: Record<string, Array<{ route: string; freq: string; avgFare: number; obs: number; status: string }>> = {
+const ROUTES_PER_AIRLINE: Record<string, Array<{ route: string; freq: string; avgFare: number; obs: number; status: string }>> = {}
+/*
   '6E': [
     { route:'DEL-BOM', freq:'28x daily', avgFare:5120, obs:4820, status:'LIVE' },
     { route:'DEL-BLR', freq:'22x daily', avgFare:4850, obs:3940, status:'LIVE' },
@@ -50,6 +54,7 @@ const ROUTES_PER_AIRLINE: Record<string, Array<{ route: string; freq: string; av
     { route:'CCU-GAU', freq:'4x daily',  avgFare:3420, obs:740,  status:'LIVE' },
   ],
 }
+*/
 
 const MARKET_SHARE_TOTAL = 100
 

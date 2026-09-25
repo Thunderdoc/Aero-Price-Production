@@ -11,7 +11,9 @@ const PIPELINE_STAGES = [
   { name: 'CPI Augmentation', icon: '📈', desc: 'MoSPI Transport Weighting' },
 ]
 
-const AIRFARE_SOURCES = [
+const AIRFARE_SOURCES: Array<{ name: string; code: string; status: string; ping: string; offers: string }> = []
+/* Provider rows are populated only from the authorized backend response. */
+/*
   { name: 'IndiGo', code: '6E', status: 'CONNECTED', ping: '24ms', offers: '4,820' },
   { name: 'Air India', code: 'AI', status: 'CONNECTED', ping: '32ms', offers: '3,240' },
   { name: 'Akasa Air', code: 'QP', status: 'CONNECTED', ping: '28ms', offers: '1,840' },
@@ -19,6 +21,7 @@ const AIRFARE_SOURCES = [
   { name: 'AI Express', code: 'IX', status: 'CONNECTED', ping: '35ms', offers: '1,540' },
   { name: 'SerpAPI / Google', code: 'SRP', status: 'CONNECTED', ping: '42ms', offers: '8,920' },
 ]
+*/
 
 const ORIGINS = ['ALL', 'DEL', 'BOM', 'BLR', 'HYD', 'MAA', 'CCU']
 const AIRLINES = ['ALL', 'IndiGo', 'Air India', 'Akasa Air', 'SpiceJet', 'Air India Express']
@@ -108,7 +111,7 @@ export default function LiveFares() {
   const [filterWindow, setFilterWindow] = useState('ALL')
   const [filterCabin, setFilterCabin] = useState('ALL')
 
-  const [allFares, setAllFares] = useState<FareObservationApi[]>(() => generateRealFlights())
+  const [allFares, setAllFares] = useState<FareObservationApi[]>([])
   const [loading, setLoading] = useState(false)
   const [lastFetched, setLastFetched] = useState<string>(
     new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST'
@@ -125,17 +128,17 @@ export default function LiveFares() {
         if (resp.observations && resp.observations.length > 0) {
           setAllFares(resp.observations)
         } else {
-          setAllFares(generateRealFlights())
+          setAllFares([])
         }
       } else {
         await new Promise(r => setTimeout(r, 400))
-        setAllFares(generateRealFlights())
+        setAllFares([])
       }
       setLastFetched(
         new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST'
       )
     } catch {
-      setAllFares(generateRealFlights())
+      setAllFares([])
     } finally {
       setLoading(false)
     }

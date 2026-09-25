@@ -10,7 +10,9 @@ import indiaMap from '../assets/india_map_clean.png'
 
 const _h = getApiHealth()
 
-const AIRFARE_SOURCES_ADMIN = [
+const AIRFARE_SOURCES_ADMIN = []
+/* Operational status is loaded from backend health, never from fixtures. */
+/*
   { id: 'firebase-auth', name: 'Firebase Authentication', status: 'LIVE', enabled: true, obs: 'email verification and Google sign-in active' },
   { id: 'gov-data', name: 'DGCA & MoSPI Official Data', status: 'LIVE', enabled: true, obs: 'government data cards connected' },
   { id: 'fare-index', name: 'Airfare Index Engine', status: 'LIVE', enabled: true, obs: 'index and route intelligence available' },
@@ -18,14 +20,17 @@ const AIRFARE_SOURCES_ADMIN = [
   { id: 'audit-log', name: 'Audit Trail', status: 'LIVE', enabled: true, obs: 'admin events and exports available' },
   { id: 'reports', name: 'Reports & CSV Export', status: 'READY', enabled: true, obs: 'download workflows enabled' },
 ]
+*/
 
-const INITIAL_AUDIT = [
+const INITIAL_AUDIT = []
+/*
   { ts: '2026-09-21T14:45:00Z', actor: 'admin@aeroprice.in', action: 'INDEX_PUB', detail: 'Jevons Airfare Index published at 108.45 (+8.45% YoY) across 24 corridors' },
   { ts: '2026-09-21T14:30:02Z', actor: 'system', action: 'GOV_FETCH', detail: 'DGCA Monthly Passenger & MoSPI CPI Transport feeds synced successfully' },
   { ts: '2026-09-21T14:15:04Z', actor: 'system', action: 'SOURCE_CHECK', detail: 'Production readiness checks completed for authentication, official data, and feature-access modules' },
   { ts: '2026-09-21T14:00:00Z', actor: 'admin@aeroprice.in', action: 'LOGIN', detail: 'Admin session authenticated (administrator access)' },
   { ts: '2026-09-21T13:30:00Z', actor: 'dgca@gov.in', action: 'LOGIN', detail: 'Analyst login (GOVERNMENT plan)' },
 ]
+*/
 
 const THRESHOLDS = [
   { key: 'anomaly_zscore', label: 'Anomaly Z-score threshold', value: 3.5, unit: 'σ' },

@@ -29,7 +29,9 @@ interface SourceHealthItem {
   latency_ms_avg?: number
 }
 
-const DEFAULT_SOURCES: SourceHealthItem[] = [
+const DEFAULT_SOURCES: SourceHealthItem[] = []
+/* Historical fixture rows are intentionally not shown as live source health. */
+/*
   { source_id: 'indigo-direct',  source_name: 'IndiGo Direct Collector',     source_type: 'Direct API / Scraper',  status: 'LIVE', records_total: 24190, latency_ms_avg: 74,  last_success: new Date(Date.now() - 120_000).toISOString(), last_attempt: new Date().toISOString() },
   { source_id: 'airindia-gds',   source_name: 'Air India GDS / NDC Feed',     source_type: 'GDS / Amadeus NDC',     status: 'LIVE', records_total: 11480, latency_ms_avg: 110, last_success: new Date(Date.now() - 180_000).toISOString(), last_attempt: new Date().toISOString() },
   { source_id: 'spicejet-api',   source_name: 'SpiceJet Webhook Stream',     source_type: 'Navitaire Webhook',     status: 'LIVE', records_total: 4890,  latency_ms_avg: 88,  last_success: new Date(Date.now() - 240_000).toISOString(), last_attempt: new Date().toISOString() },
@@ -39,12 +41,15 @@ const DEFAULT_SOURCES: SourceHealthItem[] = [
   { source_id: 'mospi-cpi',      source_name: 'MoSPI CPI Transport Series',  source_type: 'MoSPI eSankhyiki API',  status: 'LIVE', records_total: 3450,  latency_ms_avg: 55,  last_success: new Date(Date.now() - 720_000).toISOString(), last_attempt: new Date().toISOString() },
   { source_id: 'adsb-radar',     source_name: 'AviationStack / ADS-B Telemetry', source_type: '1090 MHz Transponder', status: 'LIVE', records_total: 5420,  latency_ms_avg: 42,  last_success: new Date(Date.now() - 60_000).toISOString(),  last_attempt: new Date().toISOString() },
 ]
+*/
 
-const DEFAULT_RUNS: CollectionRun[] = [
+const DEFAULT_RUNS: CollectionRun[] = []
+/*
   { run_id: 'RUN-20260921-04', triggered_by: 'CRON_SCHEDULER', status: 'COMPLETED', routes_planned: 24, routes_done: 24, observations_collected: 12450, observations_rejected: 0, started_at: new Date(Date.now() - 15*60_000).toISOString(), ended_at: new Date(Date.now() - 14*60_000).toISOString() },
   { run_id: 'RUN-20260921-03', triggered_by: 'CRON_SCHEDULER', status: 'COMPLETED', routes_planned: 24, routes_done: 24, observations_collected: 11890, observations_rejected: 0, started_at: new Date(Date.now() - 75*60_000).toISOString(), ended_at: new Date(Date.now() - 74*60_000).toISOString() },
   { run_id: 'RUN-20260921-02', triggered_by: 'ADMIN',          status: 'COMPLETED', routes_planned: 24, routes_done: 24, observations_collected: 10875, observations_rejected: 0, started_at: new Date(Date.now() - 135*60_000).toISOString(), ended_at: new Date(Date.now() - 134*60_000).toISOString() },
 ]
+*/
 
 function relativeTime(iso: string | null | undefined): string {
   if (!iso) return '—'
