@@ -5,6 +5,7 @@ FastAPI application entrypoint.
 Start: uvicorn main:app --reload --port 8000
 """
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
@@ -54,6 +55,13 @@ async def _scheduled_gov_fetch():
 async def lifespan(app: FastAPI):
     # Startup
     logger.info("AeroPrice India backend starting — SIH26056")
+    # Vercel Functions are short-lived request workers. They must not create
+    # tables in the read-only deployment filesystem or start APScheduler;
+    # persistent live fare data belongs in the configured hosted database.
+    if os.getenv("VERCEL") == "1":
+        logger.info("Vercel serverless mode: skipping database mutation and scheduler startup.")
+        yield
+        return
     await create_all_tables()
     logger.info("Database tables verified.")
     async with AsyncSessionLocal() as db:
