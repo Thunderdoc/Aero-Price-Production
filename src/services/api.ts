@@ -456,11 +456,15 @@ export async function isBackendAvailable(): Promise<boolean> {
   if (_backendAvailable !== null) return _backendAvailable
   try {
     const resp = await fetch(`${BASE_URL}/api/health`, { signal: AbortSignal.timeout(3000) })
-    _backendAvailable = resp.ok
+    // A transient cold-start/database error must not poison the browser
+    // session. Cache only healthy responses; the next request should retry
+    // after a temporary 500 instead of permanently rendering empty data.
+    _backendAvailable = resp.ok ? true : null
+    return resp.ok
   } catch {
-    _backendAvailable = false
+    _backendAvailable = null
+    return false
   }
-  return _backendAvailable
 }
 
 export function resetBackendAvailability() {

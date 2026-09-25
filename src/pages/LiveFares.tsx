@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { CheckCircle2, Download, Filter, RefreshCw, Zap, ShieldCheck } from 'lucide-react'
 import { Button } from '../components/ui/Button'
-import { apiFares, isBackendAvailable, type FareObservationApi } from '../services/api'
+import { apiFares, isBackendAvailable, resetBackendAvailability, type FareObservationApi } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
 
 const PIPELINE_STAGES = [
@@ -30,80 +30,6 @@ const CABINS = ['ALL', 'ECONOMY', 'BUSINESS']
 
 const TABLE_COLS = ['Observation ID', 'Collected', 'Route', 'Airline', 'Flight No', 'Travel Date', 'Window', 'Stops', 'Base Fare', 'Taxes', 'Total Fare', 'Cabin', 'Provenance']
 
-// Seeded pool of real-life Indian domestic flight observations
-function generateRealFlights(): FareObservationApi[] {
-  const list: FareObservationApi[] = []
-  const today = new Date()
-
-  const routes = [
-    { dep: 'DEL', arr: 'BOM', duration: '2h 15m' },
-    { dep: 'DEL', arr: 'BLR', duration: '2h 45m' },
-    { dep: 'BOM', arr: 'BLR', duration: '1h 45m' },
-    { dep: 'DEL', arr: 'HYD', duration: '2h 10m' },
-    { dep: 'DEL', arr: 'MAA', duration: '2h 50m' },
-    { dep: 'DEL', arr: 'CCU', duration: '2h 20m' },
-    { dep: 'BOM', arr: 'GOI', duration: '1h 15m' },
-    { dep: 'BLR', arr: 'HYD', duration: '1h 10m' },
-    { dep: 'BLR', arr: 'MAA', duration: '1h 00m' },
-    { dep: 'BOM', arr: 'MAA', duration: '1h 55m' },
-  ]
-
-  const carriers = [
-    { name: 'IndiGo', code: '6E', basePrefix: 4200, flightPrefix: '6E-' },
-    { name: 'Air India', code: 'AI', basePrefix: 5400, flightPrefix: 'AI-' },
-    { name: 'Akasa Air', code: 'QP', basePrefix: 3900, flightPrefix: 'QP-' },
-    { name: 'SpiceJet', code: 'SG', basePrefix: 3700, flightPrefix: 'SG-' },
-    { name: 'Air India Express', code: 'IX', basePrefix: 3800, flightPrefix: 'IX-' },
-  ]
-
-  const windows = [1, 7, 15, 30, 45]
-  let counter = 1000
-
-  for (const r of routes) {
-    for (const c of carriers) {
-      for (const w of windows) {
-        counter++
-        const travelDate = new Date(today)
-        travelDate.setDate(today.getDate() + w)
-
-        // Realistic advance-purchase curve
-        const windowMultiplier = w === 1 ? 1.65 : w === 7 ? 1.25 : w === 15 ? 1.0 : w === 30 ? 0.88 : 0.82
-        const base = Math.round(c.basePrefix * windowMultiplier + (counter % 350))
-        const taxes = Math.round(base * 0.18 + 450)
-        const total = base + taxes
-
-        const depHour = 6 + (counter % 16)
-        const depMin = (counter % 4) * 15
-        const depStr = `${String(depHour).padStart(2, '0')}:${String(depMin).padStart(2, '0')}`
-
-        list.push({
-          observation_id: `OBS-2026-${counter}`,
-          collected_at: new Date(Date.now() - (counter % 120) * 60000).toISOString(),
-          travel_date: travelDate.toISOString().slice(0, 10),
-          route: `${r.dep}-${r.arr}`,
-          airline: c.name,
-          flight_number: `${c.flightPrefix}${100 + (counter % 890)}`,
-          departure_time: depStr,
-          arrival_time: `${String((depHour + 2) % 24).padStart(2, '0')}:${String(depMin).padStart(2, '0')}`,
-          stops: counter % 5 === 0 ? 1 : 0,
-          base_fare: base,
-          taxes: taxes,
-          total_fare: total,
-          currency: 'INR',
-          advance_days: w,
-          fare_family: w <= 7 ? 'FLEXI' : 'SAVER',
-          cabin: counter % 8 === 0 ? 'BUSINESS' : 'ECONOMY',
-          source: `${c.code}_DIRECT_API`,
-          data_origin: 'REAL',
-          quality_flags: [],
-        })
-      }
-    }
-  }
-
-  return list
-}
-
 export default function LiveFares() {
   const { token } = useAuth()
   const [filterOrigin, setFilterOrigin] = useState('ALL')
@@ -113,6 +39,7 @@ export default function LiveFares() {
 
   const [allFares, setAllFares] = useState<FareObservationApi[]>([])
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [lastFetched, setLastFetched] = useState<string>(
     new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST'
   )
@@ -121,24 +48,41 @@ export default function LiveFares() {
 
   const refreshFares = useCallback(async () => {
     setLoading(true)
+    setError(null)
     try {
-      const up = await isBackendAvailable()
-      if (up) {
-        const resp = await apiFares({ limit: 100 }, token ?? undefined)
-        if (resp.observations && resp.observations.length > 0) {
-          setAllFares(resp.observations)
-        } else {
-          setAllFares([])
+      let lastError: unknown = null
+      let loaded = false
+
+      // Vercel can briefly return 500 while a new worker is warming up. Retry
+      // once and re-check health so a transient failure cannot look like 0
+      // verified fares to the user.
+      for (let attempt = 0; attempt < 2 && !loaded; attempt += 1) {
+        resetBackendAvailability()
+        try {
+          const up = await isBackendAvailable()
+          if (!up) throw new Error('The verified fare service is temporarily unavailable.')
+
+          const resp = await apiFares({ limit: 100, data_origin: 'REAL' }, token ?? undefined)
+          setAllFares(resp.observations ?? [])
+          setCurrentPage(0)
+          if (!resp.observations?.length) {
+            setError(resp.note || 'The backend is healthy, but no verified REAL fare observations are available.')
+          }
+          loaded = true
+        } catch (cause) {
+          lastError = cause
+          if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 600))
         }
-      } else {
-        await new Promise(r => setTimeout(r, 400))
-        setAllFares([])
       }
+
+      if (!loaded) throw lastError instanceof Error ? lastError : new Error('The verified fare service is temporarily unavailable.')
+
       setLastFetched(
         new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST'
       )
-    } catch {
+    } catch (cause) {
       setAllFares([])
+      setError(cause instanceof Error ? cause.message : 'The verified fare service is temporarily unavailable. Please try again.')
     } finally {
       setLoading(false)
     }
@@ -280,6 +224,35 @@ export default function LiveFares() {
           </div>
         </div>
       </div>
+
+      {error && (
+        <div
+          role="alert"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 16,
+            padding: '12px 16px',
+            borderRadius: 10,
+            background: 'rgba(245, 158, 11, 0.12)',
+            border: '1px solid rgba(245, 158, 11, 0.35)',
+            color: '#92400e',
+            fontSize: 13,
+            fontWeight: 600,
+          }}
+        >
+          <span>{error}</span>
+          <button
+            type="button"
+            onClick={refreshFares}
+            disabled={loading}
+            style={{ border: 0, background: 'transparent', color: '#b45309', fontWeight: 800, cursor: loading ? 'not-allowed' : 'pointer' }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* ── Active Pipeline Stages Bar ── */}
       <div
