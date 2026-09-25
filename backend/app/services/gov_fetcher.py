@@ -319,11 +319,40 @@ async def fetch_mospi_cpi(db: AsyncSession) -> dict:
                     if not token:
                         raise RuntimeError("MoSPI login succeeded without an access token")
                     headers["Authorization"] = f"Bearer {token}"
-            url = f"{settings.MOSPI_CPI_API_URL}?{urlencode(params)}"
+            # The current portal split CPI into a legacy 2012 group endpoint
+            # and a unified 2024 endpoint.  Keep the provider-specific query
+            # spelling here instead of sending our internal snake_case names
+            # directly to the public API.
+            if params.get("base_year") == 2024:
+                url = "https://api.mospi.gov.in/api/cpi/getCPIData"
+                api_params = {
+                    "base_year": 2024,
+                    "level": params.get("level", "Group"),
+                    "series": params.get("series", "Current"),
+                    "year": params.get("year"),
+                }
+                if params.get("month_code") is not None:
+                    api_params["month"] = params["month_code"]
+            else:
+                url = settings.MOSPI_CPI_API_URL
+                api_params = {
+                    "Series": "Current_series_2012",
+                    "Format": "JSON",
+                    "Year": params.get("year"),
+                    "State_code": 99,
+                    "Sector": 3,
+                }
+            url = f"{url}?{urlencode({k: v for k, v in api_params.items() if v is not None})}"
             async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True, trust_env=False, verify=mospi_tls, headers=headers) as client:
                 response = await client.get(url)
                 response.raise_for_status()
-                payload = response.json()
+                try:
+                    payload = response.json()
+                except ValueError as exc:
+                    content_type = response.headers.get("content-type", "unknown")
+                    raise RuntimeError(
+                        f"MoSPI CPI endpoint returned non-JSON ({content_type})"
+                    ) from exc
             if payload.get("statusCode") is not True:
                 raise RuntimeError(f"MoSPI rejected query: {str(payload.get('error') or payload.get('msg'))[:160]}")
             return payload
@@ -365,22 +394,17 @@ async def fetch_mospi_cpi(db: AsyncSession) -> dict:
                 updated += 1
             return True
 
-        # Base 2012: the publisher serves Jan 2013-Dec 2025. One year spans
-        # about four API pages after the official state/sector filters.
+        # Base 2012: the current provider returns the filtered group rows in a
+        # single response. Do not apply the old meta_data/page contract: that
+        # contract belonged to the retired /api/getCPIIndex route.
         for year in range(2013, min(now.year, 2025) + 1):
             if all((2012, f"{year}-{month:02d}") in existing for month in range(1, 13)):
                 continue
-            params = {"base_year": 2012, "level": "Group", "year": year,
-                "state_code": 99, "sector_code": 3, "limit": 100}
-            first = await request({**params, "page": 1})
-            pages = int(first.get("meta_data", {}).get("totalPages", 0))
-            if pages < 1 or pages > 20:
-                raise RuntimeError(f"Unexpected MoSPI pagination for {year}: {pages}")
-            for page in range(1, pages + 1):
-                payload = first if page == 1 else await request({**params, "page": page})
-                url = f"{settings.MOSPI_CPI_API_URL}?{urlencode({**params, 'page': page})}"
-                for row in payload.get("data", []):
-                    accept(row, 2012, url)
+            params = {"base_year": 2012, "level": "Group", "year": year}
+            payload = await request(params)
+            url = f"{settings.MOSPI_CPI_API_URL}?{urlencode(params)}"
+            for row in payload.get("data", []):
+                accept(row, 2012, url)
             await db.commit()
 
         # Base 2024: transport is division 07. The API currently publishes
@@ -390,10 +414,10 @@ async def fetch_mospi_cpi(db: AsyncSession) -> dict:
                 period = f"{year}-{month:02d}"
                 if (2024, period) in existing and period != f"{now.year}-{now.month:02d}":
                     continue
-                params = {"base_year": 2024, "year": year, "month_code": month,
-                    "state_code": 1, "sector_code": 3, "division_code": "07", "limit": 100, "page": 1}
+                params = {"base_year": 2024, "level": "Group", "series": "Current",
+                    "year": year, "month_code": month}
                 payload = await request(params)
-                url = f"{settings.MOSPI_CPI_API_URL}?{urlencode(params)}"
+                url = f"https://api.mospi.gov.in/api/cpi/getCPIData?{urlencode(params)}"
                 for row in payload.get("data", []):
                     accept(row, 2024, url)
             await db.commit()
