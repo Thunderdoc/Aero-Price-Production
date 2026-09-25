@@ -285,7 +285,7 @@ export default function DataSources() {
               marginBottom: 3,
             }}
           >
-            HIGH-FREQUENCY AIRFARE STREAM & REGULATORY FEEDS ACTIVE
+            VERIFIED SOURCES & REGULATORY FEEDS
           </div>
           <p
             style={{
@@ -296,7 +296,7 @@ export default function DataSources() {
               lineHeight: 1.5,
             }}
           >
-            All airline data adapters (IndiGo, Air India, Akasa Air, SpiceJet, Air India Express) and government registries (DGCA passenger statistics, MoSPI CPI indices) are streaming validated real-time pricing directly to the index engine.
+            Only authorized providers that return a verified response are shown as connected. Unconfigured or unavailable sources remain clearly identified and do not contribute fabricated records.
           </p>
         </div>
       </div>
@@ -373,7 +373,7 @@ export default function DataSources() {
                         <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}>
                           {s.name}
                         </span>
-                        <span className="ap-badge ap-badge-real">CONNECTED · LIVE</span>
+                        <span className={`ap-badge ${s.status === 'CONNECTED' || s.status === 'HEALTHY' ? 'ap-badge-real' : 'ap-badge-sandbox'}`}>{s.status}</span>
                       </div>
                       <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>
                         {s.organization}
@@ -383,10 +383,10 @@ export default function DataSources() {
 
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <div style={{ padding: '4px 10px', borderRadius: 6, background: 'rgba(22,163,74,0.1)', color: '#15803d', fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
-                      PING: 24ms
+                      {s.last_attempt ? `LAST: ${isoTimestamp(s.last_attempt)}` : 'NOT CHECKED'}
                     </div>
                     <div style={{ padding: '4px 10px', borderRadius: 6, background: 'var(--color-surface-secondary)', color: 'var(--color-text-secondary)', fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
-                      HTTP 200 OK
+                      {s.api_available ? 'AUTHORIZED' : 'NOT CONFIGURED'}
                     </div>
                   </div>
                 </div>
@@ -439,7 +439,7 @@ export default function DataSources() {
                       AUTHENTICATION
                     </div>
                     <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: '#16a34a', marginTop: 2, fontWeight: 700 }}>
-                      TLS 1.3 · AUTHORIZED
+                      {s.api_available ? 'CONFIGURED' : 'NOT CONFIGURED'}
                     </div>
                   </div>
 
@@ -469,7 +469,7 @@ export default function DataSources() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
             <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>
-              All 4 institutional government sources actively verified with DGCA & MoSPI.
+              Government source status is taken directly from the latest backend refresh.
             </span>
           </div>
 
@@ -480,12 +480,12 @@ export default function DataSources() {
                 style={{
                   background: 'var(--color-surface-bg)',
                   border: '1px solid var(--color-border-primary)',
-                  borderLeft: '4px solid #16a34a',
+                  borderLeft: `4px solid ${d.status === 'CONNECTED' || d.status === 'HEALTHY' ? '#16a34a' : '#94a3b8'}`,
                   borderRadius: 'var(--radius-lg)',
                   transition: 'box-shadow 0.2s ease, border-color 0.2s ease',
                 }}
               >
-                <GovSourceCard dataset={{ ...d, status: 'CONNECTED' }} />
+                <GovSourceCard dataset={d} />
               </div>
             ))}
           </div>
@@ -502,7 +502,7 @@ export default function DataSources() {
               OFFICIAL GOVERNMENT AVIATION DATA INTEGRATION
             </div>
             <p style={{ fontSize: 'var(--text-body-size)', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', margin: 0, lineHeight: 1.65 }}>
-              AeroPrice connects directly to public official statistical portals (Directorate General of Civil Aviation, Ministry of Statistics & Programme Implementation). All passenger load metrics, monthly traffic tables, and CPI transport inflation figures are certified under data governance standards.
+              Official records are displayed only after a successful source response. Missing credentials, unavailable portals, and unparseable publications remain visible as source-status information rather than being presented as data.
             </p>
           </div>
         </div>
