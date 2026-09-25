@@ -29,17 +29,19 @@ import AviationAirports from './pages/AviationAirports'
 function AppContent() {
   const { user } = useAuth()
   const [currentPage, setCurrentPage] = useState<Page>(() => {
-    const saved = sessionStorage.getItem('aeroprice-current-page') as Page | null
+    const saved = (sessionStorage.getItem('aeroprice-current-page') || localStorage.getItem('aeroprice-current-page')) as Page | null
     return saved || 'overview'
   })
 
   function navigate(page: Page) {
     sessionStorage.setItem('aeroprice-current-page', page)
+    localStorage.setItem('aeroprice-current-page', page)
     setCurrentPage(page)
   }
 
   useEffect(() => {
     sessionStorage.setItem('aeroprice-current-page', currentPage)
+    localStorage.setItem('aeroprice-current-page', currentPage)
   }, [currentPage])
 
   useEffect(() => {
