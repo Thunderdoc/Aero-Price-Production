@@ -16,6 +16,7 @@ export type RadarSnapshot = {
 let snapshot: RadarSnapshot = { aircraft: [], source: '', retrievedAt: null, status: 'loading', refreshing: false, history: [] }
 let pending: Promise<void> | null = null
 let timer: ReturnType<typeof setInterval> | undefined
+let retryTimer: ReturnType<typeof setTimeout> | undefined
 let consumers = 0
 const listeners = new Set<() => void>()
 function publish(next: RadarSnapshot) { snapshot = next; listeners.forEach(listener => listener()) }
@@ -39,6 +40,11 @@ export function refreshRadar(): Promise<void> {
       const providerStatus = body.provider_status === 'CACHED' ? 'CACHED' : aircraft.length ? 'LIVE' : 'EMPTY'
       publish({ aircraft: aircraft.length ? aircraft : snapshot.aircraft, source: body.source || 'Aircraft feed', retrievedAt: time ?? snapshot.retrievedAt, status: providerStatus === 'CACHED' ? 'cached' : providerStatus === 'LIVE' ? 'connected' : 'empty', providerStatus, refreshing: false,
         history: time ? [...snapshot.history, { time, aircraft }].slice(-30) : snapshot.history })
+      // Keep cached positions visible, but actively retry the provider so the
+      // UI promotes them to LIVE only after a genuinely fresh response.
+      if (providerStatus === 'CACHED' && consumers > 0 && !retryTimer) {
+        retryTimer = setTimeout(() => { retryTimer = undefined; void refreshRadar() }, 5000)
+      }
     } catch {
       publish({ ...snapshot, status: snapshot.aircraft.length ? 'cached' : 'unavailable', providerStatus: snapshot.aircraft.length ? 'CACHED' : 'ERROR', refreshing: false })
     } finally { pending = null }
@@ -51,7 +57,7 @@ export function useAviationRadar(enabled = true) {
     if (!enabled) return
     consumers++
     if (!timer) { void refreshRadar(); timer = setInterval(() => void refreshRadar(), 30000) }
-    return () => { if (--consumers === 0) { clearInterval(timer); timer = undefined } }
+    return () => { if (--consumers === 0) { clearInterval(timer); timer = undefined; if (retryTimer) { clearTimeout(retryTimer); retryTimer = undefined } } }
   }, [enabled])
   return state
 }
