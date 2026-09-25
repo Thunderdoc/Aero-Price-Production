@@ -180,6 +180,10 @@ function Sparkline({ route, change }: { route: RouteCard; change?: number }) {
 
 function IndexTrend({ routes, range }: { routes: RouteCard[]; range: string }) {
   const values = routes.map(route => route.fare).filter((value): value is number => value != null)
+  return <div style={{ minHeight: 128, display: 'grid', placeItems: 'center', color: '#7388a6', fontSize: 12, textAlign: 'center' }}>
+    {values.length ? `Verified ${range} history is not available yet. The current index and latest collection movement are shown above.` : 'Waiting for verified fare observations.'}
+  </div>
+  /* Historical points must come from persisted collections; never synthesize a trend. */
   if (!values.length) return <div style={{ minHeight: 128, display: 'grid', placeItems: 'center', color: '#7388a6', fontSize: 12 }}>Waiting for verified fare observations.</div>
   const base = 108.45
   const count = range === '7D' ? 8 : range === '30D' ? 16 : range === '90D' ? 24 : 32
@@ -201,6 +205,7 @@ export default function Overview({ onNavigate }: Props) {
   const [routesTracked, setRoutesTracked] = useState<number | null>(null)
   const [verifiedObservations, setVerifiedObservations] = useState<number | null>(null)
   const [priceDrops, setPriceDrops] = useState<number | null>(null)
+  const [latestIndex, setLatestIndex] = useState<number | null>(null)
   const [activeAlerts, setActiveAlerts] = useState<number | null>(null)
   const [fareMovement, setFareMovement] = useState<FareMovementResponse | null>(null)
   const [routeCards, setRouteCards] = useState<RouteCard[]>(routeSpecs.map(route => ({ ...route, fare: null, minFare: null, maxFare: null, sampleCount: 0 })))
@@ -236,6 +241,7 @@ export default function Overview({ onNavigate }: Props) {
         setRoutesTracked(data.routes_tracked ?? null)
         setVerifiedObservations(data.real_observations ?? null)
         setPriceDrops(data.price_drops ?? null)
+        setLatestIndex(data.index_value ?? null)
       }).catch(() => {})
       apiFareMovement(token ?? undefined).then(data => {
         if (!active) return
@@ -277,7 +283,6 @@ export default function Overview({ onNavigate }: Props) {
   const availableRoutes = useMemo(() => routeCards.filter(route => route.fare != null), [routeCards])
   const movementForRoute = (route: string) => fareMovement?.routes.find(item => item.route === route)
   const priceDropEvents = (fareMovement?.routes ?? []).filter(item => item.change_pct < 0).sort((a, b) => a.change_pct - b.change_pct)
-  const latestIndex = verifiedObservations ? 108.45 : null
   const indexDelta = fareMovement?.routes.length ? (fareMovement.routes.reduce((sum, route) => sum + route.change_pct, 0) / fareMovement.routes.length) : null
   const contributionRows = [
     { key: 'DEL-BOM', code: 'DEL', city: 'Delhi', change: movementForRoute('DEL-BOM')?.change_pct ?? -0.39 },

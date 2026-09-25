@@ -23,3 +23,5 @@ statsmodels==0.14.3
 openpyxl==3.1.5
 pytest==8.3.3
 pytest-asyncio==0.24.0
+fast-flights==3.0
+primp==2.0.1

@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { apiLogin } from '../services/api'
 
 export type UserRole = 'PUBLIC' | 'ANALYST' | 'ADMIN'
 export type UserPlan = 'FREE' | 'SUBSCRIBER' | 'GOVERNMENT' | 'ADMIN'
@@ -35,6 +36,7 @@ function envEmailList(value?: string): string[] {
 
 const FIREBASE_ADMIN_EMAILS = envEmailList(import.meta.env.VITE_FIREBASE_ADMIN_EMAILS)
 const FIREBASE_ANALYST_EMAILS = envEmailList(import.meta.env.VITE_FIREBASE_ANALYST_EMAILS)
+const USE_BACKEND_AUTH = import.meta.env.VITE_AUTH_MODE === 'backend'
 
 function roleForFirebaseEmail(email: string): Pick<AuthUser, 'role' | 'plan'> {
   const normalized = email.trim().toLowerCase()
@@ -85,6 +87,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(loadStoredToken)
 
   useEffect(() => {
+    if (USE_BACKEND_AUTH) return
     let active = true
     import('../services/firebase').then(async ({ getFirebaseIdToken }) => {
       const idToken = await getFirebaseIdToken()
@@ -101,7 +104,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const emailLower = email.trim().toLowerCase()
 
     try {
-      const { signInFirebaseEmailUser } = await import('../services/firebase')
+      const { FIREBASE_CONFIGURED, signInFirebaseEmailUser } = await import('../services/firebase')
+      if (!FIREBASE_CONFIGURED || USE_BACKEND_AUTH) {
+        const response = await apiLogin(emailLower, password)
+        const displayName = response.user.name || response.user.email
+        const authedUser: AuthUser = {
+          name: displayName,
+          email: response.user.email,
+          role: response.user.role,
+          plan: response.user.plan,
+          initials: displayName.slice(0, 2).toUpperCase(),
+        }
+        setUser(authedUser)
+        setToken(response.access_token)
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(authedUser))
+        localStorage.setItem(TOKEN_KEY, response.access_token)
+        return { success: true }
+      }
       const credential = await signInFirebaseEmailUser(emailLower, password)
       const firebaseUser = credential.user
       if (!firebaseUser.emailVerified) {

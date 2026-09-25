@@ -32,6 +32,8 @@ from app.collectors.challenge import (
 )
 from app.collectors.aggregators.amadeus import AmadeusAdapter
 from app.collectors.duffel import DuffelAdapter, SOURCE_ID as DUFFEL_SOURCE_ID
+from app.collectors.aggregators.googleflights_worker import GoogleFlightsWorkerAdapter
+from app.collectors.aggregators.fast_flights import FastFlightsAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -221,6 +223,8 @@ def _make_adapters() -> list[FareSourceAdapter]:
     duffel_cfg = {"DUFFEL_API_TOKEN": settings.DUFFEL_API_TOKEN}
 
     adapters: list[FareSourceAdapter] = [
+        FastFlightsAdapter(),             # no-key public-interface collector
+        GoogleFlightsWorkerAdapter(),  # explicit external worker; disabled by default
         DuffelAdapter(duffel_cfg),     # authorized Duffel REST API — REAL or SANDBOX_TEST
         IndiGoAdapter(airline_cfg),    # CHALLENGE_DETECTED until NDC credentials provided
         AirIndiaAdapter(airline_cfg),
