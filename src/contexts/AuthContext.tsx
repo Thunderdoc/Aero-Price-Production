@@ -36,7 +36,11 @@ function envEmailList(value?: string): string[] {
 
 const FIREBASE_ADMIN_EMAILS = envEmailList(import.meta.env.VITE_FIREBASE_ADMIN_EMAILS)
 const FIREBASE_ANALYST_EMAILS = envEmailList(import.meta.env.VITE_FIREBASE_ANALYST_EMAILS)
-const USE_BACKEND_AUTH = import.meta.env.VITE_AUTH_MODE === 'backend'
+// The deployed app must remain usable without Firebase project credentials or
+// an authorized-domain configuration. Firebase is still available as an
+// explicit opt-in, but the default path uses the first-party backend auth
+// endpoint so a public deployment does not hang waiting for Firebase.
+const USE_BACKEND_AUTH = import.meta.env.VITE_AUTH_MODE !== 'firebase'
 
 function roleForFirebaseEmail(email: string): Pick<AuthUser, 'role' | 'plan'> {
   const normalized = email.trim().toLowerCase()
