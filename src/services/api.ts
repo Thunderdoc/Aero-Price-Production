@@ -20,6 +20,11 @@ export const BASE_URL = import.meta.env.DEV
       .replace(/\/api$/, '') || 'http://localhost:8000')
   : ''
 
+// Protected API calls can outlive the browser auth token. Keep the UI from
+// presenting a stale authenticated shell with empty data when the backend
+// correctly rejects that token.
+export const AUTH_EXPIRED_EVENT = 'aeroprice:auth-expired'
+
 // ── Auth ───────────────────────────────────────────────────────────────────
 
 export interface ApiUser {
@@ -57,6 +62,9 @@ async function apiFetch<T>(path: string, token?: string, init?: RequestInit): Pr
     ...init,
     headers: { ...authHeaders(token), ...(init?.headers ?? {}) },
   })
+  if (resp.status === 401 && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT))
+  }
   if (!resp.ok) {
     const text = await resp.text().catch(() => resp.statusText)
     throw new Error(`API ${path}: ${resp.status} ${text}`)

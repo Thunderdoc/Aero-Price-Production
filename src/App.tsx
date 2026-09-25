@@ -115,6 +115,10 @@ function AppContent() {
 
 export default function App() {
   useEffect(() => {
+    // Firebase is opt-in for authentication. Do not initialize Analytics on
+    // backend-auth deployments, where incomplete Firebase measurement config
+    // only creates console errors and can confuse production diagnosis.
+    if (import.meta.env.VITE_AUTH_MODE !== 'firebase') return
     void import('./services/firebase').then(({ initFirebaseAnalytics }) => initFirebaseAnalytics())
   }, [])
 
