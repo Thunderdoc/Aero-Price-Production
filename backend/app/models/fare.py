@@ -10,6 +10,8 @@ data_origin taxonomy:
                    Stored for pipeline validation; NEVER enters analytical path.
   OFFICIAL       – Fetched from a government/authoritative dataset (DGCA, MoSPI).
                    Enters the analytical path.
+  HISTORICAL_PUBLIC – Public historical airfare dataset; never presented as live.
+  CACHED         – Previously collected fare response retained for reference.
   DERIVED        – Computed from REAL or OFFICIAL observations (index, forecasts).
   GENERATED_TEST – Deterministic demo fixtures. Never enters any production path.
 """

@@ -25,8 +25,8 @@ CITY_CODES = {
     "Hyderabad": "HYD",
 }
 WORKBOOK = Path(__file__).resolve().parents[4] / "src" / "imports" / "Data_Train.xlsx"
-SOURCE = "kaggle-2019-snapshot"
-ORIGIN = "HISTORICAL_SNAPSHOT"
+SOURCE = "kaggle-flight-fare-prediction-mh"
+ORIGIN = "HISTORICAL_PUBLIC"
 
 
 def _date(value) -> str:

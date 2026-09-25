@@ -41,6 +41,8 @@ SANDBOX_TEST   = "SANDBOX_TEST"
 OFFICIAL       = "OFFICIAL"
 DERIVED        = "DERIVED"
 GENERATED_TEST = "GENERATED_TEST"
+HISTORICAL_PUBLIC = "HISTORICAL_PUBLIC"
+CACHED         = "CACHED"
 
 # All origins that the live analytical path accepts (index, forecast, anomaly)
 _ANALYTICAL_ELIGIBLE = frozenset({REAL, OFFICIAL})
@@ -51,7 +53,7 @@ _LIVE_LISTING_ELIGIBLE = frozenset({REAL, OFFICIAL})
 # Demo mode can expose sandbox responses for pipeline validation, but never
 # deterministic/generated fixtures. That prevents placeholder fares appearing
 # anywhere in the user-facing application.
-_DEMO_LISTING_ELIGIBLE = frozenset({REAL, OFFICIAL, SANDBOX_TEST})
+_DEMO_LISTING_ELIGIBLE = frozenset({REAL, OFFICIAL, SANDBOX_TEST, HISTORICAL_PUBLIC, CACHED})
 
 
 def assign_provenance(record: FareRecord, source_type: str, amadeus_env: str = "sandbox") -> str:
