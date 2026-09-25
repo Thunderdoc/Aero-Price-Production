@@ -25,7 +25,13 @@ export interface MacroYearPoint {
   milestone: string
 }
 
-export const MACRO_30_YEAR_DATA: MacroYearPoint[] = [
+/**
+ * Historical macro points must come from verified backend imports. The former
+ * checked-in 1995–2026 illustration was not an authoritative dataset and is
+ * intentionally disabled until DGCA/MoSPI/PPAC rows are imported.
+ */
+export const MACRO_30_YEAR_DATA: MacroYearPoint[] = []
+/*
   { year: 1995, airfare_index: 28.4,  cpi_transport: 24.1, cpi_general: 22.8, atf_fuel_index: 18.2,  pax_million: 12.3, avg_fare_del_bom: 1850, milestone: 'Air Corporations Act Repeal / Private Airlines (Jet, Sahara)' },
   { year: 1996, airfare_index: 30.2,  cpi_transport: 26.5, cpi_general: 24.9, atf_fuel_index: 19.8,  pax_million: 13.5, avg_fare_del_bom: 2020, milestone: 'Expansion of private domestic routes' },
   { year: 1997, airfare_index: 32.8,  cpi_transport: 28.4, cpi_general: 26.7, atf_fuel_index: 20.4,  pax_million: 14.1, avg_fare_del_bom: 2180, milestone: 'Asian financial contagion containment' },
@@ -59,6 +65,7 @@ export const MACRO_30_YEAR_DATA: MacroYearPoint[] = [
   { year: 2025, airfare_index: 100.0, cpi_transport: 166.4, cpi_general: 145.2, atf_fuel_index: 98.6,  pax_million: 172.5, avg_fare_del_bom: 6850, milestone: 'AeroPrice Base Year (Jan 2025 = 100.00)' },
   { year: 2026, airfare_index: 108.45, cpi_transport: 173.8, cpi_general: 151.8, atf_fuel_index: 103.4, pax_million: 185.0, avg_fare_del_bom: 7420, milestone: 'Current Active Index (108.45) · SIH 2026 Live Series' },
 ]
+*/
 
 // ── SVG Chart Helpers ──────────────────────────────────────────────────────
 function HBar({ value, max, color, height = 22 }: { value: number; max: number; color: string; height?: number }) {
