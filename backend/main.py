@@ -59,7 +59,11 @@ async def lifespan(app: FastAPI):
     # tables in the read-only deployment filesystem or start APScheduler;
     # persistent live fare data belongs in the configured hosted database.
     if os.getenv("VERCEL") == "1":
-        logger.info("Vercel serverless mode: skipping database mutation and scheduler startup.")
+        # The Vercel fallback database lives in /tmp and is writable for the
+        # lifetime of the warm function. A hosted DATABASE_URL remains the
+        # preferred persistent store.
+        await create_all_tables()
+        logger.info("Vercel serverless mode: initialized tables without scheduler startup.")
         yield
         return
     await create_all_tables()
