@@ -256,6 +256,10 @@ async def fetch_mospi_cpi(db: AsyncSession) -> dict:
     curl uses Schannel successfully while keeping certificate verification on.
     """
     try:
+        if not settings.MOSPI_API_EMAIL or not settings.MOSPI_API_PASSWORD:
+            reason = "MoSPI API credentials are not configured; no unauthenticated data is imported."
+            await _upsert_dataset_status(db, "mospi-esankhyiki", "NOT_CONFIGURED", failure_reason=reason)
+            return {"status": "NOT_CONFIGURED", "records": 0, "reason": reason}
         # MoSPI's API endpoint currently requires the OpenSSL legacy-server
         # compatibility flag. Scope this context to MoSPI only; certificate
         # verification remains enabled and global TLS policy is unchanged.
