@@ -185,16 +185,6 @@ export async function apiFares(
   return apiFetch(`/api/fares?${qs}`, token)
 }
 
-export async function apiLiveFareSearch(params: {
-  origin: string; destination: string; travel_date: string; limit?: number
-}, token?: string) {
-  const qs = new URLSearchParams({
-    origin: params.origin, destination: params.destination,
-    travel_date: params.travel_date, limit: String(params.limit ?? 50),
-  })
-  return apiFetch<{ observations: FareObservationApi[]; total: number; status: string; source: string; message?: string | null }>(`/api/fares/live-search?${qs}`, token)
-}
-
 export async function apiFareSummary(route: string, token?: string) {
   return apiFetch(`/api/fares/summary/${route}`, token)
 }

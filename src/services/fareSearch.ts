@@ -46,11 +46,7 @@ export async function searchFares(params: FareSearchParams): Promise<FareSearchR
         limit: 100,
       }, params.token)
 
-      const sourceResult = result.observations.length > 0
-        ? result
-        : await apiLiveFareSearch({ origin: params.origin, destination: params.destination, travel_date: params.date, limit: 100 }, params.token)
-
-      const fares: FareResult[] = sourceResult.observations
+      const fares: FareResult[] = result.observations
         .filter(f => f.currency === 'INR')
         .map(f => ({
           origin:         params.origin,

@@ -32,7 +32,6 @@ from app.collectors.challenge import (
 )
 from app.collectors.aggregators.amadeus import AmadeusAdapter
 from app.collectors.duffel import DuffelAdapter, SOURCE_ID as DUFFEL_SOURCE_ID
-from app.collectors.google_flights import GoogleFlightsAdapter, SOURCE_ID as GOOGLE_FLIGHTS_SOURCE_ID
 
 logger = logging.getLogger(__name__)
 
@@ -198,20 +197,6 @@ DUFFEL_SOURCE = {
 }
 AIRFARE_SOURCE_REGISTRY.append(DUFFEL_SOURCE)
 
-GOOGLE_FLIGHTS_SOURCE = {
-    "id": GOOGLE_FLIGHTS_SOURCE_ID,
-    "name": "Google Flights (fast-flights, no API key)",
-    "type": "AGGREGATOR",
-    "status": "CONFIGURED",
-    "api_key_required": False,
-    "robots_txt": "PUBLIC_UI",
-    "captcha_detected": False,
-    "api_available": True,
-    "note": "Low-volume public Google Flights queries through the open-source fast-flights library. Provider challenges are recorded honestly.",
-    "registration_url": "https://github.com/AWeirdDev/flights",
-}
-AIRFARE_SOURCE_REGISTRY.append(GOOGLE_FLIGHTS_SOURCE)
-
 
 
 def _make_adapters() -> list[FareSourceAdapter]:
@@ -236,7 +221,6 @@ def _make_adapters() -> list[FareSourceAdapter]:
     duffel_cfg = {"DUFFEL_API_TOKEN": settings.DUFFEL_API_TOKEN}
 
     adapters: list[FareSourceAdapter] = [
-        GoogleFlightsAdapter({"GOOGLE_FLIGHTS_ENABLED": True}),  # no key; public-data fallback
         DuffelAdapter(duffel_cfg),     # authorized Duffel REST API — REAL or SANDBOX_TEST
         IndiGoAdapter(airline_cfg),    # CHALLENGE_DETECTED until NDC credentials provided
         AirIndiaAdapter(airline_cfg),
