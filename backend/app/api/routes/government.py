@@ -31,6 +31,7 @@ async def list_datasets(
                 "last_attempt": d.last_attempt.isoformat() if d.last_attempt else None,
                 "record_count": d.record_count,
                 "reference_period": d.reference_period,
+                "failure_reason": d.failure_reason,
             }
             for d in datasets
         ]
