@@ -17,8 +17,11 @@ ADSB_LOL_URL = "https://api.adsb.lol/v2/point/22.9734/78.6569/1000"
 OPENSKY_URL = "https://opensky-network.org/api/states/all"
 AVIATION_EDGE_URL = "https://aviation-edge.com/v2/public/flights"
 AVIATIONSTACK_URL = "https://api.aviationstack.com/v1/flights"
-CACHE_TTL_SECONDS = 45
-_live_cache: dict[str, Any] = {"expires_at": 0.0, "aircraft": [], "source": "", "data_origin": "", "retrieved_at": None}
+CACHE_TTL_SECONDS = 15
+# Keep the last valid positions visible briefly while the provider recovers,
+# but never indefinitely and never label them as live.
+STALE_RETENTION_SECONDS = 240
+_live_cache: dict[str, Any] = {"expires_at": 0.0, "fetched_at": 0.0, "aircraft": [], "source": "", "data_origin": "", "retrieved_at": None}
 _schedule_cache: dict[str, dict[str, Any]] = {}
 
 
@@ -53,7 +56,7 @@ def _normalize_opensky_states(states: Any, limit: int) -> list[dict]:
 
 def _live_payload(source: str, data_origin: str, aircraft: list[dict], note: str) -> dict:
     retrieved_at = datetime.now(timezone.utc).isoformat()
-    _live_cache.update({"expires_at": time.monotonic() + CACHE_TTL_SECONDS, "aircraft": aircraft, "source": source, "data_origin": data_origin, "retrieved_at": retrieved_at})
+    _live_cache.update({"expires_at": time.monotonic() + CACHE_TTL_SECONDS, "fetched_at": time.monotonic(), "aircraft": aircraft, "source": source, "data_origin": data_origin, "retrieved_at": retrieved_at})
     return {"source": source, "data_origin": data_origin, "provider_status": "LIVE", "retrieved_at": retrieved_at, "count": len(aircraft), "aircraft": aircraft, "note": note}
 
 
@@ -165,7 +168,7 @@ async def live_aircraft(limit: int = Query(default=150, ge=1, le=300)):
         # fails after the cache expires.
         return {"source": _live_cache["source"], "data_origin": _live_cache["data_origin"], "provider_status": "LIVE",
                 "retrieved_at": _live_cache["retrieved_at"], "count": len(_live_cache["aircraft"]),
-                "aircraft": _live_cache["aircraft"][:limit], "note": "Recent live provider response (45-second refresh cache)."}
+                "aircraft": _live_cache["aircraft"][:limit], "note": "Recent live provider response (15-second refresh cache)."}
 
     errors = []
     async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
@@ -210,10 +213,12 @@ async def live_aircraft(limit: int = Query(default=150, ge=1, le=300)):
         except (httpx.HTTPError, ValueError, AttributeError) as exc:
             errors.append(exc)
 
-    if _live_cache["aircraft"]:
+    cache_age = time.monotonic() - float(_live_cache.get("fetched_at") or 0)
+    if _live_cache["aircraft"] and cache_age <= STALE_RETENTION_SECONDS:
         return {"source": _live_cache["source"], "data_origin": _live_cache["data_origin"], "provider_status": "CACHED",
                 "retrieved_at": _live_cache["retrieved_at"], "count": len(_live_cache["aircraft"]),
-                "aircraft": _live_cache["aircraft"][:limit], "note": "Provider temporarily unavailable; showing the last cached positions."}
+                "aircraft": _live_cache["aircraft"][:limit], "cache_age_seconds": round(cache_age),
+                "note": "Provider temporarily unavailable; showing the last valid positions while retrying."}
     return {"source": "Aircraft providers", "data_origin": "ERROR", "provider_status": "ERROR",
             "retrieved_at": None, "count": 0, "aircraft": [],
             "note": "Live aircraft providers are temporarily unavailable."}

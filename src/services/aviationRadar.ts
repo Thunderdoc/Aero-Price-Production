@@ -43,10 +43,12 @@ export function refreshRadar(): Promise<void> {
       // Keep cached positions visible, but actively retry the provider so the
       // UI promotes them to LIVE only after a genuinely fresh response.
       if (providerStatus === 'CACHED' && consumers > 0 && !retryTimer) {
-        retryTimer = setTimeout(() => { retryTimer = undefined; void refreshRadar() }, 5000)
+        retryTimer = setTimeout(() => { retryTimer = undefined; void refreshRadar() }, 3000)
       }
     } catch {
-      publish({ ...snapshot, status: snapshot.aircraft.length ? 'cached' : 'unavailable', providerStatus: snapshot.aircraft.length ? 'CACHED' : 'ERROR', refreshing: false })
+      const ageMs = snapshot.retrievedAt ? Date.now() - Date.parse(snapshot.retrievedAt) : Number.POSITIVE_INFINITY
+      const retain = snapshot.aircraft.length > 0 && Number.isFinite(ageMs) && ageMs <= 240000
+      publish({ ...snapshot, aircraft: retain ? snapshot.aircraft : [], status: retain ? 'cached' : 'unavailable', providerStatus: retain ? 'CACHED' : 'ERROR', refreshing: false })
     } finally { pending = null }
   })()
   return pending
@@ -58,7 +60,7 @@ export function useAviationRadar(enabled = true) {
     consumers++
     // Poll frequently enough to recover from a short provider interruption;
     // cached positions remain visible between attempts.
-    if (!timer) { void refreshRadar(); timer = setInterval(() => void refreshRadar(), 10000) }
+    if (!timer) { void refreshRadar(); timer = setInterval(() => void refreshRadar(), 5000) }
     return () => { if (--consumers === 0) { clearInterval(timer); timer = undefined; if (retryTimer) { clearTimeout(retryTimer); retryTimer = undefined } } }
   }, [enabled])
   return state

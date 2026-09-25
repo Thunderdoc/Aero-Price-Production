@@ -72,9 +72,9 @@ export default function AviationRadarMap({ state, selected, onSelect, layer, ful
       <MapControls trails={trails} setTrails={setTrails} boundaries={boundaries} setBoundaries={setBoundaries}/>
     </MapContainer>
     {layerNotice[layer] && <div className="av-map-notice" role="status">{layerNotice[layer]}</div>}
-    {(state.status !== 'connected' || mapFailed) && <div className="av-map-connection" role="status">{mapFailed ? 'Basemap unavailable — live aircraft positions remain visible' : state.status === 'loading' ? 'Connecting to aircraft feed…' : state.status === 'cached' ? `Showing cached positions from ${state.source || 'last provider response'}` : state.status === 'empty' ? 'Provider returned no aircraft positions' : 'Live tracking temporarily unavailable'}</div>}
+    {(state.status !== 'connected' && state.status !== 'cached' || mapFailed) && <div className="av-map-connection" role="status">{mapFailed ? 'Basemap unavailable — aircraft positions remain visible' : state.status === 'loading' ? 'Connecting to aircraft feed…' : state.status === 'empty' ? 'Provider returned no aircraft positions' : 'Live tracking temporarily unavailable'}</div>}
     <div className="av-map-legend">{phases.map((key, i) => <div key={key}><svg viewBox="0 0 20 21" width="17" height="17" fill={['#2ed75c', '#facc15', '#fb923c', '#93a9bc'][i]}>{/* same north-facing aircraft silhouette */}<path d="M10 1 8.6 4v4L1 13l7.6-2v4L6 19v1l4-1 4 1v-1l-2.6-2v-4l7.6 2v-2l-7.6-5V4Z"/></svg><span>{['Airborne', 'Descending', 'Climbing', 'On ground'][i]}</span><b>{state.aircraft.filter(a => flightPhase(a).key === key).length}</b></div>)}</div>
     <button className={`av-traffic-toggle ${trails ? 'active' : ''}`} onClick={() => setTrails(!trails)} aria-pressed={trails}><BarChart3 size={20}/>{trails ? 'Hide flight trails' : 'Show flight trails'}</button>
-    <div className="av-radar-source">{state.source || 'ADS-B'} · {state.status === 'connected' ? 'Live positions' : state.status === 'cached' ? 'Cached positions' : state.status === 'empty' ? 'No positions returned' : 'Awaiting feed'}</div>
+    <div className="av-radar-source">{state.source || 'ADS-B'} · {state.status === 'connected' ? 'Live positions' : state.status === 'cached' ? 'Provider reconnecting' : state.status === 'empty' ? 'No positions returned' : 'Awaiting feed'}</div>
   </div>
 }
