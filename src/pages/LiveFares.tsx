@@ -435,7 +435,7 @@ export default function LiveFares() {
                     {o.airline}
                   </td>
                   <td style={{ padding: '12px 14px', fontFamily: 'var(--font-mono)', color: 'var(--color-text-secondary)' }}>
-                    {o.flight_number}
+                    {o.flight_number || 'Not provided'}
                   </td>
                   <td style={{ padding: '12px 14px', fontFamily: 'var(--font-mono)', color: 'var(--color-text-secondary)' }}>
                     {o.travel_date}
@@ -444,7 +444,7 @@ export default function LiveFares() {
                     T+{o.advance_days}
                   </td>
                   <td style={{ padding: '12px 14px', color: 'var(--color-text-secondary)' }}>
-                    {o.stops === 0 ? <span style={{ color: '#16a34a', fontWeight: 600 }}>Non-stop</span> : `${o.stops} Stop`}
+                    {o.stops == null ? 'Not provided' : o.stops === 0 ? <span style={{ color: '#16a34a', fontWeight: 600 }}>Non-stop</span> : `${o.stops} Stop`}
                   </td>
                   <td style={{ padding: '12px 14px', fontFamily: 'var(--font-mono)', color: 'var(--color-text-secondary)' }}>
                     ₹{o.base_fare.toLocaleString('en-IN')}
