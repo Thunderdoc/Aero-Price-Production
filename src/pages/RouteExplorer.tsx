@@ -61,7 +61,16 @@ export default function RouteExplorer() {
     setMessage(null)
     try {
       const response = await apiLiveFares(route, date, token ?? undefined)
-      const next = response.observations.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL')
+      let next = response.observations.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL')
+      // The on-demand provider can temporarily fail or time out even while
+      // the verified snapshot is healthy. Keep the route usable by falling
+      // back to persisted REAL/OFFICIAL rows and label the result honestly.
+      if (!next.length) {
+        const cached = await apiFares({ route, data_origin: 'REAL', limit: 200 }, token ?? undefined)
+        next = cached.observations.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL')
+        setFilteredToDate(false)
+        if (next.length) setMessage('Live fare source is temporarily unavailable; showing cached verified observations.')
+      }
       setRows(next)
       setFilteredToDate(Boolean(date))
       if (user?.email) {
@@ -75,8 +84,16 @@ export default function RouteExplorer() {
       }
       if (!next.length) setMessage(date ? `No verified fare records are available for ${route} on ${date}.` : `No verified fare records are available for ${route}.`)
     } catch {
-      setRows([])
-      setMessage('The verified fare service is not available right now.')
+      try {
+        const cached = await apiFares({ route, data_origin: 'REAL', limit: 200 }, token ?? undefined)
+        const next = cached.observations.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL')
+        setRows(next)
+        setFilteredToDate(false)
+        setMessage(next.length ? 'Live fare source is temporarily unavailable; showing cached verified observations.' : 'No verified fare records are available for this route.')
+      } catch {
+        setRows([])
+        setMessage('The verified fare service is not available right now.')
+      }
     } finally { setLoading(false) }
   }
 
