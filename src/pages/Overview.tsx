@@ -3,6 +3,10 @@ import { ArrowRight, BarChart3, Bell, CalendarDays, CheckCircle2, GitBranch, Map
 import UpgradeModal from '../components/UpgradeModal'
 import { useAuth } from '../contexts/AuthContext'
 import { apiDashboard, apiFareMovement, apiFares, BASE_URL, isBackendAvailable } from '../services/api'
+
+// Version the public hero asset so Vercel/browser caches cannot keep an older
+// dashboard image after a deployment.
+const DASHBOARD_HERO = '/aviation-hero.png?v=2'
 import type { FareMovementResponse, FareMovementStatus } from '../services/api'
 import type { Page } from '../components/AppShell'
 import indiaMap from '../assets/india_map_clean.png'
@@ -285,7 +289,7 @@ export default function Overview({ onNavigate }: Props) {
   ]
 
   return <div className={`user-dashboard${compactDashboard ? ' is-compact' : ''}${dataSaver ? ' is-data-saver' : ''}`} style={{ maxWidth: 1380, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 12, color: '#102b63' }}>
-    <section style={{ minHeight: 202, borderRadius: 16, padding: '25px 34px', position: 'relative', overflow: 'hidden', background: 'linear-gradient(90deg, rgba(2,31,75,.92) 0%, rgba(4,56,116,.67) 48%, rgba(4,32,74,.28) 100%), url(/aviation-hero.png) center/cover', border: '1px solid #2d73bb', boxShadow: 'inset 0 0 70px rgba(25,157,255,.16), 0 10px 28px rgba(10,42,91,.20)', color: '#fff' }}>
+    <section style={{ minHeight: 202, borderRadius: 16, padding: '25px 34px', position: 'relative', overflow: 'hidden', background: `linear-gradient(90deg, rgba(2,31,75,.92) 0%, rgba(4,56,116,.67) 48%, rgba(4,32,74,.28) 100%), url(${DASHBOARD_HERO}) center/cover`, border: '1px solid #2d73bb', boxShadow: 'inset 0 0 70px rgba(25,157,255,.16), 0 10px 28px rgba(10,42,91,.20)', color: '#fff' }}>
       <div style={{ position: 'relative', zIndex: 1, maxWidth: 720 }}><div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.17em', color: '#69d5ff', marginBottom: 9 }}>◉ GOVERNMENT INTELLIGENCE PORTAL</div><h1 style={{ margin: 0, fontSize: 38, lineHeight: 1.05, letterSpacing: '-.04em', fontWeight: 850, color: '#fff' }}>Explore Airfares <span style={{ color: '#2aa8ff' }}>Smarter</span></h1><p style={{ margin: '10px 0 17px', fontSize: 16, color: '#edf6ff' }}>Compare verified routes, understand fare changes and get actionable insights for policy, planning and CPI-related analysis.</p><div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}><button onClick={() => onNavigate('routes')} style={{ border: 0, borderRadius: 10, padding: '11px 18px', background: '#1268ee', color: '#fff', fontWeight: 800, fontSize: 13, cursor: 'pointer' }}><Plane size={15} style={{ verticalAlign: 'middle', marginRight: 7 }} />Explore Routes <ArrowRight size={15} style={{ verticalAlign: 'middle', marginLeft: 7 }} /></button><button onClick={() => onNavigate('map')} style={{ border: 0, borderRadius: 10, padding: '11px 18px', background: '#fff', color: '#102e70', fontWeight: 800, fontSize: 13, cursor: 'pointer' }}><MapIcon size={15} style={{ verticalAlign: 'middle', marginRight: 7 }} />View India Map</button></div></div>
       <div style={{ position: 'absolute', right: 28, top: 30, width: 190, color: '#fff', fontWeight: 800, fontSize: 13, lineHeight: 1.45 }}>Better insights.<br />Brighter journeys.<br />A more connected India.<div style={{ width: 30, borderTop: '3px solid #2aa8ff', marginTop: 11 }} /><div style={{ display: 'flex', gap: 22, marginTop: 17 }}><span><b style={{ fontSize: 23 }}>{liveAircraft ?? '—'}</b><small style={{ display: 'block', color: '#c5dbf5' }}>Aircraft tracked</small></span><span><b style={{ fontSize: 23 }}>{verifiedObservations ?? '—'}</b><small style={{ display: 'block', color: '#c5dbf5' }}>Fare observations</small></span></div></div>
     </section>

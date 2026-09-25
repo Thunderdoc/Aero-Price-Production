@@ -74,7 +74,7 @@ function AppContent() {
 
   if (!canAccess(user.role, user.plan, currentPage)) {
     return (
-      <AppShell currentPage="overview" onNavigate={navigate}>
+    <AppShell currentPage="overview" onNavigate={navigate}>
         <Overview onNavigate={navigate} />
       </AppShell>
     )
@@ -108,7 +108,7 @@ function AppContent() {
 
   return (
     <AppShell currentPage={currentPage} onNavigate={navigate}>
-      {renderPage()}
+      <div key={currentPage} style={{ minWidth: 0 }}>{renderPage()}</div>
     </AppShell>
   )
 }
