@@ -151,6 +151,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { success: true }
     } catch (firebaseErr) {
       const code = typeof firebaseErr === 'object' && firebaseErr && 'code' in firebaseErr ? String((firebaseErr as { code?: string }).code) : ''
+      // Keep the deployed prototype usable when Firebase rejects a local/demo
+      // credential or the current hostname is not yet authorized. The backend
+      // account is an explicit fallback; it never fabricates identity or fare
+      // data and Firebase remains the primary production path.
+      try {
+        const response = await apiLogin(emailLower, password)
+        const displayName = response.user.name || response.user.email
+        const authedUser: AuthUser = {
+          name: displayName,
+          email: response.user.email,
+          role: response.user.role,
+          plan: response.user.plan,
+          initials: displayName.slice(0, 2).toUpperCase(),
+        }
+        setUser(authedUser)
+        setToken(response.access_token)
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(authedUser))
+        localStorage.setItem(TOKEN_KEY, response.access_token)
+        return { success: true }
+      } catch {
+        // Preserve the useful Firebase-specific error below when both auth
+        // paths reject the supplied credentials.
+      }
       if (code.includes('invalid-credential') || code.includes('wrong-password') || code.includes('user-not-found')) {
         return { success: false, error: 'Invalid Firebase email or password.' }
       }
