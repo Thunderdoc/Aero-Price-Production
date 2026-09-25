@@ -98,6 +98,9 @@ def _hhmm(raw) -> Optional[str]:
     """Extract HH:MM from whatever time representation fast-flights gives."""
     if raw is None:
         return None
+    parts = getattr(raw, "time", None)
+    if isinstance(parts, (list, tuple)) and parts and parts[0] is not None:
+        return f"{int(parts[0]):02d}:{int(parts[1] or 0):02d}"
     s = str(raw).strip()
     # Already HH:MM
     if len(s) >= 5 and s[2] == ":":
@@ -209,7 +212,9 @@ class GoogleFlightsAdapter(FareSourceAdapter):
                 challenge_reason="fast-flights returned None — likely blocked or no results",
             )
 
-        flights = getattr(result, "flights", None) or []
+        flights = getattr(result, "flights", None)
+        if flights is None:
+            flights = list(result) if isinstance(result, (list, tuple)) else []
         if not flights:
             return CollectionResult(
                 source_id=SOURCE_ID, route=route, travel_date=travel_date,
@@ -294,9 +299,12 @@ class GoogleFlightsAdapter(FareSourceAdapter):
         taxes = round(total_fare - base_fare, 2)
 
         airline = _airline_name(flight)
-        dep = _hhmm(getattr(flight, "departure", None))
-        arr = _hhmm(getattr(flight, "arrival", None))
-        stops = int(getattr(flight, "stops", 0) or 0)
+        segments = getattr(flight, "flights", None) or []
+        first_segment = segments[0] if segments else flight
+        last_segment = segments[-1] if segments else flight
+        dep = _hhmm(getattr(first_segment, "departure", None))
+        arr = _hhmm(getattr(last_segment, "arrival", None))
+        stops = max(0, len(segments) - 1) if segments else int(getattr(flight, "stops", 0) or 0)
 
         raw_hash = _make_hash(route, travel_date, airline, total_fare, dep, arr)
 

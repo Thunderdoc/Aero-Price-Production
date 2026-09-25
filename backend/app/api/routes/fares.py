@@ -7,6 +7,7 @@ from app.core.database import get_db
 from app.core.auth import get_current_user
 from app.core.config import settings
 from app.models.fare import FareObservation
+from app.collectors.google_flights import GoogleFlightsAdapter
 
 router = APIRouter(prefix="/fares", tags=["fares"])
 
@@ -128,6 +129,40 @@ async def list_fares(
                 "Set AMADEUS_API_KEY + AMADEUS_API_SECRET and trigger a collection run."
             )
         ),
+    }
+
+
+@router.get("/live-search")
+async def live_fare_search(
+    origin: str = Query(..., min_length=3, max_length=3),
+    destination: str = Query(..., min_length=3, max_length=3),
+    travel_date: str = Query(...),
+    limit: int = Query(50, ge=1, le=100),
+):
+    """Fetch current public fare results without an API key."""
+    adapter = GoogleFlightsAdapter({"GOOGLE_FLIGHTS_ENABLED": True})
+    result = await adapter.collect(
+        f"{origin.upper()}-{destination.upper()}", travel_date, 0, "live-search"
+    )
+    records = result.records[:limit]
+    return {
+        "observations": [{
+            "route": record.route, "origin": record.origin,
+            "destination": record.destination, "airline": record.airline,
+            "flight_number": None, "travel_date": record.travel_date,
+            "advance_days": record.advance_days, "fare_family": record.fare_family,
+            "cabin": record.cabin, "base_fare": record.base_fare,
+            "taxes": record.taxes, "fees": record.fees,
+            "total_fare": record.total_fare, "currency": record.currency,
+            "source": record.source, "data_origin": record.data_origin,
+            "departure_time": record.departure_time, "arrival_time": record.arrival_time,
+            "stops": record.stops,
+            "collected_at": datetime.now(timezone.utc).isoformat(),
+            "quality_flags": record.quality_flags,
+        } for record in records],
+        "total": len(records), "status": "LIVE" if records else result.status,
+        "source": "Google Flights (fast-flights, no API key)",
+        "message": result.error or result.challenge_reason,
     }
 
 

@@ -1,5 +1,5 @@
 // AeroPrice — Real Live Flight Fare Search Service for Indian Domestic Corridors
-import { apiFares, isBackendAvailable } from './api'
+import { apiFares, apiLiveFareSearch, isBackendAvailable } from './api'
 
 export interface FareResult {
   origin: string
@@ -46,7 +46,11 @@ export async function searchFares(params: FareSearchParams): Promise<FareSearchR
         limit: 100,
       }, params.token)
 
-      const fares: FareResult[] = result.observations
+      const sourceResult = result.observations.length > 0
+        ? result
+        : await apiLiveFareSearch({ origin: params.origin, destination: params.destination, travel_date: params.date, limit: 100 }, params.token)
+
+      const fares: FareResult[] = sourceResult.observations
         .filter(f => f.currency === 'INR')
         .map(f => ({
           origin:         params.origin,

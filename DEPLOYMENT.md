@@ -66,6 +66,13 @@ python -m uvicorn main:app --host 0.0.0.0 --port $PORT
 
 Set backend environment variables from [backend/.env.example](./backend/.env.example).
 
+The airfare collector includes a low-volume, no-key `fast-flights` provider for
+public Google Flights observations. It is enabled in the backend collection
+pipeline and must run server-side; do not put provider access logic in the
+frontend. Results are observed fares at collection time, not booking guarantees.
+The backend also retains the existing optional authorized providers and records
+provider failures without fabricating fares.
+
 Minimum production-like backend variables:
 
 ```bash
@@ -110,4 +117,6 @@ Do not use wildcard `*`.
 - Firebase Google Auth creates Admin access only for emails listed in `VITE_FIREBASE_ADMIN_EMAILS`.
 - TGC/DGCA Analyst and Admin access still require backend-authorized accounts.
 - Production payment/subscription gates are represented as locked UI until entitlement/payment logic is added.
-- Live aviation/fare providers require authorized provider credentials before they can produce full production data.
+- Live aviation telemetry uses the keyless ADSB.lol path by default. Fare
+  observations can be collected with the no-key fast-flights path, subject to
+  low-volume provider limits and terms; authorized providers remain optional.

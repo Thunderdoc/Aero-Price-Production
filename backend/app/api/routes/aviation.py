@@ -14,6 +14,9 @@ from app.core.config import settings
 router = APIRouter(prefix="/aviation", tags=["aviation"])
 
 ADSB_LOL_URL = "https://api.adsb.lol/v2/point/22.9734/78.6569/1000"
+# AvioADSB exposes the same readsb-compatible aircraft shape and does not
+# require a credential. Keep it as a provider fallback, not as synthetic data.
+AVIOADSB_URL = "https://avioadsb.org/v1/point/22.9734/78.6569/100"
 OPENSKY_URL = "https://opensky-network.org/api/states/all"
 AVIATION_EDGE_URL = "https://aviation-edge.com/v2/public/flights"
 AVIATIONSTACK_URL = "https://api.aviationstack.com/v1/flights"
@@ -90,6 +93,37 @@ async def _aviation_edge_aircraft(client: httpx.AsyncClient, limit: int) -> list
             "seen_seconds": None,
         })
     return normalized[:limit]
+
+
+async def _adsb_compatible_aircraft(client: httpx.AsyncClient, url: str, limit: int) -> list[dict]:
+    """Read a live readsb-compatible feed and normalize its aircraft rows."""
+    response = await client.get(url, headers={"User-Agent": "AeroPrice-India/2.1"})
+    response.raise_for_status()
+    payload = response.json()
+    aircraft = []
+    for item in payload.get("ac", []):
+        lat, lon = _number(item.get("lat")), _number(item.get("lon"))
+        if lat is None or lon is None or not (6.0 <= lat <= 37.8 and 67.0 <= lon <= 98.0):
+            continue
+        seen = _number(item.get("seen"))
+        if seen is not None and seen > 90:
+            continue
+        aircraft.append({
+            "icao24": str(item.get("hex") or "").strip(),
+            "callsign": str(item.get("flight") or "").strip(),
+            "registration": str(item.get("r") or "").strip(),
+            "aircraft_type": str(item.get("t") or "").strip(),
+            "latitude": lat, "longitude": lon,
+            "altitude_ft": _number(item.get("alt_baro")),
+            "ground_speed_kts": _number(item.get("gs")),
+            "track_deg": _number(item.get("track")),
+            "vertical_rate_fpm": _number(item.get("baro_rate")),
+            "on_ground": item.get("alt_baro") == "ground",
+            "seen_seconds": seen,
+        })
+        if len(aircraft) >= limit:
+            break
+    return aircraft
 
 
 @router.get("/schedules")
@@ -180,29 +214,14 @@ async def live_aircraft(limit: int = Query(default=150, ge=1, le=300)):
             except (httpx.HTTPError, ValueError) as exc:
                 errors.append(exc)
 
-        try:
-            response = await client.get(ADSB_LOL_URL, headers={"User-Agent": "AeroPrice-India/2.1"})
-            response.raise_for_status()
-            payload = response.json()
-            aircraft = []
-            for item in payload.get("ac", []):
-                lat, lon = _number(item.get("lat")), _number(item.get("lon"))
-                if lat is None or lon is None or not (6.0 <= lat <= 37.8 and 67.0 <= lon <= 98.0):
-                    continue
-                seen = _number(item.get("seen"))
-                if seen is not None and seen > 90:
-                    continue
-                aircraft.append({"icao24": str(item.get("hex") or "").strip(), "callsign": str(item.get("flight") or "").strip(),
-                    "registration": str(item.get("r") or "").strip(), "aircraft_type": str(item.get("t") or "").strip(),
-                    "latitude": lat, "longitude": lon, "altitude_ft": _number(item.get("alt_baro")),
-                    "ground_speed_kts": _number(item.get("gs")), "track_deg": _number(item.get("track")),
-                    "vertical_rate_fpm": _number(item.get("baro_rate")), "on_ground": item.get("alt_baro") == "ground", "seen_seconds": seen})
-                if len(aircraft) >= limit:
-                    break
+        for provider_url, provider_name in ((ADSB_LOL_URL, "ADSB.lol"), (AVIOADSB_URL, "AvioADSB")):
+            try:
+                aircraft = await _adsb_compatible_aircraft(client, provider_url, limit)
+            except (httpx.HTTPError, ValueError, AttributeError) as exc:
+                errors.append(exc)
+                continue
             if aircraft:
-                return _live_payload("ADSB.lol", "LIVE_ADSB", aircraft, "Live transponder positions; routes and fares are not inferred.")
-        except (httpx.HTTPError, ValueError, AttributeError) as exc:
-            errors.append(exc)
+                return _live_payload(provider_name, "LIVE_ADSB", aircraft, "Live transponder positions; routes and fares are not inferred.")
 
         try:
             response = await client.get(OPENSKY_URL, params={"lamin": 6, "lomin": 67, "lamax": 37.8, "lomax": 98})
