@@ -33,6 +33,20 @@ MAX_RETRIES = 3
 BACKOFF_BASE_S = 2.0  # wait 2s, 4s, 8s between retries
 
 
+def _mospi_ssl_context() -> ssl.SSLContext:
+    """Build the narrow TLS compatibility context required by MoSPI.
+
+    The MoSPI API currently negotiates legacy renegotiation.  Some Render
+    Python/OpenSSL builds expose the compatibility flag while others do not,
+    so use the documented constant when available and its OpenSSL value as a
+    compatibility fallback.  Certificate verification remains enabled.
+    """
+    context = ssl.create_default_context()
+    legacy_flag = getattr(ssl, "OP_LEGACY_SERVER_CONNECT", 0x4)
+    context.options |= legacy_flag
+    return context
+
+
 def _safe_error(error: Exception) -> str:
     """Return an error message without leaking query-string credentials."""
     return re.sub(r"([?&]api-key=)[^&\s]+", r"\1[REDACTED]", str(error))[:500]
@@ -271,8 +285,7 @@ async def fetch_mospi_cpi(db: AsyncSession) -> dict:
         # MoSPI's API endpoint currently requires the OpenSSL legacy-server
         # compatibility flag. Scope this context to MoSPI only; certificate
         # verification remains enabled and global TLS policy is unchanged.
-        mospi_tls = ssl.create_default_context()
-        mospi_tls.options |= getattr(ssl, "OP_LEGACY_SERVER_CONNECT", 0)
+        mospi_tls = _mospi_ssl_context()
         now = datetime.now(timezone.utc)
         stored = await db.execute(select(MospiTransportSeries))
         existing = {(row.base_year, row.period): row for row in stored.scalars().all()}
