@@ -5,13 +5,9 @@ import { apiIndexCurrent, apiIndexHistory, type IndexHistoryResponse, type Index
 import { routeWeights } from '../data/sampleData'
 
 const DEFAULT_INDEX_CURRENT: IndexResponse = {
-  status: 'PUBLISHED',
-  index_value: 108.45,
-  base_period: '2025-Q1',
-  base_value: 100.0,
-  route_count: 12,
-  coverage_pct: 98.4,
-  message: 'Published officially under DGCA & matched-sample Jevons index methodology.',
+  status: 'NO_DATA',
+  index_value: null,
+  message: 'The index will appear after verified fare observations are collected.',
 }
 
 const DEFAULT_INDEX_HISTORY: IndexHistoryResponse['observations'] = [
@@ -27,7 +23,7 @@ const DEFAULT_INDEX_HISTORY: IndexHistoryResponse['observations'] = [
 export default function AirfareIndex() {
   const { token } = useAuth()
   const [current, setCurrent] = useState<IndexResponse>(DEFAULT_INDEX_CURRENT)
-  const [history, setHistory] = useState<IndexHistoryResponse['observations']>(DEFAULT_INDEX_HISTORY)
+  const [history, setHistory] = useState<IndexHistoryResponse['observations']>([])
   const [loading, setLoading] = useState(false)
   const [lastRefreshed, setLastRefreshed] = useState<string>(
     new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST'
@@ -48,11 +44,11 @@ export default function AirfareIndex() {
       if (indexHistory?.observations?.length) {
         setHistory(indexHistory.observations.filter(row => row.status === 'PUBLISHED'))
       } else {
-        setHistory(DEFAULT_INDEX_HISTORY)
+        setHistory([])
       }
     } catch {
       setCurrent(DEFAULT_INDEX_CURRENT)
-      setHistory(DEFAULT_INDEX_HISTORY)
+      setHistory([])
     } finally {
       setLoading(false)
       setLastRefreshed(
@@ -178,34 +174,34 @@ export default function AirfareIndex() {
               </span>
             </div>
             <div style={{ fontSize: 64, fontWeight: 900, fontFamily: 'var(--font-mono)', lineHeight: 1, letterSpacing: '-0.03em' }}>
-              {current.index_value?.toFixed(2)}
+              {current.index_value != null ? current.index_value.toFixed(2) : '—'}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14 }}>
-              <span style={{ fontSize: 13, color: '#34d399', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4 }}>
-                <TrendingUp size={16} /> +8.45%
+              <span style={{ fontSize: 13, color: '#94a3b8', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <Info size={16} /> No verified change available
               </span>
               <span style={{ fontSize: 12, color: '#94a3b8' }}>
-                vs Base ({current.base_period} = {current.base_value ?? 100})
+                vs Base ({current.base_period ?? '—'} = {current.base_value ?? '—'})
               </span>
             </div>
           </div>
 
           <div style={{ borderLeft: '1px solid rgba(255,255,255,0.12)', paddingLeft: 36 }}>
             <div style={{ fontSize: 14, lineHeight: 1.65, color: '#cbd5e1', marginBottom: 16 }}>
-              {current.message} The index reflects weighted arithmetic aggregation of Jevons price relatives across 12 high-density domestic corridors weighted by DGCA passenger load factors.
+              {current.message}
             </div>
             <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
               <div>
                 <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: '#94a3b8', letterSpacing: '0.08em' }}>BASKET COVERAGE</div>
-                <div style={{ fontSize: 18, fontWeight: 800, fontFamily: 'var(--font-mono)', marginTop: 2 }}>{current.coverage_pct}%</div>
+                <div style={{ fontSize: 18, fontWeight: 800, fontFamily: 'var(--font-mono)', marginTop: 2 }}>{current.coverage_pct ?? '—'}</div>
               </div>
               <div>
                 <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: '#94a3b8', letterSpacing: '0.08em' }}>TRUNK CORRIDORS</div>
-                <div style={{ fontSize: 18, fontWeight: 800, fontFamily: 'var(--font-mono)', marginTop: 2 }}>{current.route_count} Routes</div>
+                <div style={{ fontSize: 18, fontWeight: 800, fontFamily: 'var(--font-mono)', marginTop: 2 }}>{current.route_count ?? '—'} Routes</div>
               </div>
               <div>
                 <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: '#94a3b8', letterSpacing: '0.08em' }}>SAMPLED FARES</div>
-                <div style={{ fontSize: 18, fontWeight: 800, fontFamily: 'var(--font-mono)', marginTop: 2 }}>10,875 Verified</div>
+                <div style={{ fontSize: 18, fontWeight: 800, fontFamily: 'var(--font-mono)', marginTop: 2 }}>—</div>
               </div>
             </div>
           </div>
@@ -291,7 +287,7 @@ export default function AirfareIndex() {
           </h2>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
-          {routeWeights.slice(0, 8).map(rw => (
+          {([] as typeof routeWeights).map(rw => (
             <div
               key={rw.route}
               style={{
