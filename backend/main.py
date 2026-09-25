@@ -140,7 +140,9 @@ async def security_headers(request, call_next):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.allowed_origins_list,
+    allow_origins=list(dict.fromkeys(settings.allowed_origins_list + [
+        "https://aero-price-production.vercel.app",
+    ])),
     # Render deployments can use a generated *.vercel.app hostname. Keep the
     # explicit ALLOWED_ORIGINS list, but accept that controlled Vercel origin
     # pattern so a missing/stale Render variable cannot break the live radar.
