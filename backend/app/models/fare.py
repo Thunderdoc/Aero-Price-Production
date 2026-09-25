@@ -32,10 +32,14 @@ class FareObservation(Base):
     route       = Column(String(7), nullable=False, index=True)   # DEL-BOM
 
     # Flight
-    airline        = Column(String(10), nullable=False)
-    flight_number  = Column(String(10), nullable=True)
-    departure_time = Column(String(5), nullable=True)   # HH:MM
-    arrival_time   = Column(String(5), nullable=True)
+    # Keep these widths aligned with the PostgreSQL schema and the provider
+    # payloads.  Some legitimate providers return carrier names such as
+    # "Air India Express" and full ISO/local datetime strings rather than only
+    # HH:MM values.
+    airline        = Column(String(64), nullable=False)
+    flight_number  = Column(String(32), nullable=True)
+    departure_time = Column(String(32), nullable=True)
+    arrival_time   = Column(String(32), nullable=True)
     stops          = Column(Integer, default=0)
 
     # Dates
@@ -44,8 +48,8 @@ class FareObservation(Base):
     collected_at   = Column(DateTime(timezone=True), nullable=False, default=func.now(), index=True)
 
     # Fare
-    fare_family = Column(String(20), nullable=True)   # SAVER, FLEX, BUSINESS
-    cabin       = Column(String(10), default="ECONOMY")
+    fare_family = Column(String(32), nullable=True)   # SAVER, FLEX, BUSINESS
+    cabin       = Column(String(16), default="ECONOMY")
     base_fare   = Column(Float, nullable=False)
     taxes       = Column(Float, nullable=False, default=0.0)
     fees        = Column(Float, nullable=False, default=0.0)
@@ -53,14 +57,14 @@ class FareObservation(Base):
     currency    = Column(String(3), default="INR")
 
     # Availability
-    availability_status = Column(String(20), default="AVAILABLE")  # AVAILABLE, SOLD_OUT, LIMITED
+    availability_status = Column(String(32), default="AVAILABLE")  # AVAILABLE, SOLD_OUT, LIMITED
     seats_available     = Column(Integer, nullable=True)
 
     # Provenance
-    source           = Column(String(50), nullable=False, index=True)
+    source           = Column(String(64), nullable=False, index=True)
     source_url       = Column(Text, nullable=True)
-    data_origin      = Column(String(20), nullable=False, default="GENERATED_TEST")
-    collector_version = Column(String(10), nullable=True)
+    data_origin      = Column(String(32), nullable=False, default="GENERATED_TEST")
+    collector_version = Column(String(16), nullable=True)
     raw_hash         = Column(String(64), nullable=True)   # SHA-256 of raw payload
 
     # Quality

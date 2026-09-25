@@ -43,3 +43,20 @@ async def create_all_tables():
                 ADD COLUMN IF NOT EXISTS quota_used INTEGER DEFAULT 0,
                 ADD COLUMN IF NOT EXISTS freshness_minutes INTEGER
             """))
+            # The first deployed PostgreSQL schema was narrower than the
+            # provider payload contract.  Widen existing installations
+            # idempotently so a newly connected deployment cannot fail when a
+            # legitimate carrier name or full timestamp is persisted.
+            await conn.execute(text("""
+                ALTER TABLE fare_observations
+                ALTER COLUMN airline TYPE VARCHAR(64),
+                ALTER COLUMN flight_number TYPE VARCHAR(32),
+                ALTER COLUMN departure_time TYPE VARCHAR(32),
+                ALTER COLUMN arrival_time TYPE VARCHAR(32),
+                ALTER COLUMN fare_family TYPE VARCHAR(32),
+                ALTER COLUMN cabin TYPE VARCHAR(16),
+                ALTER COLUMN availability_status TYPE VARCHAR(32),
+                ALTER COLUMN source TYPE VARCHAR(64),
+                ALTER COLUMN data_origin TYPE VARCHAR(32),
+                ALTER COLUMN collector_version TYPE VARCHAR(16)
+            """))
