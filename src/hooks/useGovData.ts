@@ -137,12 +137,14 @@ const REFETCH_MS = 30 * 60 * 1000
 
 export function useGovData(): GovDataState {
   const { token } = useAuth()
-  const [datasets, setDatasets] = useState<GovDataset[]>(GOV_DATASETS)
-  const [dgcaMonthly, setDgcaMonthly] = useState<DgcaMonthlyRecord[]>(DEFAULT_DGCA_MONTHLY)
-  const [dgcaCirculars, setDgcaCirculars] = useState<DgcaCircular[]>(DEFAULT_DGCA_CIRCULARS)
-  const [mospiCpi, setMospiCpi] = useState<MospiCpiRecord[]>(DEFAULT_MOSPI_CPI)
+  // Start empty: bundled records are development fixtures and must never be
+  // presented as current government data in production.
+  const [datasets, setDatasets] = useState<GovDataset[]>([])
+  const [dgcaMonthly, setDgcaMonthly] = useState<DgcaMonthlyRecord[]>([])
+  const [dgcaCirculars, setDgcaCirculars] = useState<DgcaCircular[]>([])
+  const [mospiCpi, setMospiCpi] = useState<MospiCpiRecord[]>([])
   const [isLoading, setIsLoading] = useState(false)
-  const [lastFetch, setLastFetch] = useState<string | null>(new Date().toISOString())
+  const [lastFetch, setLastFetch] = useState<string | null>(null)
   const [hasLiveResponse, setHasLiveResponse] = useState(false)
 
   async function fetchAll() {
@@ -174,9 +176,7 @@ export function useGovData(): GovDataState {
             data_origin: 'OFFICIAL' as const,
           }))
         )
-      } else {
-        setDatasets(GOV_DATASETS)
-      }
+      } else setDatasets([])
 
       const paxRecords = (pax as any)?.records
       if (Array.isArray(paxRecords) && paxRecords.length > 0) {
@@ -196,11 +196,8 @@ export function useGovData(): GovDataState {
       setLastFetch(new Date().toISOString())
       setHasLiveResponse(true)
     } catch {
-      // Retain full high-fidelity official government records with CONNECTED status
-      setDatasets(GOV_DATASETS)
-      setDgcaMonthly(DEFAULT_DGCA_MONTHLY)
-      setDgcaCirculars(DEFAULT_DGCA_CIRCULARS)
-      setMospiCpi(DEFAULT_MOSPI_CPI)
+      // Keep the last successful response. Never replace a failed fetch with
+      // bundled fixtures or mark an unverified source as connected.
       setLastFetch(new Date().toISOString())
       setHasLiveResponse(false)
     } finally {

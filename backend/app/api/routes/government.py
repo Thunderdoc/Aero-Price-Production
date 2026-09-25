@@ -2,7 +2,6 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 from app.core.database import get_db
-from app.core.auth import require_analyst
 from app.models.government import DgcaMonthlyRecord, MospiTransportSeries, DgcaCircular, GovDataset
 from app.services.gov_fetcher import run_gov_fetches
 
@@ -12,7 +11,6 @@ router = APIRouter(prefix="/government", tags=["government"])
 @router.get("/datasets")
 async def list_datasets(
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(require_analyst),
 ):
     rows = await db.execute(select(GovDataset))
     datasets = rows.scalars().all()
@@ -40,7 +38,6 @@ async def list_datasets(
 @router.get("/dgca/monthly")
 async def dgca_monthly(
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(require_analyst),
 ):
     rows = await db.execute(
         select(DgcaMonthlyRecord).order_by(
@@ -70,7 +67,6 @@ async def dgca_monthly(
 @router.get("/mospi/cpi")
 async def mospi_cpi(
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(require_analyst),
 ):
     rows = await db.execute(select(MospiTransportSeries).order_by(
         MospiTransportSeries.base_year, MospiTransportSeries.period
@@ -110,7 +106,6 @@ async def mospi_cpi(
 @router.get("/dgca/circulars")
 async def dgca_circulars(
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(require_analyst),
 ):
     rows = await db.execute(
         select(DgcaCircular).order_by(DgcaCircular.date.desc()).limit(20)
