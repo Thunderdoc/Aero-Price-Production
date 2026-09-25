@@ -141,6 +141,10 @@ async def security_headers(request, call_next):
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins_list,
+    # Render deployments can use a generated *.vercel.app hostname. Keep the
+    # explicit ALLOWED_ORIGINS list, but accept that controlled Vercel origin
+    # pattern so a missing/stale Render variable cannot break the live radar.
+    allow_origin_regex=r"https://[a-z0-9-]+\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
