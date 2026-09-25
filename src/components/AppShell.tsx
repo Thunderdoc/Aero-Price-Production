@@ -196,7 +196,7 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
   const [supportMode, setSupportMode] = useState<'settings' | 'help' | 'feedback' | null>(null)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [notifications, setNotifications] = useState<LocalNotification[]>([])
-  const [fareFeed, setFareFeed] = useState<{ connected: boolean; observations: number | null }>({ connected: false, observations: null })
+  const [fareFeed, setFareFeed] = useState<{ connected: boolean; live: boolean; observations: number | null }>({ connected: false, live: false, observations: null })
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('aeroprice_theme') === 'dark')
   const [adminNavKey, setAdminNavKey] = useState(() => sessionStorage.getItem('admin-nav-key') || 'Overview')
   const searchRef = useRef<HTMLDivElement>(null)
@@ -268,10 +268,11 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
       .then(health => {
         if (active) setFareFeed({
           connected: health.status === 'ok' && health.database === 'connected' && health.real_observations > 0,
+          live: health.data_status === 'LIVE',
           observations: health.real_observations,
         })
       })
-      .catch(() => { if (active) setFareFeed({ connected: false, observations: null }) })
+      .catch(() => { if (active) setFareFeed({ connected: false, live: false, observations: null }) })
     return () => { active = false }
   }, [])
 
@@ -604,6 +605,7 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
             {isAviation ? <div className={`av-feed-status ${radar.status === 'connected' ? '' : 'pending'}`} aria-live="polite"><span><i/>{radar.status === 'connected' ? 'LIVE DATA FEEDS' : radar.status === 'cached' ? 'CACHED DATA' : radar.status === 'loading' ? 'CONNECTING' : 'RETRYING FEED'}{radar.retrievedAt ? ` · ${new Date(radar.retrievedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }).toUpperCase()} IST` : ''}</span><span><Radio size={10}/>{radar.status === 'connected' ? 'PROVIDER CONNECTED' : radar.status === 'cached' ? 'LAST VALID RESPONSE' : 'REFRESHING'}</span></div> : <DataStatusBanner
               anyGovConnected={govData.anyConnected}
               fareFeedConnected={fareFeed.connected}
+              fareFeedLive={fareFeed.live}
               verifiedObservations={fareFeed.observations}
               showGovernmentStatus={role !== 'PUBLIC'}
               isLoading={govData.isLoading}

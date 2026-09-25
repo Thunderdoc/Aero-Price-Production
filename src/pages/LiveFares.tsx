@@ -81,8 +81,11 @@ export default function LiveFares() {
         new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST'
       )
     } catch (cause) {
+      const message = cause instanceof Error ? cause.message : ''
       setAllFares([])
-      setError(cause instanceof Error ? cause.message : 'The verified fare service is temporarily unavailable. Please try again.')
+      setError(message.includes(' 401 ')
+        ? 'Your session expired. Please sign in again to load verified fare observations.'
+        : message || 'The verified fare service is temporarily unavailable. Please try again.')
     } finally {
       setLoading(false)
     }

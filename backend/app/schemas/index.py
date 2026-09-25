@@ -10,9 +10,15 @@ class IndexResponse(BaseModel):
     n: Optional[int] = None
     required: Optional[int] = None
     covered_routes: Optional[List[str]] = None
+    covered_routes_count: Optional[int] = None
     missing_routes: Optional[List[str]] = None
     observation_period: Optional[str] = None
     method: Optional[str] = None
     version: Optional[str] = None
     data_origin: Optional[str] = None
+    route_count: Optional[int] = None
+    coverage_pct: Optional[float] = None
+    observation_count: Optional[int] = None
+    required_routes: Optional[int] = None
+    real_observations: Optional[int] = None
     message: Optional[str] = None

@@ -51,9 +51,11 @@ async def current_index(
             "status": "INSUFFICIENT_DATA",
             "index_value": None,
             "message": f"Index not published. Requires ≥{MIN_CORRIDORS_TO_PUBLISH} matched corridors with real observations. Currently: {covered_routes}.",
-            "covered_routes": covered_routes,
+            "covered_routes_count": covered_routes,
             "required_routes": MIN_CORRIDORS_TO_PUBLISH,
             "real_observations": real_fare_count or 0,
+            "route_count": covered_routes,
+            "coverage_pct": covered_routes / max(len(ROUTE_BASKET), 1) * 100,
             "base_period": "First verified collection day",
             "base_value": 100.0,
             "method": "JEVONS_MATCHED_SAMPLE",
@@ -73,7 +75,17 @@ async def current_index(
         return {
             "status": "INSUFFICIENT_DATA",
             "index_value": None,
-            "message": "No published index yet.",
+            "message": "No published index yet. The matched-sample calculation needs verified fares in both the first and current collection periods.",
+            "covered_routes_count": covered_routes,
+            "required_routes": MIN_CORRIDORS_TO_PUBLISH,
+            "real_observations": real_fare_count or 0,
+            "route_count": covered_routes,
+            "coverage_pct": covered_routes / max(len(ROUTE_BASKET), 1) * 100,
+            "base_period": "First verified collection day",
+            "base_value": 100.0,
+            "method": "JEVONS_MATCHED_SAMPLE",
+            "version": "v1.0",
+            "data_origin": "REAL",
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -89,6 +101,9 @@ async def current_index(
         "observation_count": latest.observation_count,
         "coverage_pct": latest.coverage_pct,
         "data_origin": latest.data_origin,
+        "covered_routes_count": covered_routes,
+        "required_routes": MIN_CORRIDORS_TO_PUBLISH,
+        "real_observations": real_fare_count or 0,
         "calculation_ts": latest.calculation_ts.isoformat() if latest.calculation_ts else None,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
@@ -113,9 +128,16 @@ async def index_history(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(require_analyst),
 ):
-    """Historical index publications."""
+    """Published historical index observations only.
+
+    Insufficient-data calculation attempts are operational audit records, not
+    index history. Returning them here made the dashboard look like it had a
+    broken or empty published series.
+    """
     rows = await db.execute(
         select(IndexObservation)
+        .where(IndexObservation.status == "PUBLISHED")
+        .where(IndexObservation.data_origin.in_(["REAL", "OFFICIAL", "DERIVED"]))
         .order_by(IndexObservation.observation_period.desc())
         .limit(limit)
     )

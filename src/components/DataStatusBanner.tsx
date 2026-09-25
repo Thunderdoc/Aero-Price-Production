@@ -4,13 +4,14 @@ import { ShieldCheck, X } from 'lucide-react'
 interface Props {
   anyGovConnected?: boolean
   fareFeedConnected?: boolean
+  fareFeedLive?: boolean
   verifiedObservations?: number | null
   showGovernmentStatus?: boolean
   isLoading?: boolean
   lastFetch?: string | null
 }
 
-export default function DataStatusBanner({ anyGovConnected = true, fareFeedConnected = false, verifiedObservations = null, showGovernmentStatus = true, isLoading = false, lastFetch }: Props) {
+export default function DataStatusBanner({ anyGovConnected = true, fareFeedConnected = false, fareFeedLive = false, verifiedObservations = null, showGovernmentStatus = true, isLoading = false, lastFetch }: Props) {
   const [showDetails, setShowDetails] = useState(false)
   const time = lastFetch
     ? new Date(lastFetch).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST'
@@ -19,7 +20,11 @@ export default function DataStatusBanner({ anyGovConnected = true, fareFeedConne
   // optional government registry. A registry outage must not label live fares
   // as degraded.
   const healthy = fareFeedConnected || (anyGovConnected && !isLoading)
-  const headline = fareFeedConnected ? 'VERIFIED FARE DATA AVAILABLE' : healthy ? 'DATA FEEDS CONNECTED' : isLoading ? 'CHECKING DATA FEEDS' : 'DATA FEEDS DEGRADED'
+  const headline = fareFeedLive
+    ? 'LIVE VERIFIED FARE DATA AVAILABLE'
+    : fareFeedConnected
+      ? 'VERIFIED FARE SNAPSHOT AVAILABLE'
+      : healthy ? 'DATA FEEDS CONNECTED' : isLoading ? 'CHECKING DATA FEEDS' : 'DATA FEEDS DEGRADED'
 
   return (
     <div className="data-status-banner" style={{ position: 'relative' }}>
@@ -105,7 +110,7 @@ export default function DataStatusBanner({ anyGovConnected = true, fareFeedConne
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 11 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', borderRadius: 6, background: 'var(--color-surface-secondary)' }}>
               <span style={{ color: 'var(--color-text-secondary)' }}>Verified Fare Feed</span>
-              <span style={{ fontWeight: 700, color: fareFeedConnected ? '#16a34a' : '#d97706' }}>{fareFeedConnected ? 'AVAILABLE' : 'UNAVAILABLE'}</span>
+              <span style={{ fontWeight: 700, color: fareFeedConnected ? '#16a34a' : '#d97706' }}>{fareFeedLive ? 'LIVE' : fareFeedConnected ? 'STORED SNAPSHOT' : 'UNAVAILABLE'}</span>
             </div>
             {showGovernmentStatus && <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', borderRadius: 6, background: 'var(--color-surface-secondary)' }}>
               <span style={{ color: 'var(--color-text-secondary)' }}>DGCA & MoSPI Gov Registry</span>

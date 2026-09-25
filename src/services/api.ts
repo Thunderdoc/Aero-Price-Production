@@ -262,6 +262,7 @@ export interface IndexResponse {
   n?: number
   required?: number
   covered_routes?: string[]
+  covered_routes_count?: number
   missing_routes?: string[]
   observation_period?: string
   method?: string
@@ -269,7 +270,24 @@ export interface IndexResponse {
   data_origin?: string
   route_count?: number
   coverage_pct?: number
+  observation_count?: number
+  required_routes?: number
+  real_observations?: number
   message?: string
+}
+
+export interface IndexBasketRoute {
+  route: string
+  region: string
+  weight: number
+  weight_source: string
+}
+
+export interface IndexBasketResponse {
+  routes: IndexBasketRoute[]
+  total: number
+  weight_source_note?: string
+  min_corridors_to_publish?: number
 }
 
 export async function apiIndexCurrent(token?: string): Promise<IndexResponse> {
@@ -278,6 +296,10 @@ export async function apiIndexCurrent(token?: string): Promise<IndexResponse> {
 
 export async function apiIndexHistory(token?: string) {
   return apiFetch('/api/index/history', token)
+}
+
+export async function apiIndexBasket(token?: string): Promise<IndexBasketResponse> {
+  return apiFetch('/api/index/basket', token)
 }
 
 // ── Sources ────────────────────────────────────────────────────────────────

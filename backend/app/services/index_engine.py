@@ -140,6 +140,19 @@ async def publish_index(db: AsyncSession, observation_period: str, routes: list[
     """Calculate and persist an index observation. Skip if insufficient data."""
     result = await calculate_index(db, observation_period, routes)
 
+    # Do not create rows that look like historical index observations when the
+    # matched sample is not publishable. The API exposes the current diagnostic
+    # calculation, while /index/history remains a series of real publications.
+    if result["status"] != "CALCULATED":
+        logger.info(
+            "Index %s not published: %s — covered=%s missing=%s",
+            observation_period,
+            result.get("message"),
+            len(result.get("covered_routes", [])),
+            len(result.get("missing_routes", [])),
+        )
+        return result
+
     day_start = datetime.fromisoformat(f"{observation_period}T00:00:00")
     day_end = datetime.fromisoformat(f"{observation_period}T23:59:59")
     observation_count = await db.scalar(
