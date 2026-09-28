@@ -144,11 +144,14 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
   async function handleGoogleAuth() {
     resetFeedback()
     setGoogleLoading(true)
-    const result = await loginWithGoogle(workspace)
+    const result = await loginWithGoogle(workspace, pass)
     setGoogleLoading(false)
     if (result.success) {
       const stored = localStorage.getItem('aeroprice_auth')
       const authedRole = stored ? JSON.parse(stored).role as UserRole : null
+      // Redirect-based Google auth navigates away before the Firebase result
+      // can be stored. The AuthProvider restores it when the app returns.
+      if (!stored) return
       if (!authedRole || !role.expectedRoles.includes(authedRole)) {
         logout()
         setError(`This Google account is not authorized for the ${role.label} workspace.`)

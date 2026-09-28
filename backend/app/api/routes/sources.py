@@ -5,6 +5,7 @@ from app.core.database import get_db
 from app.core.auth import get_current_user, require_admin
 from app.models.collection import SourceHealth
 from app.services.collector import AIRFARE_SOURCE_REGISTRY, GOV_SOURCE_REGISTRY
+from app.services.source_health import effective_status
 
 router = APIRouter(prefix="/sources", tags=["sources"])
 
@@ -23,7 +24,7 @@ async def list_sources(
         h = health.get(s["id"])
         airfare.append({
             **s,
-            "status": h.status if h else "NOT_CONFIGURED",
+            "status": effective_status(s, h),
             "last_attempt": h.last_attempt.isoformat() if h and h.last_attempt else None,
             "last_success": h.last_success.isoformat() if h and h.last_success else None,
             "records_total": h.records_total if h else 0,
@@ -36,7 +37,7 @@ async def list_sources(
         h = health.get(s["id"])
         gov.append({
             **s,
-            "status": h.status if h else "NOT_CONFIGURED",
+            "status": effective_status(s, h),
             "last_attempt": h.last_attempt.isoformat() if h and h.last_attempt else None,
             "last_success": h.last_success.isoformat() if h and h.last_success else None,
             "records_total": h.records_total if h else 0,

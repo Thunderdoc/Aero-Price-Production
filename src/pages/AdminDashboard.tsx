@@ -1,43 +1,14 @@
 import { useState, useEffect, useRef } from 'react'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
-import { useGovData } from '../hooks/useGovData'
 import { useAuth } from '../contexts/AuthContext'
-import { apiAdminAccessRequests, apiAdminFeedback, apiAdminUsers, apiApproveAccessRequest, apiAuditLog, apiRejectAccessRequest, apiUpdateFeedback, isBackendAvailable } from '../services/api'
-import { CheckCircle, ShieldCheck, Activity, ToggleRight, RefreshCw, Download, Plus, Trash2, XCircle, MailCheck, MessageSquare, Check } from 'lucide-react'
-import { getApiHealth } from '../services/flightData'
+import { apiAdminAccessRequests, apiAdminFeedback, apiAdminUsers, apiApproveAccessRequest, apiAuditLog, apiRejectAccessRequest, apiUpdateFeedback, apiSources, apiDashboard, apiHealth, apiSystemParameters, isBackendAvailable, type SystemParametersResponse } from '../services/api'
+import { CheckCircle, ShieldCheck, Activity, RefreshCw, Download, Plus, Trash2, XCircle, MailCheck, MessageSquare, Check } from 'lucide-react'
 import indiaMap from '../assets/india_map_clean.png'
 
-const _h = getApiHealth()
-
 const AIRFARE_SOURCES_ADMIN: Array<{ id: string; name: string; status: string; enabled: boolean; obs: string }> = []
-/* Operational status is loaded from backend health, never from fixtures. */
-/*
-  { id: 'firebase-auth', name: 'Firebase Authentication', status: 'LIVE', enabled: true, obs: 'email verification and Google sign-in active' },
-  { id: 'gov-data', name: 'DGCA & MoSPI Official Data', status: 'LIVE', enabled: true, obs: 'government data cards connected' },
-  { id: 'fare-index', name: 'Airfare Index Engine', status: 'LIVE', enabled: true, obs: 'index and route intelligence available' },
-  { id: 'aviation-feed', name: 'Aviation Telemetry Feed', status: 'LIVE', enabled: true, obs: 'aircraft feed operational' },
-  { id: 'audit-log', name: 'Audit Trail', status: 'LIVE', enabled: true, obs: 'admin events and exports available' },
-  { id: 'reports', name: 'Reports & CSV Export', status: 'READY', enabled: true, obs: 'download workflows enabled' },
-]
-*/
 
 const INITIAL_AUDIT: Array<{ ts: string; actor: string; action: string; detail: string }> = []
-/*
-  { ts: '2026-09-21T14:45:00Z', actor: 'admin@aeroprice.in', action: 'INDEX_PUB', detail: 'Jevons Airfare Index published at 108.45 (+8.45% YoY) across 24 corridors' },
-  { ts: '2026-09-21T14:30:02Z', actor: 'system', action: 'GOV_FETCH', detail: 'DGCA Monthly Passenger & MoSPI CPI Transport feeds synced successfully' },
-  { ts: '2026-09-21T14:15:04Z', actor: 'system', action: 'SOURCE_CHECK', detail: 'Production readiness checks completed for authentication, official data, and feature-access modules' },
-  { ts: '2026-09-21T14:00:00Z', actor: 'admin@aeroprice.in', action: 'LOGIN', detail: 'Admin session authenticated (administrator access)' },
-  { ts: '2026-09-21T13:30:00Z', actor: 'dgca@gov.in', action: 'LOGIN', detail: 'Analyst login (GOVERNMENT plan)' },
-]
-*/
-
-const THRESHOLDS = [
-  { key: 'anomaly_zscore', label: 'Anomaly Z-score threshold', value: 3.5, unit: 'σ' },
-  { key: 'consensus_deviation', label: 'Cross-source consensus deviation', value: 12, unit: '%' },
-  { key: 'freshness_warning', label: 'Freshness warning threshold', value: 60, unit: 'min' },
-  { key: 'min_corridors_index', label: 'Min corridors to publish index', value: 10, unit: 'corridors' },
-]
 
 const ROLE_BADGE = {
   ADMIN:   { color: 'var(--color-danger)',       bg: 'var(--color-danger-bg)' },
@@ -53,13 +24,10 @@ const ACTION_COLOR: Record<string, string> = {
   ROLE_CHANGE: 'var(--color-danger)',
 }
 
-type Tab = 'users' | 'pipeline' | 'access' | 'audit' | 'config' | 'feedback'
+type Tab = 'overview' | 'users' | 'pipeline' | 'health' | 'access' | 'audit' | 'config' | 'feedback'
 
-const INITIAL_USERS = [
-  { email: 'admin@aeroprice.in', role: 'ADMIN', plan: 'ADMIN', name: 'Admin User', lastLogin: 'Live now', status: 'ACTIVE' },
-  { email: 'dgca@gov.in', role: 'ANALYST', plan: 'GOVERNMENT', name: 'DGCA Analyst', lastLogin: 'Today 10:32 IST', status: 'ACTIVE' },
-  { email: 'user@aeroprice.in', role: 'PUBLIC', plan: 'FREE', name: 'User Account', lastLogin: 'Today 08:00 IST', status: 'ACTIVE' },
-]
+type ManagedUser = { email: string; role: string; plan: string; name: string; lastLogin: string; status: string }
+const INITIAL_USERS: ManagedUser[] = []
 
 interface AuditEntry { ts: string; actor: string; action: string; detail: string }
 interface AccessRequest { id: string; email: string; name?: string; feature?: string; featureKey?: string; status: string; createdAt: string; reviewedAt?: string; rejectionReason?: string }
@@ -67,24 +35,68 @@ interface FeedbackEntry { id: string; email: string; name: string; message: stri
 
 export default function AdminDashboard() {
   const { user, token } = useAuth()
-  const govData = useGovData()
-  const [tab, setTab] = useState<Tab>('pipeline')
+  const [tab, setTab] = useState<Tab>('overview')
   const [audit, setAudit] = useState<AuditEntry[]>(INITIAL_AUDIT)
   const [auditLoading, setAuditLoading] = useState(false)
   const [sources, setSources] = useState(AIRFARE_SOURCES_ADMIN)
-  const [thresholds, setThresholds] = useState(THRESHOLDS)
-  const [managedUsers, setManagedUsers] = useState(INITIAL_USERS)
+  const [systemParameters, setSystemParameters] = useState<SystemParametersResponse | null>(null)
+  const [managedUsers, setManagedUsers] = useState<ManagedUser[]>(INITIAL_USERS)
+  const [usersLoading, setUsersLoading] = useState(false)
+  const [usersLoaded, setUsersLoaded] = useState(false)
   const [newUser, setNewUser] = useState({ name: '', email: '', role: 'PUBLIC', plan: 'FREE' })
   const [accessRequests, setAccessRequests] = useState<AccessRequest[]>([])
   const [feedback, setFeedback] = useState<FeedbackEntry[]>([])
+  const [dashboardData, setDashboardData] = useState<any>(null)
+  const [healthData, setHealthData] = useState<any>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [resettingEmail, setResettingEmail] = useState<string | null>(null)
   const [resetSentEmail, setResetSentEmail] = useState<string | null>(null)
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
+    async function loadPipelineData() {
+      if ((tab !== 'pipeline' && tab !== 'overview') || !token) return
+      try {
+        const [directoryResult, dashboardResult, healthResult] = await Promise.allSettled([apiSources(token), apiDashboard(token), apiHealth()])
+        if (dashboardResult.status === 'fulfilled') setDashboardData(dashboardResult.value)
+        if (healthResult.status === 'fulfilled') setHealthData(healthResult.value)
+        if (directoryResult.status === 'fulfilled') {
+          const directory = directoryResult.value
+          const airfare = directory.airfare || directory.airfare_sources || []
+          const government = directory.government || directory.government_sources || []
+          const liveSources = [...airfare, ...government]
+          setSources(liveSources.map((source: any) => ({
+            id: String(source.id || source.source_id),
+            name: String(source.name || source.source_name || source.id || 'Source'),
+            status: String(source.status || 'NOT_CONFIGURED'),
+            enabled: source.status === 'LIVE',
+            obs: `${Number(source.records_total || 0).toLocaleString()} records`,
+          })))
+        }
+        if (dashboardResult.status === 'rejected' && healthResult.status === 'rejected' && directoryResult.status === 'rejected') {
+          throw new Error('No admin data services responded')
+        }
+        // Loading the pipeline is silent; status is visible in the page itself.
+      } catch {
+        showToast('Unable to load live pipeline data. The backend is still starting or the session expired.')
+      }
+    }
+    void loadPipelineData()
+  }, [tab, token])
+
+  useEffect(() => {
+    if (tab !== 'health' || healthData) return
+    void apiHealth().then(setHealthData).catch(() => showToast('Unable to load system health from the backend.'))
+  }, [tab, healthData])
+
+  useEffect(() => {
+    if (tab !== 'config' || !token) return
+    void apiSystemParameters(token).then(setSystemParameters).catch(() => setSystemParameters(null))
+  }, [tab, token])
+
+  useEffect(() => {
     const applyAdminTab = (value: unknown) => {
-      if (value === 'pipeline' || value === 'users' || value === 'access' || value === 'feedback' || value === 'audit' || value === 'config') setTab(value)
+      if (value === 'overview' || value === 'pipeline' || value === 'health' || value === 'users' || value === 'access' || value === 'feedback' || value === 'audit' || value === 'config') setTab(value)
     }
     applyAdminTab(sessionStorage.getItem('admin-tab'))
     const onAdminTab = (event: Event) => applyAdminTab((event as CustomEvent).detail)
@@ -98,21 +110,6 @@ export default function AdminDashboard() {
     toastTimeoutRef.current = setTimeout(() => setToast(null), duration)
   }
 
-  function handleThresholdChange(key: string, val: number) {
-    setThresholds(prev => prev.map(t => t.key === key ? { ...t, value: val } : t))
-    showToast(`Parameter updated: ${key} = ${val}`)
-  }
-
-  function toggleSource(id: string) {
-    setSources(prev => prev.map(s => {
-      if (s.id === id) {
-        const next = !s.enabled
-        showToast(`${s.name} ${next ? 'enabled' : 'paused'}`)
-        return { ...s, enabled: next }
-      }
-      return s
-    }))
-  }
 
   function addManagedUser(e: React.FormEvent) {
     e.preventDefault()
@@ -155,7 +152,7 @@ export default function AdminDashboard() {
         const reason = code === 'auth/user-not-found'
           ? 'No Firebase account exists for this email.'
           : code === 'auth/no-password-provider'
-            ? 'This account uses Google sign-in and has no password to reset.'
+            ? 'Firebase could not create a password reset for this account. Ask the user to continue with Google first, then request a reset again.'
             : message || 'Firebase authentication is not configured.'
         showToast(`Unable to send reset email: ${reason}`, 6000)
       })
@@ -253,11 +250,11 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     async function loadUsers() {
-      if (tab !== 'users') return
       // Firebase restores the session asynchronously. Do not send an
       // unauthenticated request on the first render and then leave a stale
       // 401 toast visible after the authenticated request succeeds.
-      if (!token) return
+      if (!token || usersLoaded || !['overview', 'users', 'access'].includes(tab)) return
+      setUsersLoading(true)
       try {
         const result = await apiAdminUsers(token ?? undefined)
         const remoteUsers = Array.isArray(result?.users)
@@ -273,22 +270,21 @@ export default function AdminDashboard() {
             }))
           : []
 
-        // An empty or partial provider response must never blank the local
-        // directory. Keep the seeded/local records and merge valid remote
-        // records by email until the provider confirms a complete directory.
+        // Firebase is authoritative when configured. Do not merge it with
+        // demo fixtures: that creates duplicate/fake users in the admin UI.
         if (remoteUsers.length > 0) {
-          setManagedUsers(previous => {
-            const merged = new Map(previous.map(entry => [entry.email.toLowerCase(), entry]))
-            remoteUsers.forEach(entry => merged.set(entry.email.toLowerCase(), entry))
-            return Array.from(merged.values())
-          })
+          const uniqueUsers = Array.from(new Map(remoteUsers.map(entry => [entry.email.toLowerCase(), entry])).values())
+          setManagedUsers(uniqueUsers)
         }
+        setUsersLoaded(true)
       } catch (error) {
-        showToast(`Unable to load users: ${error instanceof Error ? error.message : 'Admin API unavailable'}`)
+        if (tab === 'users' || tab === 'overview') showToast(`Unable to load users: ${error instanceof Error ? error.message : 'Admin API unavailable'}`)
+      } finally {
+        setUsersLoading(false)
       }
     }
     void loadUsers()
-  }, [tab, token])
+  }, [token, usersLoaded, tab])
 
   useEffect(() => {
     async function loadAudit() {
@@ -311,7 +307,7 @@ export default function AdminDashboard() {
   }, [tab])
 
   useEffect(() => {
-    if (tab !== 'users') return
+    if (tab !== 'users' && tab !== 'access') return
     async function loadAccessRequests() {
       try {
         const result = await apiAdminAccessRequests(token ?? undefined)
@@ -384,7 +380,7 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {tab === 'pipeline' && <>
+      {tab === 'overview' && <>
       {/* Admin Overview hero header */}
       <div className="admin-hero" style={{
         background: 'linear-gradient(90deg, rgba(3,35,91,.96) 0%, rgba(7,58,124,.78) 48%, rgba(3,25,65,.28) 100%), url(/aviation-hero.png) center/cover', borderRadius: 'var(--radius-xl)',
@@ -405,23 +401,23 @@ export default function AdminDashboard() {
             System Administration &amp; Pipeline Control
           </h1>
           <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', fontFamily: 'var(--font-sans)', margin: 0 }}>
-            Manage real-time data collection channels, user permissions, audit logs, and index parameters
+            Monitor collection sources, user permissions, audit logs, and backend health.
           </p>
         </div>
-        <div className="admin-hero-metrics"><div><strong>19</strong><span>Active Airports</span></div><div><strong>{sources.length}</strong><span>Data Sources</span></div><div><strong>150+</strong><span>Daily Flights Tracked</span></div></div>
+        <div className="admin-hero-metrics"><div><strong>{dashboardData?.routes_tracked ?? '—'}</strong><span>Observed Routes</span></div><div><strong>{healthData?.live_sources ?? '—'}</strong><span>Healthy Fare Sources</span></div><div><strong>{healthData?.data_status ?? '—'}</strong><span>Data Status</span></div></div>
       </div>
       </>}
 
       {/* Operational overview */}
-      {tab === 'pipeline' && <>
+      {tab === 'overview' && <>
         <div className="admin-kpi-grid">
           {[
-            ['Total Routes Tracked', '1,248', '↑ 12% vs last month', 'blue'],
-            ['Data Sources', String(sources.length), `${sources.filter(source => source.enabled).length} active`, 'cyan'],
-            ['Collection Jobs', String(sources.filter(source => source.enabled).length * 2), 'Running and scheduled', 'green'],
+            ['Total Routes Tracked', dashboardData?.routes_tracked ?? '—', 'Backend-reported only', 'blue'],
+            ['Data Sources', String(sources.length), `${healthData?.live_sources ?? '—'} healthy fare sources`, 'cyan'],
+            ['Collection Runs Today', dashboardData?.collection_runs_today ?? '—', 'Backend-reported only', 'green'],
             ['Total Users', String(managedUsers.length), 'Managed accounts', 'purple'],
             ['Access Requests', String(accessRequests.filter(request => request.status === 'PENDING').length), 'Pending review', 'orange'],
-            ['System Health', '100%', 'All core modules operational', 'green'],
+            ['System Health', healthData?.status?.toUpperCase() ?? '—', healthData?.database ? 'Database connected' : 'Awaiting backend health', 'green'],
           ].map(([label, value, detail, tone]) => <div className={`admin-kpi admin-kpi-${tone}`} key={label}>
             <div className="admin-kpi-icon"><Activity size={17} /></div>
             <div><span>{label}</span><strong>{value}</strong><small>{detail}</small></div>
@@ -429,21 +425,21 @@ export default function AdminDashboard() {
         </div>
         <div className="admin-overview-grid">
           <section className="admin-overview-card admin-activity-card">
-            <div className="admin-card-heading"><div><h2>Data Collection Activity</h2><p>Real-time status across configured sources</p></div><span className="admin-pill admin-pill-blue">LIVE</span></div>
-            <div className="admin-bars" aria-label="Data source activity chart">{sources.map((source, index) => <div key={source.id} className="admin-bar-group"><i style={{ height: `${35 + ((index * 19) % 55)}%` }} /><i style={{ height: `${25 + ((index * 13) % 45)}%` }} /><i style={{ height: `${18 + ((index * 11) % 35)}%` }} /></div>)}</div>
-            <div className="admin-legend"><span><i className="blue" />Aviation APIs</span><span><i className="green" />Government Sources</span><span><i className="purple" />Official Data</span></div>
+            <div className="admin-card-heading"><div><h2>Data Collection Activity</h2><p>Latest backend status for registered sources</p></div><span className="admin-pill admin-pill-blue">{healthData?.data_status ?? 'UNKNOWN'}</span></div>
+            <div className="admin-bars" aria-label="Data source activity chart">{sources.length ? sources.slice(0, 8).map(source => <div key={source.id} className="admin-bar-group" title={`${source.name}: ${source.obs}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 70, color: source.enabled ? 'var(--color-success)' : 'var(--color-warning)', fontSize: 9, writingMode: 'vertical-rl', overflow: 'hidden' }}>{source.status}</div>) : <div style={{ padding: 16, color: 'var(--color-text-tertiary)' }}>No backend source activity returned.</div>}</div>
+            <div className="admin-legend"><span><i className="blue" />Backend source status</span><span><i className="green" />Fresh/live</span><span><i className="purple" />Unavailable or stale</span></div>
           </section>
           <section className="admin-overview-card admin-coverage-card">
-            <div className="admin-card-heading"><div><h2>Route Coverage</h2><p>Live data coverage across India</p></div><span className="admin-pill admin-pill-blue">ROUTES</span></div>
-            <div className="admin-coverage-body"><div className="admin-map-wrap"><img src={indiaMap} alt="India route coverage" /><span className="admin-map-pin pin-del">DEL<small>285 routes</small></span><span className="admin-map-pin pin-bom">BOM<small>176 routes</small></span><span className="admin-map-pin pin-blr">BLR<small>198 routes</small></span><span className="admin-map-pin pin-maa">MAA<small>142 routes</small></span></div><div className="admin-coverage-stats"><div><strong>19</strong><span>Active airports</span></div><div><strong>1,248</strong><span>Tracked routes</span></div><div><strong>150+</strong><span>Daily flights</span></div><div><strong>98%</strong><span>Data coverage</span></div></div></div>
+            <div className="admin-card-heading"><div><h2>Route Coverage</h2><p>Observed fare-route sample across India</p></div><span className="admin-pill admin-pill-blue">ROUTES</span></div>
+            <div className="admin-coverage-body"><div className="admin-map-wrap"><img src={indiaMap} alt="India route coverage" /><div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: 'var(--color-text-tertiary)', fontSize: 12, textAlign: 'center', padding: 20 }}>Verified airport-level route facts are not available from the backend yet.</div></div><div className="admin-coverage-stats"><div><strong>{dashboardData?.routes_tracked ?? '—'}</strong><span>Verified routes</span></div><div><strong>{dashboardData?.real_observations ?? '—'}</strong><span>Real observations</span></div><div><strong>{dashboardData?.sources_live ?? '—'}</strong><span>Live sources</span></div><div><strong>{healthData?.data_status ?? '—'}</strong><span>Data status</span></div></div></div>
           </section>
           <section className="admin-overview-card admin-status-card">
-            <div className="admin-card-heading"><div><h2>System Status</h2><p>Core services</p></div><button type="button" onClick={() => setTab('config')}>View All →</button></div>
-            {sources.slice(0, 5).map(source => <div className="admin-status-row" key={source.id}><span className="admin-status-dot" /><div><strong>{source.name}</strong><small>{source.obs}</small></div><em>{source.enabled ? 'Operational' : 'Paused'}</em></div>)}
+            <div className="admin-card-heading"><div><h2>System Status</h2><p>Registered source states</p></div><button type="button" onClick={() => setTab('health')}>View Health →</button></div>
+            {sources.length ? sources.slice(0, 5).map(source => <div className="admin-status-row" key={source.id}><span className="admin-status-dot" /><div><strong>{source.name}</strong><small>{source.obs}</small></div><em>{source.status}</em></div>) : <div style={{ padding: 16, color: 'var(--color-text-tertiary)' }}>No backend service status returned.</div>}
           </section>
         </div>
         <div className="admin-lower-grid">
-          <section className="admin-overview-card admin-table-card"><div className="admin-card-heading"><div><h2>Recent Collection Jobs</h2><p>Latest pipeline activity</p></div><button type="button" onClick={() => setTab('config')}>View All →</button></div><div className="admin-mini-table">{sources.slice(0, 5).map((source, index) => <div className="admin-mini-row" key={source.id}><span className="admin-job-id">job_{String(index + 1).padStart(3, '0')}</span><strong>{source.name}</strong><em className={source.enabled ? 'success' : 'failed'}>{source.enabled ? (index === 0 ? 'Running' : 'Completed') : 'Paused'}</em><span>{source.enabled ? `${(index + 1) * 2},450` : '0'}</span><span>{index + 1}m ago</span></div>)}</div></section>
+          <section className="admin-overview-card admin-table-card"><div className="admin-card-heading"><div><h2>Recent Collection Jobs</h2><p>Latest backend-reported pipeline activity</p></div></div><div className="admin-mini-table">{dashboardData?.last_collection ? <div className="admin-mini-row"><span className="admin-job-id">latest</span><strong>Collection service</strong><em className="success">Reported</em><span>{dashboardData.collection_runs_today ?? '—'} runs</span><span>{new Date(dashboardData.last_collection).toLocaleString('en-IN')}</span></div> : <div style={{ padding: 16, color: 'var(--color-text-tertiary)' }}>No collection run records returned by the backend.</div>}</div></section>
           <section className="admin-overview-card admin-table-card"><div className="admin-card-heading"><div><h2>User Management</h2><p>Recent managed accounts</p></div><button type="button" onClick={() => setTab('users')}>View All →</button></div><div className="admin-mini-table">{managedUsers.slice(0, 5).map(entry => <div className="admin-mini-row admin-user-row" key={entry.email}><span className="admin-avatar">{entry.name.split(' ').map(part => part[0]).join('').slice(0, 2)}</span><strong>{entry.name}</strong><span>{entry.role}</span><em className={entry.status === 'ACTIVE' ? 'success' : 'pending'}>{entry.status}</em></div>)}</div></section>
           <section className="admin-overview-card admin-table-card"><div className="admin-card-heading"><div><h2>Recent Activity</h2><p>Latest administrative events</p></div><button type="button" onClick={() => setTab('audit')}>View All →</button></div><div className="admin-activity-list">{audit.slice(0, 5).map(entry => <div key={`${entry.ts}-${entry.action}`}><span className="admin-status-dot" /><div><strong>{entry.action.replace(/_/g, ' ')}</strong><small>{entry.detail}</small></div><time>{new Date(entry.ts).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</time></div>)}</div></section>
         </div>
@@ -452,56 +448,72 @@ export default function AdminDashboard() {
       {/* Tab: Pipeline */}
       {tab === 'pipeline' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>
+          <div className="admin-section-banner">
+            <div>
+              <span>ADMIN CONTROL CENTER · DATA OPERATIONS</span>
+              <h1>Data Pipeline</h1>
+              <p>Monitor verified collection sources and their current backend health.</p>
+            </div>
+            <div className="admin-section-count"><strong>{healthData?.live_sources ?? '—'}</strong><span>Healthy fare sources</span></div>
+          </div>
           <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', padding: 'var(--space-xl)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-lg)' }}>
               <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>
-                PRODUCTION SERVICE READINESS
+                INTELLIGENT DATA PIPELINE
               </div>
               <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-success)', background: 'var(--color-success-bg)', padding: '3px 8px', borderRadius: 99, border: '1px solid rgba(22,163,74,0.3)' }}>
-                ALL CORE MODULES READY
+                {sources.length ? `${healthData?.live_sources ?? '—'} HEALTHY FARE SOURCES` : 'LOADING SOURCE STATUS'}
               </span>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
-              {sources.map(src => (
-                <div key={src.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderRadius: 'var(--radius-md)', background: 'var(--color-surface-secondary)', border: '1px solid var(--color-border-primary)' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 'var(--space-sm)' }}>
+              {sources.length === 0 ? <div style={{ padding: 18, color: 'var(--color-text-tertiary)' }}>Waiting for verified source health from the backend…</div> : sources.map(src => (
+                <div key={src.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 12px', borderRadius: 'var(--radius-md)', background: 'var(--color-surface-secondary)', border: '1px solid var(--color-border-primary)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <CheckCircle size={14} style={{ color: src.enabled ? 'var(--color-success)' : 'var(--color-warning)' }} />
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>{src.name}</div>
-                      <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>Status: {src.obs}</div>
+                      <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>{src.status} · {src.obs}</div>
                     </div>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                     <span style={{ fontSize: 10, fontWeight: 700, color: src.enabled ? 'var(--color-success)' : 'var(--color-warning)', background: src.enabled ? 'var(--color-success-bg)' : 'var(--color-warning-bg)', padding: '2px 8px', borderRadius: 99, border: `1px solid ${src.enabled ? 'rgba(22,163,74,0.3)' : 'rgba(217,119,6,0.3)'}` }}>
                       {src.status}
                     </span>
-                    <button onClick={() => toggleSource(src.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', color: 'var(--color-brand-primary)' }}>
-                      <ToggleRight size={26} />
-                    </button>
                   </div>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* System Metrics */}
-          <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', padding: 'var(--space-xl)' }}>
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginBottom: 'var(--space-lg)' }}>
-              SYSTEM HEALTH &amp; THROUGHPUT
+        </div>
+      )}
+
+      {tab === 'health' && (
+        <div className="admin-workspace">
+          <div className="admin-section-banner">
+            <div>
+              <span>ADMIN CONTROL CENTER · SYSTEM HEALTH</span>
+              <h1>System Health</h1>
+              <p>Verified operational status for the AeroPrice backend and data services.</p>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-md)' }}>
-              {[
-                { label: 'Ready Modules', value: `${sources.filter(s => s.enabled).length}/${sources.length}`, sub: 'core services enabled' },
-                { label: 'Government Dataset State', value: govData.anyConnected ? 'LIVE' : 'LOCAL', sub: govData.anyConnected ? 'official fetch connected' : 'cache fallback available' },
-                { label: 'Published Index', value: 'Active', sub: 'route intelligence available' },
-                { label: 'Backend Health', value: 'Ready', sub: _h.aviationstack.configured ? 'aviation keys detected' : 'safe fallback mode active' },
-              ].map(m => (
-                <div key={m.label} className="ap-card" style={{ padding: '14px' }}>
-                  <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--color-text-tertiary)' }}>{m.label}</div>
-                  <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--color-brand-primary)', fontFamily: 'var(--font-mono)', margin: '4px 0' }}>{m.value}</div>
-                  <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }}>{m.sub}</div>
-                </div>
-              ))}
+            <div className="admin-section-count">
+              <strong>{healthData?.status?.toUpperCase() ?? '—'}</strong>
+              <span>Backend status</span>
+            </div>
+          </div>
+          <div className="admin-user-kpis">
+            <div><span>DATABASE</span><strong>{healthData?.database?.toUpperCase() ?? '—'}</strong><small>connection state</small></div>
+            <div><span>DATA STATUS</span><strong>{healthData?.data_status ?? '—'}</strong><small>verified feed state</small></div>
+            <div><span>LIVE SOURCES</span><strong>{healthData?.live_sources ?? '—'}</strong><small>currently reporting</small></div>
+            <div><span>OBSERVATIONS</span><strong>{healthData?.real_observations?.toLocaleString?.() ?? '—'}</strong><small>stored real records</small></div>
+          </div>
+          <div className="admin-tab-surface" style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', padding: 'var(--space-xl)' }}>
+            <div className="admin-card-heading"><div><h2>Service details</h2><p>Values are read from the backend health endpoint.</p></div><button type="button" onClick={() => { setHealthData(null); showToast('Refreshing system health…') }}>Refresh</button></div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'var(--space-md)', marginTop: 'var(--space-lg)' }}>
+              <div className="ap-card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 8, minHeight: 84 }}><span style={{ color: 'var(--color-text-tertiary)', fontSize: 11, fontWeight: 700, letterSpacing: '0.04em' }}>LAST COLLECTION</span><strong style={{ fontSize: 16, lineHeight: 1.25, overflowWrap: 'anywhere' }}>{healthData?.last_collection ? new Date(healthData.last_collection).toLocaleString('en-IN') : '—'}</strong></div>
+              <div className="ap-card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 8, minHeight: 84 }}><span style={{ color: 'var(--color-text-tertiary)', fontSize: 11, fontWeight: 700, letterSpacing: '0.04em' }}>REGISTERED SOURCES</span><strong style={{ fontSize: 22, lineHeight: 1.1 }}>{healthData?.total_sources ?? '—'}</strong></div>
+              <div className="ap-card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 8, minHeight: 84 }}><span style={{ color: 'var(--color-text-tertiary)', fontSize: 11, fontWeight: 700, letterSpacing: '0.04em' }}>STORAGE MODE</span><strong style={{ fontSize: 16, lineHeight: 1.25, overflowWrap: 'anywhere' }}>{healthData?.storage_mode ?? '—'}</strong></div>
+              <div className="ap-card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 8, minHeight: 84 }}><span style={{ color: 'var(--color-text-tertiary)', fontSize: 11, fontWeight: 700, letterSpacing: '0.04em' }}>COLLECTION ENABLED</span><strong style={{ fontSize: 22, lineHeight: 1.1, color: healthData?.collection_enabled ? 'var(--color-success)' : 'var(--color-text-primary)' }}>{healthData?.collection_enabled == null ? '—' : healthData.collection_enabled ? 'YES' : 'NO'}</strong></div>
             </div>
           </div>
         </div>
@@ -553,7 +565,7 @@ export default function AdminDashboard() {
               </tr>
             </thead>
             <tbody>
-              {managedUsers.map(u => (
+              {usersLoading && managedUsers.length === 0 ? <tr><td colSpan={5}><div className="admin-empty-state"><RefreshCw size={18} className="spin" /><strong>Loading verified Firebase users…</strong><span>The directory is being loaded from the authenticated backend.</span></div></td></tr> : managedUsers.length === 0 ? <tr><td colSpan={5}><div className="admin-empty-state"><strong>No users returned</strong><span>Refresh the page after confirming the backend is available.</span></div></td></tr> : managedUsers.map(u => (
                 <tr key={u.email}>
                   <td>
                     <div style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>{u.name}</div>
@@ -652,24 +664,20 @@ export default function AdminDashboard() {
       {/* Tab: Config */}
       {tab === 'config' && (
         <div className="admin-tab-surface admin-config-surface" style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', padding: 'var(--space-xl)' }}>
-          <div className="admin-section-banner compact"><div><span>ADMIN CONTROL CENTER · CONFIGURATION</span><h1>System Parameters</h1><p>Adjust index and collection thresholds with controlled administrator access.</p></div><div className="admin-section-count"><strong>{thresholds.length}</strong><span>Managed parameters</span></div></div>
+          <div className="admin-section-banner compact"><div><span>ADMIN CONTROL CENTER · CONFIGURATION</span><h1>System Parameters</h1><p>Backend-reported settings currently used for collection and analytics.</p></div><div className="admin-section-count"><strong>{systemParameters?.parameters.length ?? '—'}</strong><span>Active parameters</span></div></div>
+          <p style={{ color: 'var(--color-text-secondary)', fontSize: 12, marginBottom: 'var(--space-lg)' }}>{systemParameters?.note ?? 'Parameters are unavailable until the backend responds.'}</p>
           <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginBottom: 'var(--space-lg)' }}>
             INDEX &amp; COLLECTION PARAMETERS
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
-            {thresholds.map(t => (
+            {systemParameters?.parameters.map(t => (
               <div key={t.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-lg)', padding: '12px 16px', borderRadius: 'var(--radius-md)', background: 'var(--color-surface-secondary)' }}>
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>{t.label}</div>
                   <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>{t.key}</div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <input
-                    type="number"
-                    value={t.value}
-                    onChange={e => handleThresholdChange(t.key, Number(e.target.value))}
-                    style={{ width: 72, padding: '6px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border-primary)', background: 'var(--color-surface-bg)', color: 'var(--color-text-primary)', fontSize: 13, fontFamily: 'var(--font-mono)', textAlign: 'right', outline: 'none' }}
-                  />
+                  <strong style={{ color: 'var(--color-text-primary)', fontSize: 13, fontFamily: 'var(--font-mono)' }}>{t.value}</strong>
                   <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)', minWidth: 64 }}>{t.unit}</span>
                 </div>
               </div>

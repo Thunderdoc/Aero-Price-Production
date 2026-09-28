@@ -5,9 +5,10 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { Activity, Radio, Filter } from 'lucide-react'
 
-import { corridors as sampleCorridors, type Corridor } from '../data/sampleData'
 import { AIRPORTS } from '../data/airports'
 import { useLiveData } from '../hooks/useLiveData'
+import { useAuth } from '../contexts/AuthContext'
+import { apiFareMovement, apiFareSummary, apiRouteBasket } from '../services/api'
 import TrendIndicator from '../components/TrendIndicator'
 import { useAviationRadar } from '../services/aviationRadar'
 
@@ -15,12 +16,33 @@ import { useAviationRadar } from '../services/aviationRadar'
 
 type FilterMode = 'ALL' | 'RISING' | 'FALLING' | 'STABLE'
 
+interface MapCorridor {
+  id: string
+  from: string
+  to: string
+  fromLat: number
+  fromLng: number
+  toLat: number
+  toLng: number
+  currentFare: number
+  minFare: number
+  maxFare: number
+  observations: number
+  samplePeriod: string
+  observedAt: string | null
+  trend: 'up' | 'down' | 'stable' | 'unknown'
+  movementAvailable: boolean
+  change7d: number
+  weight: number
+}
+
 // ─── Colour helpers (raw hex needed by Leaflet) ───────────────────────────────
 
-const TREND_COLORS: Record<Corridor['trend'], string> = {
+const TREND_COLORS: Record<MapCorridor['trend'], string> = {
   up: '#dc2626',      // var(--color-danger)
   down: '#16a34a',    // var(--color-success)
   stable: '#d97706',  // var(--color-warning)
+  unknown: '#2563eb',
 }
 
 const TIER_RADIUS: Record<string, number> = {
@@ -254,8 +276,8 @@ function IndiaGeoJSON() {
   const [geoData, setGeoData] = useState<object | null>(null)
 
   useEffect(() => {
-    fetch('https://cdn.jsdelivr.net/gh/geohacker/india/state/india_state.geojson')
-      .then((r) => r.json())
+    fetch('/maps/india-states-2019.geojson')
+      .then((r) => { if (!r.ok) throw new Error('India boundaries unavailable'); return r.json() })
       .then((d: object) => setGeoData(d))
       .catch(() => { /* silently skip if unavailable */ })
   }, [])
@@ -467,7 +489,7 @@ function Legend() {
 // ─── Route Sidebar ────────────────────────────────────────────────────────────
 
 interface RouteSidebarProps {
-  corridors: Corridor[]
+  corridors: MapCorridor[]
   selectedId: string | null
   onSelect: (id: string) => void
 }
@@ -507,11 +529,11 @@ function RouteSidebar({ corridors, selectedId, onSelect }: RouteSidebarProps) {
               color: 'var(--color-text-primary)',
             }}
           >
-            Route Index
+            Observed Route Fares
           </span>
         </div>
         <span style={{ fontSize: 'var(--text-caption-size)', color: 'var(--color-text-tertiary)' }}>
-          {corridors.length} corridors shown
+          {corridors.length} routes with stored quotes
         </span>
       </div>
 
@@ -575,7 +597,12 @@ function RouteSidebar({ corridors, selectedId, onSelect }: RouteSidebarProps) {
                   alignItems: 'center',
                 }}
               >
-                <TrendIndicator direction={corridor.trend} value={corridor.change7d} period="7d" size="sm" />
+                {corridor.movementAvailable && corridor.trend !== 'unknown'
+                  ? <TrendIndicator direction={corridor.trend} value={corridor.change7d} period="vs prior collection" size="sm" />
+                  : <span style={{ fontSize: 'var(--text-caption-size)', color: 'var(--color-text-tertiary)' }}>No comparable prior collection</span>}
+              </div>
+              <div style={{ marginTop: 5, fontSize: 'var(--text-caption-size)', color: 'var(--color-text-tertiary)' }}>
+                Latest-day median · {corridor.observations} quotes · {corridor.samplePeriod}
               </div>
             </button>
           )
@@ -588,6 +615,7 @@ function RouteSidebar({ corridors, selectedId, onSelect }: RouteSidebarProps) {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function AirfareMap() {
+  const { token } = useAuth()
   const { connectionStatus } = useLiveData()
   const radar = useAviationRadar(true)
   const apiStatus: 'loading' | 'REAL' | 'UNAVAILABLE' = radar.status === 'connected'
@@ -607,8 +635,66 @@ export default function AirfareMap() {
   }))
   const realFlightCount = liveFlights.length
 
-  // sampleData corridors used for map arcs — sourced from Kaggle 2019 Indian flight prices dataset
-  const corridors: Corridor[] = sampleCorridors
+  const [corridors, setCorridors] = useState<MapCorridor[]>([])
+  const [routesLoading, setRoutesLoading] = useState(false)
+  const [routeError, setRouteError] = useState<string | null>(null)
+
+  // Build map corridors only from backend route summaries. The former static
+  // Kaggle corridor list made old fares look current and was removed.
+  useEffect(() => {
+    let active = true
+    if (!token) {
+      setCorridors([])
+      setRouteError('Sign in to load verified route observations.')
+      return () => { active = false }
+    }
+
+    setRoutesLoading(true)
+    setRouteError(null)
+    Promise.all([apiRouteBasket(token), apiFareMovement(token).catch(() => null)])
+      .then(async ([basket, movement]) => {
+        const results = await Promise.all(basket.routes.filter(item => item.has_data).map(async (item): Promise<MapCorridor | null> => {
+          const [from, to] = item.route.split('-')
+          const fromAirport = AIRPORTS[from]
+          const toAirport = AIRPORTS[to]
+          if (!fromAirport || !toAirport) return null
+          const summary = await apiFareSummary(item.route, token) as {
+            overall?: { median: number | null; min: number | null; max: number | null; count: number; sample_period: string | null; last_collected_at: string | null }
+          }
+          const fare = summary.overall
+          if (!fare || fare.median == null || fare.min == null || fare.max == null || !fare.sample_period) return null
+          const compared = movement?.routes.find(row => row.route === item.route)
+          const trend = compared
+            ? compared.status.includes('INCREASE') ? 'up' : compared.status.includes('DECREASE') ? 'down' : 'stable'
+            : 'unknown'
+          return {
+            id: item.route,
+            from,
+            to,
+            fromLat: fromAirport.lat,
+            fromLng: fromAirport.lng,
+            toLat: toAirport.lat,
+            toLng: toAirport.lng,
+            currentFare: fare.median,
+            minFare: fare.min,
+            maxFare: fare.max,
+            change7d: compared?.change_pct ?? 0,
+            trend,
+            weight: 1,
+            observations: fare.count,
+            samplePeriod: fare.sample_period,
+            observedAt: fare.last_collected_at,
+            movementAvailable: Boolean(compared),
+          } satisfies MapCorridor
+        }))
+        if (active) setCorridors(results.filter((corridor): corridor is MapCorridor => corridor != null))
+      })
+      .catch(() => { if (active) { setCorridors([]); setRouteError('Verified route summaries are unavailable.') } })
+      .finally(() => { if (active) setRoutesLoading(false) })
+
+    return () => { active = false }
+  }, [token])
+
   const [filter, setFilter] = useState<FilterMode>('ALL')
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
@@ -616,7 +702,7 @@ export default function AirfareMap() {
   const filteredCorridors = corridors.filter((c) => {
     if (filter === 'RISING') return c.trend === 'up'
     if (filter === 'FALLING') return c.trend === 'down'
-    if (filter === 'STABLE') return c.trend === 'stable'
+    if (filter === 'STABLE') return c.movementAvailable && c.trend === 'stable'
     return true
   })
 
@@ -684,18 +770,18 @@ export default function AirfareMap() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', position: 'relative', zIndex: 1 }}>
           <div style={{
             display: 'flex', alignItems: 'center', gap: 'var(--space-xs)',
-            background: 'rgba(22,163,74,0.15)',
-            border: '1px solid rgba(22,163,74,0.35)',
+            background: routesLoading ? 'rgba(217,119,6,0.15)' : corridors.length ? 'rgba(22,163,74,0.15)' : 'rgba(217,119,6,0.15)',
+            border: `1px solid ${routesLoading || !corridors.length ? 'rgba(217,119,6,0.35)' : 'rgba(22,163,74,0.35)'}`,
             borderRadius: 'var(--radius-full)',
             padding: '3px 10px',
           }}>
             <div style={{
               width: 6, height: 6, borderRadius: '50%',
-              background: 'var(--color-success)',
-              boxShadow: '0 0 6px var(--color-success)',
+              background: routesLoading || !corridors.length ? 'var(--color-warning)' : 'var(--color-success)',
+              boxShadow: `0 0 6px ${routesLoading || !corridors.length ? 'var(--color-warning)' : 'var(--color-success)'}`,
             }} />
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, color: 'var(--color-success)', letterSpacing: '0.08em' }}>
-              ONLINE
+              {routesLoading ? 'LOADING' : corridors.length ? 'BACKEND DATA' : 'NO ROUTE DATA'}
             </span>
           </div>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'rgba(255,255,255,0.45)', letterSpacing: '0.04em' }}>
@@ -705,7 +791,7 @@ export default function AirfareMap() {
               ? 'Connecting to AviationStack…'
               : liveFlights.length > 0
               ? `${liveFlights.length} tracked flight positions`
-              : 'Online'}
+              : 'No live aircraft positions'}
           </span>
         </div>
       </div>
@@ -715,6 +801,11 @@ export default function AirfareMap() {
 
       {/* ── Map area ── */}
       <div style={{ flex: 1, height: '100%', position: 'relative' }}>
+        {(routesLoading || routeError || !corridors.length) && (
+          <div style={{ position: 'absolute', zIndex: 500, top: 18, left: 18, maxWidth: 340, padding: '10px 12px', borderRadius: 9, background: 'rgba(255,255,255,0.94)', border: '1px solid var(--color-border-primary)', boxShadow: '0 4px 16px rgba(15,44,90,.12)', fontSize: 11, color: 'var(--color-text-secondary)' }}>
+            {routesLoading ? 'Loading verified route summaries…' : routeError ?? 'No verified route observations are available for the map.'}
+          </div>
+        )}
         <MapContainer
           center={[20.5937, 78.9629]}
           zoom={5}
@@ -743,7 +834,7 @@ export default function AirfareMap() {
               color={TREND_COLORS[corridor.trend]}
               weight={Math.max(1.5, corridor.weight * 2.2)}
               highlighted={selectedId === corridor.id}
-              routeLabel={`${corridor.from} → ${corridor.to}  ₹${corridor.currentFare.toLocaleString('en-IN')}`}
+              routeLabel={`${corridor.from} → ${corridor.to}  latest-day median ₹${corridor.currentFare.toLocaleString('en-IN')} · ${corridor.observations} quotes · ${corridor.samplePeriod}`}
             />
           ))}
 

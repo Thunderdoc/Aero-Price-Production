@@ -34,6 +34,8 @@ from app.collectors.aggregators.amadeus import AmadeusAdapter
 from app.collectors.duffel import DuffelAdapter, SOURCE_ID as DUFFEL_SOURCE_ID
 from app.collectors.aggregators.googleflights_worker import GoogleFlightsWorkerAdapter
 from app.collectors.aggregators.fast_flights import FastFlightsAdapter
+from app.collectors.aggregators.scrapling_google_flights import ScraplingGoogleFlightsAdapter
+from app.collectors.aggregators.serpapi_google_flights import SerpApiGoogleFlightsAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -199,6 +201,49 @@ DUFFEL_SOURCE = {
 }
 AIRFARE_SOURCE_REGISTRY.append(DUFFEL_SOURCE)
 
+# These connectors may already have persisted observations from an earlier
+# collection run. Keep them in the directory so the admin UI can explain the
+# provenance of stored data instead of presenting an incomplete source list.
+AIRFARE_SOURCE_REGISTRY.extend([
+    {
+        "id": "scrapling-google-flights",
+        "name": "Google Flights via Scrapling",
+        "type": "PUBLIC_INTERFACE",
+        "status": "CONFIGURED",
+        "api_available": False,
+        "robots_txt": "PUBLIC_INTERFACE",
+        "note": "Optional Scrapling browser/stealth fetcher. Stores rows only after a stable fare payload parser is available.",
+    },
+    {
+        "id": "fast-flights",
+        "name": "Google Flights via fast-flights",
+        "type": "PUBLIC_INTERFACE",
+        "status": "NOT_CONFIGURED",
+        "api_available": False,
+        "robots_txt": "PUBLIC_INTERFACE",
+        "note": "Optional public-interface adapter; only recent successful runs are treated as live.",
+    },
+    {
+        "id": "google-flights",
+        "name": "Google Flights stored observations",
+        "type": "PUBLIC_INTERFACE",
+        "status": "STALE_DATA",
+        "api_available": False,
+        "robots_txt": "PUBLIC_INTERFACE",
+        "note": "Historical stored observations from an earlier worker; not an active connector.",
+    },
+    {
+        "id": "serpapi-google-flights",
+        "name": "SerpApi Google Flights",
+        "type": "AGGREGATOR",
+        "status": "CONFIGURED" if settings.SERPAPI_API_KEY else "NOT_CONFIGURED",
+        "api_available": True,
+        "credential_vars": ["SERPAPI_API_KEY"],
+        "note": "Authorized provider connector; requires a server-side SerpApi key.",
+        "registration_url": "https://serpapi.com/",
+    },
+])
+
 
 
 def _make_adapters() -> list[FareSourceAdapter]:
@@ -224,7 +269,9 @@ def _make_adapters() -> list[FareSourceAdapter]:
 
     adapters: list[FareSourceAdapter] = [
         FastFlightsAdapter(),             # no-key public-interface collector
+        ScraplingGoogleFlightsAdapter(),  # no fake rows; probes for stable real payloads
         GoogleFlightsWorkerAdapter(),  # explicit external worker; disabled by default
+        SerpApiGoogleFlightsAdapter(),  # authorized provider; disabled without key
         DuffelAdapter(duffel_cfg),     # authorized Duffel REST API — REAL or SANDBOX_TEST
         IndiGoAdapter(airline_cfg),    # CHALLENGE_DETECTED until NDC credentials provided
         AirIndiaAdapter(airline_cfg),
@@ -275,9 +322,12 @@ async def _upsert_source_health(
         db.add(row)
     row.last_attempt = now
     row.updated_at = now
+    row.enabled = result.status not in ("NOT_CONFIGURED", "CHALLENGE_DETECTED")
     if result.status == "SUCCESS":
         row.status = "LIVE"
         row.last_success = now
+        row.last_failure = None
+        row.failure_reason = None
         row.records_total = (row.records_total or 0) + len(result.records)
         if result.latency_ms:
             row.latency_ms_avg = result.latency_ms
@@ -285,6 +335,9 @@ async def _upsert_source_health(
     elif result.status == "NO_DATA":
         row.status = "DEGRADED"
         row.last_success = now  # request succeeded, just no results
+        row.last_failure = None
+        row.failure_reason = result.error
+        row.auth_status = "VALID"
         if result.latency_ms:
             row.latency_ms_avg = result.latency_ms
     elif result.status == "CHALLENGE_DETECTED":

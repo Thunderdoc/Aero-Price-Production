@@ -16,7 +16,7 @@ import ssl
 import re
 from calendar import month_abbr
 from datetime import datetime, timezone
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,6 +50,157 @@ def _mospi_ssl_context() -> ssl.SSLContext:
 def _safe_error(error: Exception) -> str:
     """Return an error message without leaking query-string credentials."""
     return re.sub(r"([?&]api-key=)[^&\s]+", r"\1[REDACTED]", str(error))[:500]
+
+
+DGCA_HOSTS = {"dgca.gov.in", "www.dgca.gov.in"}
+MONTH_NAMES = {
+    "jan": 1, "january": 1,
+    "feb": 2, "february": 2,
+    "mar": 3, "march": 3,
+    "apr": 4, "april": 4,
+    "may": 5,
+    "jun": 6, "june": 6,
+    "jul": 7, "july": 7,
+    "aug": 8, "august": 8,
+    "sep": 9, "sept": 9, "september": 9,
+    "oct": 10, "october": 10,
+    "nov": 11, "november": 11,
+    "dec": 12, "december": 12,
+}
+
+
+def _normalise_int(value: str) -> int | None:
+    digits = re.sub(r"[^\d]", "", value or "")
+    return int(digits) if digits else None
+
+
+def _parse_month(value: str) -> int | None:
+    cleaned = re.sub(r"[^A-Za-z0-9]", "", value or "").lower()
+    if cleaned.isdigit():
+        month = int(cleaned)
+        return month if 1 <= month <= 12 else None
+    return MONTH_NAMES.get(cleaned[:3]) or MONTH_NAMES.get(cleaned)
+
+
+def _looks_like_dgca_shell(soup: BeautifulSoup) -> bool:
+    """Detect the generic DGCA portal shell, which is not a data document."""
+    text = soup.get_text(" ", strip=True).lower()
+    return "monthly passenger" not in text and "passengers carried" not in text and len(soup.find_all("table")) == 0
+
+
+def _parse_dgca_monthly_rows(html: str) -> list[dict]:
+    """Parse only tables that actually expose passenger/statistics columns."""
+    soup = BeautifulSoup(html, "lxml")
+    if _looks_like_dgca_shell(soup):
+        return []
+
+    parsed: list[dict] = []
+    seen: set[tuple[int, int]] = set()
+    for table in soup.find_all("table"):
+        table_text = table.get_text(" ", strip=True).lower()
+        if "passenger" not in table_text or "month" not in table_text:
+            continue
+        rows = table.find_all("tr")
+        header_cells: list[str] = []
+        header_index = -1
+        for idx, row in enumerate(rows[:8]):
+            cells = [c.get_text(" ", strip=True).lower() for c in row.find_all(["td", "th"])]
+            if any("month" in cell for cell in cells) and any("passenger" in cell for cell in cells):
+                header_cells = cells
+                header_index = idx
+                break
+        if not header_cells:
+            continue
+        month_idx = next((i for i, cell in enumerate(header_cells) if "month" in cell), None)
+        passenger_idx = next((i for i, cell in enumerate(header_cells) if "passenger" in cell), None)
+        year_idx = next((i for i, cell in enumerate(header_cells) if re.search(r"\byear\b|\bfy\b", cell)), None)
+        if month_idx is None or passenger_idx is None:
+            continue
+
+        for row in rows[header_index + 1:]:
+            cells = [c.get_text(" ", strip=True) for c in row.find_all(["td", "th"])]
+            if len(cells) <= max(month_idx, passenger_idx):
+                continue
+            month = _parse_month(cells[month_idx])
+            passenger_count = _normalise_int(cells[passenger_idx])
+            row_text = " ".join(cells)
+            year = _normalise_int(cells[year_idx]) if year_idx is not None and year_idx < len(cells) else None
+            if year is not None and year > 9999:
+                year = None
+            if year is None:
+                years = [int(y) for y in re.findall(r"\b(20\d{2})\b", row_text)]
+                year = years[0] if years else None
+            if not month or not year or not passenger_count:
+                continue
+            key = (month, year)
+            if key in seen:
+                continue
+            seen.add(key)
+            parsed.append({"month": month, "year": year, "domestic_passengers": passenger_count})
+    return parsed
+
+
+def _official_dgca_url(href: str, base_url: str) -> str | None:
+    if not href or href.startswith(("javascript:", "#", "mailto:")):
+        return None
+    url = urljoin(base_url, href)
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or parsed.hostname not in DGCA_HOSTS:
+        return None
+    return url
+
+
+def _extract_iso_date(text: str) -> str | None:
+    match = re.search(r"\b(\d{1,2})[-/.](\d{1,2})[-/.](20\d{2})\b", text or "")
+    if match:
+        day, month, year = (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+        try:
+            return datetime(year, month, day).strftime("%Y-%m-%d")
+        except ValueError:
+            return None
+    match = re.search(
+        r"\b(\d{1,2})\s+"
+        r"(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|"
+        r"Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
+        r"\s+(20\d{2})\b",
+        text or "",
+        re.IGNORECASE,
+    )
+    if match:
+        month = _parse_month(match.group(2))
+        if month:
+            try:
+                return datetime(int(match.group(3)), month, int(match.group(1))).strftime("%Y-%m-%d")
+            except ValueError:
+                return None
+    return None
+
+
+def _parse_dgca_circular_links(html: str, base_url: str) -> list[dict]:
+    soup = BeautifulSoup(html, "lxml")
+    page_text = soup.get_text(" ", strip=True).lower()
+    if not any(kw in page_text for kw in ["circular", "order", "advisory", "press release"]):
+        return []
+
+    parsed: list[dict] = []
+    seen: set[str] = set()
+    for link in soup.find_all("a", href=True):
+        text = link.get_text(" ", strip=True)
+        if len(text) < 10:
+            continue
+        lowered = text.lower()
+        if not any(kw in lowered for kw in ["circular", "order", "advisory", "press release"]):
+            continue
+        url = _official_dgca_url(link["href"], base_url)
+        date_value = _extract_iso_date(text)
+        if not url or not date_value:
+            continue
+        if url in seen:
+            continue
+        seen.add(url)
+        category = "PRESS_RELEASE" if "press" in lowered else "CIRCULAR"
+        parsed.append({"title": text[:500], "date": date_value, "category": category, "url": url})
+    return parsed
 
 GOV_DATASET_REGISTRY = [
     {
@@ -214,55 +365,38 @@ async def fetch_dgca_monthly(db: AsyncSession) -> dict:
     """
     try:
         result = await _official_get(settings.DGCA_STATS_URL)
-        html = result["contents"]
-        soup = BeautifulSoup(html, "lxml")
+        rows = _parse_dgca_monthly_rows(result["contents"])
 
         records_saved = 0
-        tables = soup.find_all("table")
-        for table in tables:
-            rows = table.find_all("tr")
-            for row in rows[1:]:
-                cells = row.find_all(["td", "th"])
-                if len(cells) < 3:
-                    continue
-                try:
-                    month_text = cells[0].get_text(strip=True)
-                    year_text = cells[1].get_text(strip=True)
-                    pax_text = cells[2].get_text(strip=True).replace(",", "").replace(" ", "")
-                    if not pax_text.isdigit():
-                        continue
-                    month = int(month_text) if month_text.isdigit() else None
-                    year = int(year_text) if year_text.isdigit() else None
-                    if not month or not year:
-                        continue
-                    existing = await db.scalar(
-                        select(DgcaMonthlyRecord).where(
-                            DgcaMonthlyRecord.month == month,
-                            DgcaMonthlyRecord.year == year,
-                        )
-                    )
-                    if not existing:
-                        db.add(DgcaMonthlyRecord(
-                            month=month,
-                            year=year,
-                            domestic_passengers=int(pax_text),
-                            source="OFFICIAL",
-                        ))
-                        records_saved += 1
-                except (ValueError, IndexError):
-                    continue
+        for row in rows:
+            existing = await db.scalar(
+                select(DgcaMonthlyRecord).where(
+                    DgcaMonthlyRecord.month == row["month"],
+                    DgcaMonthlyRecord.year == row["year"],
+                )
+            )
+            if not existing:
+                db.add(DgcaMonthlyRecord(
+                    month=row["month"],
+                    year=row["year"],
+                    domestic_passengers=row["domestic_passengers"],
+                    source="OFFICIAL",
+                ))
+                records_saved += 1
 
         await db.commit()
 
-        if records_saved == 0:
-            # The public page was available but did not contain a usable table.
-            logger.warning("DGCA: HTML fetched but no table rows parsed. Portal may have changed structure.")
+        if not rows:
+            logger.warning("DGCA: HTML fetched but no verified monthly passenger table was parsed.")
             await _upsert_dataset_status(db, "dgca-pax", "STALE",
-                failure_reason="HTML fetched but no parseable table rows found.")
+                failure_reason="Official DGCA response did not expose a verified monthly passenger table.")
             return {"status": "STALE", "records": 0}
 
-        await _upsert_dataset_status(db, "dgca-pax", "CONNECTED", record_count=records_saved)
-        return {"status": "CONNECTED", "records": records_saved}
+        total = int(await db.scalar(select(func.count()).select_from(DgcaMonthlyRecord)) or 0)
+        latest = max(rows, key=lambda item: (item["year"], item["month"]))
+        await _upsert_dataset_status(db, "dgca-pax", "CONNECTED", record_count=total,
+            reference_period=f"{latest['year']}-{latest['month']:02d}")
+        return {"status": "CONNECTED", "records": total, "new_records": records_saved}
 
     except Exception as e:
         reason = _safe_error(e)
@@ -444,38 +578,26 @@ async def fetch_mospi_cpi(db: AsyncSession) -> dict:
 async def fetch_dgca_circulars(db: AsyncSession) -> dict:
     try:
         result = await _official_get(settings.DGCA_CIRCULARS_URL)
-        html = result["contents"]
-        soup = BeautifulSoup(html, "lxml")
+        circulars = _parse_dgca_circular_links(result["contents"], settings.DGCA_CIRCULARS_URL)
 
         saved = 0
-        links = soup.find_all("a", href=True)
-        for link in links:
-            text = link.get_text(strip=True)
-            if len(text) < 10:
-                continue
-            href = link["href"]
-            if not any(kw in text.lower() for kw in ["circular", "order", "advisory", "press"]):
-                continue
+        for circular in circulars:
             existing = await db.scalar(
-                select(DgcaCircular).where(DgcaCircular.title == text)
+                select(DgcaCircular).where(DgcaCircular.url == circular["url"])
             )
             if not existing:
-                db.add(DgcaCircular(
-                    title=text[:500],
-                    date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                    category="CIRCULAR",
-                    url=href if href.startswith("http") else f"https://dgca.gov.in{href}",
-                ))
+                db.add(DgcaCircular(**circular))
                 saved += 1
 
         await db.commit()
-        if saved > 0:
-            await _upsert_dataset_status(db, "dgca-circulars", "CONNECTED", record_count=saved)
-            return {"status": "CONNECTED", "records": saved}
-        else:
+        if not circulars:
             await _upsert_dataset_status(db, "dgca-circulars", "STALE",
-                failure_reason="No circular links found in DGCA portal response.")
+                failure_reason="Official DGCA response did not expose dated circular document links.")
             return {"status": "STALE", "records": 0}
+
+        total = int(await db.scalar(select(func.count()).select_from(DgcaCircular)) or 0)
+        await _upsert_dataset_status(db, "dgca-circulars", "CONNECTED", record_count=total)
+        return {"status": "CONNECTED", "records": total, "new_records": saved}
 
     except Exception as e:
         reason = _safe_error(e)

@@ -71,21 +71,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
         plan: str = payload.get("plan", "FREE")
         name: str = payload.get("name", "User")
     except JWTError:
-        # Firebase-authenticated frontend sessions use a Firebase ID token.
-        # Verify it server-side before allowing admin-only API access.
-        try:
-            import os
-            from app.core.firebase_admin import firebase_app
-            firebase_admin = firebase_app()
-            from firebase_admin import auth
-            if not firebase_admin:
-                raise credentials_exception
-            firebase_user = auth.verify_id_token(token)
-            email = str(firebase_user.get("email", "")).lower()
-            role = "ADMIN" if email in {"admin@aeroprice.in", *[e.strip().lower() for e in os.getenv("FIREBASE_ADMIN_EMAILS", "").split(",") if e.strip()]} else "PUBLIC"
-            return {"email": email, "role": role, "plan": "ADMIN" if role == "ADMIN" else "FREE", "name": firebase_user.get("name") or email}
-        except Exception:
-            raise credentials_exception
+        raise credentials_exception
     return {"email": email, "role": role, "plan": plan, "name": name}
 
 
@@ -111,3 +97,11 @@ def require_role(*roles: str):
 require_admin = require_role("ADMIN")
 require_analyst = require_role("ANALYST", "ADMIN")
 require_subscriber = require_role("PUBLIC", "ANALYST", "ADMIN")  # checked at plan level
+
+async def require_admin_or_local(token: str | None = Depends(oauth2_optional_scheme)) -> dict:
+    """Allow the local development admin fallback, but require auth in production."""
+    if not token and not settings.is_production:
+        return {"email": "local-admin", "role": "ADMIN", "plan": "ADMIN", "name": "Local Admin"}
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    return await get_current_user(token)

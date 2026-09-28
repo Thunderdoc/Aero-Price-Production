@@ -1,451 +1,357 @@
-import { useState } from 'react'
-import { Badge } from '../components/ui/Badge'
-import { Button } from '../components/ui/Button'
-import { ChevronDown, ChevronRight, Shield, CheckCircle, XCircle, Clock, ExternalLink, RefreshCw, Building2, AlertTriangle } from 'lucide-react'
-import StatusBadge from '../components/StatusBadge'
-import TrendIndicator from '../components/TrendIndicator'
-import DataFreshness from '../components/DataFreshness'
-import { LineChart } from '../components/MiniChart'
+import { useEffect, useMemo, useState } from 'react'
+import { AlertTriangle, Building2, CheckCircle, ExternalLink, RefreshCw, XCircle } from 'lucide-react'
+import { useAuth } from '../contexts/AuthContext'
 import { useGovData } from '../hooks/useGovData'
+import { apiFareSummary, apiIndexCurrent, apiRouteBasket, type IndexResponse, type RouteBasketItem } from '../services/api'
 
-// Route fare matrices are intentionally empty until verified fare
-// observations arrive from an authorized provider. Do not render the old
-// checked-in sample corridors as government statistics.
-const corridors: any[] = []
+const WINDOWS = [1, 7, 15, 30, 45]
 
-const MONTHS = ['Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep']
+type FareWindow = {
+  median?: number
+  count?: number
+  data_origin?: string
+}
 
-const CARRIER_SHARE = [
-  { name: 'IndiGo', share: 59.3, color: 'var(--color-brand-primary)' },
-  { name: 'Air India', share: 18.7, color: 'var(--color-info)' },
-  { name: 'Akasa', share: 7.4, color: 'var(--color-success)' },
-  { name: 'SpiceJet', share: 6.1, color: 'var(--color-warning)' },
-  { name: 'Others', share: 8.5, color: 'var(--color-text-tertiary)' },
-]
+type FareSummary = {
+  route: string
+  status: string
+  overall?: {
+    median?: number
+    count?: number
+    sample_period?: string
+    last_collected_at?: string
+    data_origin?: string
+  }
+  windows?: Record<string, FareWindow>
+}
 
-const STAT_NOTES = `The AeroPrice India Index uses a Matched-Sample Jevons formulation:
+function formatDate(value?: string | null) {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' })
+}
 
-  P = Π (p_it / p_i0)^(1/n)
+function formatMonth(value?: string) {
+  if (!value) return '—'
+  const date = new Date(`${value}-01T00:00:00Z`)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleDateString('en-IN', { month: 'short', year: '2-digit', timeZone: 'UTC' })
+}
 
-where p_it is the fare for corridor i at time t, p_i0 is the first verified collection's fare, and n is the number of matched corridors. The index requires at least 10 real corridors from the configured 12-route basket.
-
-Route weights are configured defaults until an official DGCA corridor-level weight series is imported.`
-
-function DgcaBarChart({ records }: { records: { month: string; year?: number; domestic_passengers: number }[] }) {
-  if (!records.length) return null
-  const maxPax = Math.max(...records.map(r => r.domestic_passengers))
-  const barH = 120
-  const W = Math.max(records.length * 44, 400)
+function EmptyState({ title, detail }: { title: string; detail: string }) {
   return (
-    <svg width="100%" viewBox={`0 0 ${W} ${barH + 32}`} style={{ overflow: 'visible' }}>
-      {records.map((r, i) => {
-        const h = Math.max(4, (r.domestic_passengers / maxPax) * barH)
-        const x = i * 44 + 2
-        const monthNum = parseInt(r.month.split('-')[1] ?? '1', 10)
-        const label = MONTHS[monthNum - 10 < 0 ? monthNum - 10 + 12 : monthNum - 10] ?? r.month
+    <div style={{ minHeight: 118, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, textAlign: 'center', color: 'var(--color-text-tertiary)' }}>
+      <AlertTriangle size={20} style={{ color: 'var(--color-warning)' }} />
+      <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.06em' }}>{title}</div>
+      <div style={{ fontSize: 11, maxWidth: 360 }}>{detail}</div>
+    </div>
+  )
+}
+
+function Panel({ title, eyebrow, right, children }: { title: string; eyebrow?: string; right?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <section className="ap-card" style={{ padding: 'var(--space-xl)', minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 'var(--space-lg)' }}>
+        <div>
+          {eyebrow && <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.08em', color: 'var(--color-text-tertiary)', marginBottom: 4 }}>{eyebrow}</div>}
+          <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--color-text-primary)', margin: 0 }}>{title}</h2>
+        </div>
+        {right}
+      </div>
+      {children}
+    </section>
+  )
+}
+
+function DgcaBarChart({ records }: { records: { month: string; domestic_passengers: number }[] }) {
+  if (!records.length) return null
+  const ordered = [...records].sort((a, b) => a.month.localeCompare(b.month)).slice(-8)
+  const maxPax = Math.max(...ordered.map(r => r.domestic_passengers), 1)
+  const barH = 110
+  const width = Math.max(ordered.length * 50, 360)
+
+  return (
+    <svg width="100%" viewBox={`0 0 ${width} ${barH + 34}`} style={{ overflow: 'visible' }}>
+      {ordered.map((record, index) => {
+        const height = Math.max(4, (record.domestic_passengers / maxPax) * barH)
+        const x = index * 50 + 8
         return (
-          <g key={i}>
-            <rect x={x} y={barH - h} width={36} height={h} rx={3} fill="var(--color-brand-primary)" opacity={0.75} />
-            <text x={x + 18} y={barH + 14} textAnchor="middle" fontSize={9} fill="var(--color-text-tertiary)" fontFamily="var(--font-sans)">
-              {label}
+          <g key={`${record.month}-${index}`}>
+            <rect x={x} y={barH - height} width={34} height={height} rx={5} fill="var(--color-brand-primary)" opacity={0.78} />
+            <text x={x + 17} y={barH + 16} textAnchor="middle" fontSize={9} fill="var(--color-text-tertiary)">
+              {formatMonth(record.month)}
             </text>
-            <title>{(r.domestic_passengers / 1_000_000).toFixed(1)}M pax</title>
+            <title>{(record.domestic_passengers / 1_000_000).toFixed(1)}M passengers</title>
           </g>
         )
       })}
-      {/* Axis */}
-      <line x1={0} y1={barH} x2={W} y2={barH} stroke="var(--color-border-primary)" strokeWidth={1} />
-      <text x={0} y={barH - 2} fontSize={8} fill="var(--color-text-tertiary)" fontFamily="var(--font-sans)">{(maxPax / 1e6).toFixed(1)}M</text>
+      <line x1={0} y1={barH} x2={width} y2={barH} stroke="var(--color-border-primary)" strokeWidth={1} />
     </svg>
   )
 }
 
-function DonutChart({ segments }: { segments: typeof CARRIER_SHARE }) {
-  const cx = 80, cy = 80, r = 60, ir = 38
-  let angle = -90
-  const paths = segments.map(s => {
-    const sweep = (s.share / 100) * 360
-    const a1 = (angle * Math.PI) / 180
-    const a2 = ((angle + sweep) * Math.PI) / 180
-    const x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1)
-    const x2 = cx + r * Math.cos(a2), y2 = cy + r * Math.sin(a2)
-    const ix1 = cx + ir * Math.cos(a1), iy1 = cy + ir * Math.sin(a1)
-    const ix2 = cx + ir * Math.cos(a2), iy2 = cy + ir * Math.sin(a2)
-    const lg = sweep > 180 ? 1 : 0
-    const path = `M ${x1} ${y1} A ${r} ${r} 0 ${lg} 1 ${x2} ${y2} L ${ix2} ${iy2} A ${ir} ${ir} 0 ${lg} 0 ${ix1} ${iy1} Z`
-    angle += sweep
-    return { ...s, path }
-  })
-  return (
-    <svg width={160} height={160}>
-      {paths.map((p, i) => <path key={i} d={p.path} fill={p.color} opacity={0.85} />)}
-      <text x={cx} y={cy - 6} textAnchor="middle" fontSize={11} fill="var(--color-text-tertiary)" fontFamily="var(--font-sans)">Market</text>
-      <text x={cx} y={cy + 8} textAnchor="middle" fontSize={9} fill="var(--color-text-tertiary)" fontFamily="var(--font-sans)">share (DGCA)</text>
-    </svg>
-  )
+function badgeClass(ok: boolean) {
+  return ok ? 'ap-badge ap-badge-official' : 'ap-badge ap-badge-info'
 }
-
-type DrillLevel = 'national' | 'regional' | 'corridor'
 
 export default function GovernmentIntelligence() {
-  const [drillLevel, setDrillLevel] = useState<DrillLevel>('national')
-  const [selectedRegion, setSelectedRegion] = useState<string | null>(null)
-  const [elasticCorr, setElasticCorr] = useState(0)
-  const { datasets, dgcaMonthly, dgcaCirculars, mospiCpi, isLoading, anyConnected, lastFetch, refresh } = useGovData()
+  const { token } = useAuth()
+  const { datasets, dgcaMonthly, dgcaCirculars, mospiCpi, ppacAtf, dataGovAviationCount, isLoading, anyConnected, lastFetch, refresh } = useGovData()
+  const [indexStatus, setIndexStatus] = useState<IndexResponse | null>(null)
+  const [routes, setRoutes] = useState<RouteBasketItem[]>([])
+  const [summaries, setSummaries] = useState<FareSummary[]>([])
+  const [selectedRoute, setSelectedRoute] = useState<string | null>(null)
+  const [fareLoading, setFareLoading] = useState(false)
 
-  const hasDgcaData = !isLoading && dgcaMonthly.length > 0
-  const hasCirculars = !isLoading && dgcaCirculars.length > 0
-  // No airline market-share series is imported yet; passenger totals and CPI
-  // must never activate the static carrier-share illustration below.
-  const hasPublishedGovData = false
-  const latestCpi = mospiCpi.at(-1)
-  const cpiCoverage = [...new Set(mospiCpi.map(r => r.base_year ?? 2012))].map(base => {
-    const rows = mospiCpi.filter(r => (r.base_year ?? 2012) === base)
-    return { base, count: rows.length, first: rows[0]?.period, last: rows.at(-1)?.period }
-  })
+  useEffect(() => {
+    let cancelled = false
+    async function loadFareContext() {
+      setFareLoading(true)
+      try {
+        const [indexResponse, basketResponse] = await Promise.all([
+          apiIndexCurrent(token ?? undefined).catch(() => null),
+          apiRouteBasket(token ?? undefined).catch(() => null),
+        ])
+        if (cancelled) return
+        setIndexStatus(indexResponse)
+        const basketRoutes = basketResponse?.routes ?? []
+        setRoutes(basketRoutes)
+        const candidates = basketRoutes.filter(route => route.has_data).slice(0, 8)
+        const loaded = await Promise.allSettled(candidates.map(route => apiFareSummary(route.route, token ?? undefined) as Promise<FareSummary>))
+        if (cancelled) return
+        const clean = loaded
+          .filter((result): result is PromiseFulfilledResult<FareSummary> => result.status === 'fulfilled')
+          .map(result => result.value)
+          .filter(summary => summary?.status !== 'NO_DATA')
+        setSummaries(clean)
+        setSelectedRoute(current => current && clean.some(summary => summary.route === current) ? current : clean[0]?.route ?? null)
+      } finally {
+        if (!cancelled) setFareLoading(false)
+      }
+    }
+    void loadFareContext()
+    return () => { cancelled = true }
+  }, [token])
 
+  const latestCpi = useMemo(() => {
+    return [...mospiCpi]
+      .filter(record => Number.isFinite(Number(record.cpi_transport)))
+      .sort((a, b) => Number(b.base_year ?? 0) - Number(a.base_year ?? 0) || String(b.period).localeCompare(String(a.period)))[0]
+  }, [mospiCpi])
+
+  const latestPpac = useMemo(() => {
+    return [...ppacAtf].sort((a, b) => String(b.effective_date).localeCompare(String(a.effective_date)))[0]
+  }, [ppacAtf])
+
+  const officialRecordCount = dgcaMonthly.length + dgcaCirculars.length + mospiCpi.length + ppacAtf.length + dataGovAviationCount
+  const selectedSummary = summaries.find(summary => summary.route === selectedRoute) ?? summaries[0]
+  const realFareValues = summaries.flatMap(summary => WINDOWS.map(day => summary.windows?.[`T+${day}`]?.median).filter((value): value is number => Number.isFinite(Number(value))))
+  const minFare = realFareValues.length ? Math.min(...realFareValues) : 0
+  const maxFare = realFareValues.length ? Math.max(...realFareValues) : 1
+  const liveSourceCount = datasets.filter(dataset => ['CONNECTED', 'HEALTHY'].includes(dataset.status)).length
   const statusColor = anyConnected ? 'var(--color-success)' : 'var(--color-warning)'
-  const statusLabel = isLoading ? 'FETCHING…' : anyConnected ? 'OFFICIAL DATA CONNECTED' : 'HISTORICAL DATA'
+  const statusLabel = isLoading ? 'FETCHING GOVERNMENT SOURCES' : anyConnected ? 'SOME SOURCES RESPONDING' : 'NO GOVERNMENT SOURCE RESPONSE'
+  const indexPublished = indexStatus?.status === 'PUBLISHED' || indexStatus?.status === 'CALCULATED'
+  const routeCoverageTotal = indexStatus?.route_count ?? routes.length
 
   return (
     <div className="flex flex-col" style={{ gap: 'var(--space-2xl)' }}>
-      {/* Premium page header */}
-      <div style={{ background: 'var(--color-surface-bg)', borderBottom: '1px solid var(--color-border-primary)', padding: '20px 0 16px' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 'var(--space-lg)' }}>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', marginBottom: 'var(--space-xs)' }}>
-              <Building2 size={22} style={{ color: 'var(--color-brand-primary)' }} />
-              <h1 style={{ fontSize: 'var(--text-title-size)', fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', letterSpacing: '-0.01em', textTransform: 'uppercase', margin: 0 }}>
-                Government Airfare Intelligence
-              </h1>
-            </div>
-            <p style={{ fontSize: 'var(--text-body-size)', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', margin: 0 }}>
-              Official statistics from DGCA, MoSPI, and data.gov.in
-            </p>
+      <div className="ap-card" style={{ padding: 'var(--space-2xl)', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+            <Building2 size={22} style={{ color: 'var(--color-brand-primary)' }} />
+            <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: 'var(--color-text-primary)' }}>Government Airfare Intelligence</h1>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
-            <span className="ap-badge ap-badge-official">{datasets.length} SOURCES</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 'var(--radius-full)', background: anyConnected ? 'var(--color-success-bg)' : 'var(--color-warning-bg)', border: `1px solid ${statusColor}40` }}>
-              <div style={{ width: 6, height: 6, borderRadius: '50%', background: statusColor }} className="animate-pulse-dot" />
-              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', color: statusColor, fontFamily: 'var(--font-sans)' }}>{statusLabel}</span>
-            </div>
-            <button onClick={refresh} disabled={isLoading} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border-primary)', background: 'var(--color-surface-bg)', fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', cursor: isLoading ? 'wait' : 'pointer', opacity: isLoading ? 0.6 : 1 }}>
-              <RefreshCw size={11} /> Refresh
-            </button>
-          </div>
+          <p style={{ margin: 0, color: 'var(--color-text-secondary)', fontSize: 13 }}>
+            Official-source records are shown separately from AeroPrice fare observations. Missing feeds stay marked unavailable.
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span className="ap-badge ap-badge-official">{liveSourceCount}/{datasets.length} SOURCES RESPONDING</span>
+          <button onClick={refresh} disabled={isLoading} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 8, border: '1px solid var(--color-border-primary)', background: 'var(--color-surface-bg)', fontSize: 12, fontWeight: 700, color: 'var(--color-text-secondary)', cursor: isLoading ? 'wait' : 'pointer' }}>
+            <RefreshCw size={13} style={{ animation: isLoading ? 'spin 1s linear infinite' : 'none' }} /> Refresh
+          </button>
         </div>
       </div>
 
-      {/* Gov data status bar */}
-      <div style={{ background: anyConnected ? 'var(--color-success-bg)' : isLoading ? 'var(--color-info-bg)' : 'var(--color-warning-bg)', border: `1px solid ${anyConnected ? 'rgba(21,128,61,0.2)' : isLoading ? 'rgba(3,105,161,0.2)' : 'rgba(217,119,6,0.2)'}`, borderRadius: 'var(--radius-lg)', padding: 'var(--space-md) var(--space-xl)', display: 'flex', alignItems: 'center', gap: 'var(--space-lg)', flexWrap: 'wrap' }}>
-        {isLoading ? (
-          <>
-            <RefreshCw size={14} style={{ color: 'var(--color-info)', animation: 'spin 1s linear infinite' }} />
-            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-info)', fontFamily: 'var(--font-sans)', letterSpacing: '0.05em' }}>FETCHING OFFICIAL DATA…</span>
-          </>
-        ) : anyConnected ? (
-          <>
-            <CheckCircle size={14} style={{ color: 'var(--color-success)' }} />
-            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-success)', fontFamily: 'var(--font-sans)', letterSpacing: '0.05em' }}>OFFICIAL DATA CONNECTED</span>
-            <span style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>
-              DGCA: {dgcaMonthly.length} records · Circulars: {dgcaCirculars.length} · MoSPI: {mospiCpi.length} records
-            </span>
-            {lastFetch && <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginLeft: 'auto', fontFamily: 'var(--font-mono)' }}>Last fetched {new Date(lastFetch).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST</span>}
-          </>
-        ) : (
-          <>
-            <XCircle size={14} style={{ color: 'var(--color-warning)' }} />
-            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-warning)', fontFamily: 'var(--font-sans)', letterSpacing: '0.05em' }}>VERIFIED DATA AWAITING IMPORT</span>
-            <span style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>DGCA, MoSPI, PPAC, and data.gov.in sources are monitored without synthetic values.</span>
-          </>
-        )}
+      <div style={{ background: anyConnected ? 'var(--color-success-bg)' : 'var(--color-warning-bg)', border: `1px solid ${statusColor}40`, borderRadius: 'var(--radius-lg)', padding: 'var(--space-md) var(--space-xl)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        {anyConnected ? <CheckCircle size={15} style={{ color: statusColor }} /> : <XCircle size={15} style={{ color: statusColor }} />}
+        <span style={{ fontSize: 12, fontWeight: 800, color: statusColor, letterSpacing: '0.05em' }}>{statusLabel}</span>
+        <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+          DGCA monthly {dgcaMonthly.length} · DGCA circulars {dgcaCirculars.length} · MoSPI CPI {mospiCpi.length} · PPAC ATF {ppacAtf.length}
+        </span>
+        {lastFetch && <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>Checked {formatDate(lastFetch)}</span>}
       </div>
 
-      {/* Gov source registry */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 'var(--space-md)' }}>
-        {datasets.map(d => {
-          const connected = d.status === 'CONNECTED' || d.status === 'HEALTHY'
-          return (
-            <div key={d.id} style={{ background: 'var(--color-surface-bg)', border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-lg)', display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}>{d.source}</span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4, background: connected ? 'var(--color-success-bg)' : 'var(--color-surface-secondary)', borderRadius: 'var(--radius-full)', padding: '2px 7px' }}>
-                  {connected ? <CheckCircle size={9} style={{ color: 'var(--color-success)' }} /> : <Clock size={9} style={{ color: 'var(--color-text-tertiary)' }} />}
-                  <span style={{ fontSize: 9, fontWeight: 700, color: connected ? 'var(--color-success)' : 'var(--color-text-tertiary)', letterSpacing: '0.07em', fontFamily: 'var(--font-sans)' }}>{d.status}</span>
-                </div>
+      <div className="ap-card" style={{ padding: 'var(--space-xl)' }}>
+        <div className="grid gap-lg" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))' }}>
+          {[
+            { label: 'AIRFARE INDEX', value: indexPublished && indexStatus?.index_value != null ? indexStatus.index_value.toFixed(2) : '—', sub: indexPublished ? indexStatus?.method ?? 'Backend published' : indexStatus?.message ?? 'Not published' },
+            { label: 'ROUTE COVERAGE', value: `${indexStatus?.covered_routes_count ?? routes.filter(route => route.has_data).length}/${routeCoverageTotal || '—'}`, sub: `Requires ${indexStatus?.required_routes ?? indexStatus?.required ?? 10} routes` },
+            { label: 'REAL FARES', value: (indexStatus?.real_observations ?? summaries.reduce((sum, summary) => sum + Number(summary.overall?.count ?? 0), 0)).toLocaleString('en-IN'), sub: 'Stored observations' },
+            { label: 'GOV RECORDS', value: officialRecordCount.toLocaleString('en-IN'), sub: 'Rows returned' },
+            { label: 'CPI TRANSPORT', value: latestCpi ? latestCpi.cpi_transport.toFixed(2) : '—', sub: latestCpi ? `${latestCpi.period}, base ${latestCpi.base_year ?? '—'}` : 'Not imported' },
+            { label: 'PPAC ATF', value: latestPpac ? `₹${Number(latestPpac.atf_export_duty_per_litre).toFixed(2)}` : '—', sub: latestPpac ? 'Export duty/litre' : 'Not imported' },
+          ].map(item => (
+            <div key={item.label} className="flex flex-col gap-xs">
+              <span className="text-video-title text-text-tertiary">{item.label}</span>
+              <span className="text-heading font-semibold text-text-primary">{item.value}</span>
+              <span className="text-video-title text-text-tertiary">{item.sub}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 'var(--space-lg)' }}>
+        <Panel title="Route Fare Matrix" eyebrow="BACKEND VERIFIED FARE OBSERVATIONS" right={<span className={badgeClass(Boolean(summaries.length))}>{fareLoading ? 'LOADING' : summaries.length ? 'REAL STORED FARES' : 'NO DATA'}</span>}>
+          {summaries.length ? (
+            <div style={{ overflowX: 'auto' }}>
+              <table className="ap-table" style={{ minWidth: 620 }}>
+                <thead>
+                  <tr>
+                    <th>Route</th>
+                    {WINDOWS.map(day => <th key={day}>T+{day}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {summaries.map(summary => (
+                    <tr key={summary.route}>
+                      <td style={{ fontWeight: 800 }}>{summary.route}</td>
+                      {WINDOWS.map(day => {
+                        const win = summary.windows?.[`T+${day}`]
+                        const fare = win?.median
+                        const intensity = fare ? (fare - minFare) / Math.max(1, maxFare - minFare) : 0
+                        return (
+                          <td key={day} style={{ background: fare ? `rgba(37,99,235,${0.08 + intensity * 0.24})` : undefined }}>
+                            {fare ? `₹${fare.toLocaleString('en-IN')}` : '—'}
+                            {win?.count ? <div style={{ fontSize: 9, color: 'var(--color-text-tertiary)' }}>{win.count} obs</div> : null}
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <EmptyState title="NO VERIFIED FARE MATRIX" detail="The backend has not returned fare summaries for the current basket routes." />
+          )}
+        </Panel>
+
+        <Panel title="Booking Window Profile" eyebrow={selectedSummary ? selectedSummary.route : 'NO ROUTE SELECTED'} right={<span className={badgeClass(Boolean(selectedSummary))}>{selectedSummary?.overall?.data_origin ?? 'UNAVAILABLE'}</span>}>
+          {selectedSummary ? (
+            <>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
+                {summaries.map(summary => (
+                  <button key={summary.route} onClick={() => setSelectedRoute(summary.route)} style={{ border: '1px solid var(--color-border-primary)', borderRadius: 8, padding: '6px 10px', background: selectedSummary.route === summary.route ? 'var(--color-brand-primary)' : 'var(--color-surface-secondary)', color: selectedSummary.route === summary.route ? 'white' : 'var(--color-text-secondary)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                    {summary.route}
+                  </button>
+                ))}
               </div>
-              <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>{d.organization}</span>
-              {d.record_count != null && <span style={{ fontSize: 10, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)' }}>{d.record_count} records · {d.format}</span>}
-              <a href={d.source_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: 'var(--color-brand-primary)', fontFamily: 'var(--font-sans)', display: 'flex', alignItems: 'center', gap: 3, textDecoration: 'none', marginTop: 2 }}>
-                <ExternalLink size={9} /> View source
-              </a>
-            </div>
-          )
-        })}
+              <div style={{ display: 'grid', gap: 10 }}>
+                {WINDOWS.map(day => {
+                  const win = selectedSummary.windows?.[`T+${day}`]
+                  const fare = win?.median
+                  return (
+                    <div key={day} style={{ display: 'grid', gridTemplateColumns: '72px 1fr 90px', alignItems: 'center', gap: 12 }}>
+                      <span style={{ fontSize: 12, fontWeight: 800, color: 'var(--color-text-secondary)' }}>T+{day}</span>
+                      <div style={{ height: 9, borderRadius: 999, background: 'var(--color-surface-secondary)', overflow: 'hidden' }}>
+                        <div style={{ width: fare ? `${Math.max(8, ((fare - minFare) / Math.max(1, maxFare - minFare)) * 100)}%` : 0, height: '100%', background: 'var(--color-brand-primary)' }} />
+                      </div>
+                      <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', fontWeight: 800, textAlign: 'right' }}>{fare ? `₹${fare.toLocaleString('en-IN')}` : '—'}</span>
+                    </div>
+                  )
+                })}
+              </div>
+              <div style={{ marginTop: 14, fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+                Latest sample: {formatDate(selectedSummary.overall?.last_collected_at)}. These are stored verified observations, not live quotes.
+              </div>
+            </>
+          ) : (
+            <EmptyState title="NO WINDOW PROFILE" detail="Booking-window medians appear after verified route observations are available." />
+          )}
+        </Panel>
       </div>
 
-      {/* DGCA Circular Feed */}
-      <div style={{ background: 'var(--color-surface-bg)', border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-xl)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-lg)' }}>
-          <h2 style={{ fontSize: 'var(--text-heading-size)', fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', margin: 0 }}>DGCA Circular Feed</h2>
-          <span style={{ fontSize: 10, fontWeight: 600, color: anyConnected ? 'var(--color-info)' : 'var(--color-text-tertiary)', letterSpacing: '0.07em', fontFamily: 'var(--font-sans)' }}>{anyConnected ? 'OFFICIAL · CONNECTED' : 'UNAVAILABLE'}</span>
-        </div>
-        {dgcaCirculars.length > 0 ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
-            {dgcaCirculars.slice(0, 5).map((c, i) => (
-              <div key={i} style={{ display: 'flex', gap: 'var(--space-lg)', padding: 'var(--space-md)', background: 'var(--color-surface-secondary)', borderRadius: 'var(--radius-md)', alignItems: 'flex-start' }}>
-                <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-brand-primary)', letterSpacing: '0.08em', fontFamily: 'var(--font-sans)', padding: '2px 8px', background: 'var(--color-brand-muted)', borderRadius: 'var(--radius-full)', whiteSpace: 'nowrap', marginTop: 2 }}>OFFICIAL</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 'var(--space-lg)' }}>
+        <Panel title="DGCA Passenger Volume" eyebrow="OFFICIAL MONTHLY FEED" right={<span className={badgeClass(Boolean(dgcaMonthly.length))}>{dgcaMonthly.length ? 'OFFICIAL' : 'UNAVAILABLE'}</span>}>
+          {dgcaMonthly.length ? <DgcaBarChart records={dgcaMonthly} /> : <EmptyState title="DGCA MONTHLY NOT IMPORTED" detail="No DGCA monthly passenger records were returned by the backend." />}
+        </Panel>
+
+        <Panel title="MoSPI CPI Transport" eyebrow="OFFICIAL CPI SERIES" right={<span className={badgeClass(Boolean(latestCpi))}>{latestCpi ? 'OFFICIAL' : 'UNAVAILABLE'}</span>}>
+          {latestCpi ? (
+            <div>
+              <div style={{ fontSize: 34, lineHeight: 1, fontWeight: 900, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>{latestCpi.cpi_transport.toFixed(2)}</div>
+              <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-text-secondary)' }}>{latestCpi.definition ?? 'Transport'} · {latestCpi.period} · base {latestCpi.base_year ?? '—'} = 100</div>
+              {latestCpi.source_url && <a href={latestCpi.source_url} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 12, fontSize: 11, color: 'var(--color-brand-primary)', textDecoration: 'none' }}><ExternalLink size={11} /> Official source</a>}
+              <div style={{ marginTop: 10, fontSize: 10, color: 'var(--color-text-tertiary)' }}>This is transport CPI, not an airfare-only index.</div>
+            </div>
+          ) : <EmptyState title="CPI NOT IMPORTED" detail="The backend did not return a MoSPI transport CPI record." />}
+        </Panel>
+
+        <Panel title="PPAC ATF Duty" eyebrow="OFFICIAL FUEL DUTY SERIES" right={<span className={badgeClass(Boolean(latestPpac))}>{latestPpac ? 'OFFICIAL' : 'UNAVAILABLE'}</span>}>
+          {latestPpac ? (
+            <div>
+              <div style={{ fontSize: 34, lineHeight: 1, fontWeight: 900, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>₹{Number(latestPpac.atf_export_duty_per_litre).toFixed(2)}</div>
+              <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-text-secondary)' }}>ATF export duty per litre · {formatDate(latestPpac.effective_date)}</div>
+              <div style={{ marginTop: 10, fontSize: 10, color: 'var(--color-text-tertiary)' }}>This is a fuel-duty indicator and is not displayed as a ticket fare.</div>
+            </div>
+          ) : <EmptyState title="PPAC DATA NOT IMPORTED" detail="No ATF duty records were returned by the backend." />}
+        </Panel>
+      </div>
+
+      <Panel title="DGCA Circular Feed" eyebrow="REGULATORY RECORDS" right={<span className={badgeClass(Boolean(dgcaCirculars.length))}>{dgcaCirculars.length ? 'OFFICIAL' : 'UNAVAILABLE'}</span>}>
+        {dgcaCirculars.length ? (
+          <div style={{ display: 'grid', gap: 10 }}>
+            {dgcaCirculars.slice(0, 6).map((circular, index) => (
+              <div key={circular.id ?? circular.circular_id ?? index} style={{ display: 'flex', gap: 12, padding: 12, background: 'var(--color-surface-secondary)', borderRadius: 8 }}>
+                <span className="ap-badge ap-badge-official">DGCA</span>
                 <div style={{ flex: 1 }}>
-                  <a href={c.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13, fontWeight: 500, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', textDecoration: 'none', lineHeight: 1.4, display: 'block' }}>{c.title}</a>
-                  <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)', marginTop: 4 }}>{c.date} · {c.category}</div>
+                  <a href={circular.url ?? circular.source_url} target="_blank" rel="noreferrer" style={{ color: 'var(--color-text-primary)', textDecoration: 'none', fontSize: 13, fontWeight: 700 }}>{circular.title}</a>
+                  <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 4 }}>{circular.date ?? circular.issued_date ?? '—'} · {circular.category}</div>
                 </div>
               </div>
             ))}
           </div>
         ) : (
-          <div style={{ textAlign: 'center', padding: 'var(--space-3xl)', color: 'var(--color-text-tertiary)' }}>
-            <Clock size={28} style={{ margin: '0 auto var(--space-md)' }} />
-            <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '0.07em', fontFamily: 'var(--font-sans)', marginBottom: 'var(--space-sm)' }}>FETCHING — CHECK BACK SHORTLY</div>
-            <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>DGCA circulars portal did not respond or returned no parseable content.</div>
-            <a href="https://dgca.gov.in/digigov-portal/?dynamicPage=6" target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: 'var(--color-brand-primary)', fontFamily: 'var(--font-sans)', textDecoration: 'none', marginTop: 8, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              <ExternalLink size={10} /> View DGCA circulars directly
-            </a>
-          </div>
+          <EmptyState title="NO DGCA CIRCULARS IMPORTED" detail="The backend registry may know the source, but no circular rows are available for display." />
         )}
-      </div>
+      </Panel>
 
-      {/* KPI strip */}
-      <div className="ap-card" style={{ padding: 'var(--space-xl)' }}>
-        <div className="grid gap-lg flex-wrap" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))' }}>
-          {[
-            { label: 'ALL-INDIA INDEX', value: '—', sub: 'Not published' },
-            { label: '7D CHANGE', value: '—', sub: 'No live fare feed' },
-            { label: '30D CHANGE', value: '—', sub: 'No live fare feed' },
-            { label: 'OBSERVATIONS', value: '0', sub: 'Live validated' },
-            { label: 'CORRIDORS', value: corridors.length.toString(), sub: 'Monitored routes' },
-            { label: 'SOURCES', value: '0', sub: 'Active fare collectors' },
-            { label: 'FRESHNESS', value: '—', sub: 'No live observation' },
-          ].map(({ label, value, sub }) => (
-            <div key={label} className="flex flex-col gap-xs">
-              <span className="text-video-title text-text-tertiary">{label}</span>
-              <span className="text-heading font-semibold text-text-primary">{value}</span>
-              <span className="text-video-title text-text-tertiary">{sub}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Three-column stats row */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 'var(--space-lg)' }}>
-        {/* Card 1: PAX VOLUME */}
-        <div className="ap-card" style={{ padding: 'var(--space-xl)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-lg)' }}>
-            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', textTransform: 'uppercase' }}>Domestic Pax Volume</span>
-            <span className={`ap-badge ${anyConnected ? 'ap-badge-official' : 'ap-badge-info'}`}>{anyConnected ? 'OFFICIAL' : 'HISTORICAL'}</span>
-          </div>
-          {isLoading ? (
-            <div style={{ height: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', fontSize: 12 }}>Fetching DGCA data…</div>
-          ) : dgcaMonthly.length > 0 ? (
-            <>
-              <DgcaBarChart records={dgcaMonthly} />
-              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', paddingTop: 12 }}>
-                {dgcaMonthly.slice(0, 4).map(m => (
-                  <div key={m.month} style={{ textAlign: 'center' }}>
-                    <div style={{ fontSize: 9, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)', marginBottom: 2 }}>{m.month}</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>{(m.domestic_passengers / 1_000_000).toFixed(1)}M</div>
-                  </div>
-                ))}
-              </div>
-            </>
-          ) : (
-            <div style={{ height: 100, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-              <AlertTriangle size={20} style={{ color: 'var(--color-warning)' }} />
-              <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>FETCHING — CHECK BACK SHORTLY</span>
-            </div>
-          )}
-        </div>
-
-        {/* Card 2: FARE INDEX */}
-        <div className="ap-card" style={{ padding: 'var(--space-xl)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-lg)' }}>
-            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', textTransform: 'uppercase' }}>Airfare Index vs CPI</span>
-            <span className={`ap-badge ${latestCpi ? 'ap-badge-official' : 'ap-badge-info'}`}>{latestCpi ? 'OFFICIAL' : 'AWAITING DATA'}</span>
-          </div>
-          <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginBottom: 'var(--space-md)' }}>MoSPI All-India Combined transport series</div>
-          {latestCpi ? <div style={{ borderRadius: 'var(--radius-md)', background: 'var(--color-surface-secondary)', padding: 16 }}>
-            <div style={{ fontSize: 30, fontWeight: 800, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>{latestCpi.cpi_transport.toFixed(2)}</div>
-            <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 4 }}>{latestCpi.definition ?? 'Transport'} · {latestCpi.period} · base {latestCpi.base_year ?? 2012} = 100</div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>{cpiCoverage.map(c => <span key={c.base} style={{ padding: '5px 8px', borderRadius: 6, background: 'var(--color-surface-bg)', fontSize: 10, color: 'var(--color-text-secondary)' }}>Base {c.base}: {c.first}–{c.last} · {c.count} months</span>)}</div>
-            <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', marginTop: 10 }}>The two base-year levels are separate and must not be joined directly. CPI transport is a wider consumer category, not an airfare index.</div>
-            {latestCpi.source_url && <a href={latestCpi.source_url} target="_blank" rel="noreferrer" style={{ display: 'inline-block', marginTop: 8, fontSize: 10, color: 'var(--color-brand-primary)' }}>Official MoSPI source ↗</a>}
-          </div> : <div style={{ height: 120, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, borderRadius: 'var(--radius-md)', background: 'var(--color-surface-secondary)', border: '1px dashed var(--color-border-secondary)' }}>
-            <AlertTriangle size={20} style={{ color: 'var(--color-warning)' }} />
-            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}>CPI SERIES NOT IMPORTED</div>
-            <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>Refresh the official MoSPI feed.</div>
-          </div>}
-        </div>
-
-        {/* Card 3: CARRIER SHARE */}
-        <div className="ap-card" style={{ padding: 'var(--space-xl)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-lg)' }}>
-            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', textTransform: 'uppercase' }}>Carrier Market Share</span>
-            <span className={`ap-badge ${hasPublishedGovData ? 'ap-badge-official' : 'ap-badge-info'}`}>{hasPublishedGovData ? 'OFFICIAL' : 'AWAITING DATA'}</span>
-          </div>
-          {hasPublishedGovData ? <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
-            <DonutChart segments={CARRIER_SHARE} />
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {CARRIER_SHARE.map(s => (
-                <div key={s.name} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <div style={{ width: 8, height: 8, borderRadius: 2, background: s.color, flexShrink: 0 }} />
-                  <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>{s.name}</div>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)', marginLeft: 'auto' }}>{s.share}%</div>
-                </div>
-              ))}
-              <div style={{ fontSize: 9, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginTop: 4 }}>DGCA Apr–Jun 2026</div>
-            </div>
-          </div>
-          : <div style={{ height: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', fontSize: 12 }}>
-            Carrier-share values will appear only after DGCA publishes a verified machine-readable dataset.
-          </div>}
-        </div>
-      </div>
-
-      {/* Sector Heatmap */}
-      <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', padding: 'var(--space-xl)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-lg)' }}>
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>SECTOR HEATMAP — FARE BY BOOKING WINDOW</div>
-            <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginTop: 2 }}>Standard fare: one-way · adult · economy · cheapest non-stop</div>
-          </div>
-          <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--color-warning)', background: 'var(--color-warning-bg)', padding: '2px 6px', borderRadius: 3, fontFamily: 'var(--font-sans)' }}>AWAITING VERIFIED FARES</span>
-        </div>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ borderCollapse: 'collapse', fontSize: 11, fontFamily: 'var(--font-mono)', width: '100%' }}>
-            <thead>
-              <tr>
-                <th style={{ padding: '4px 8px', textAlign: 'left', color: 'var(--color-text-tertiary)', fontWeight: 600 }}>CORRIDOR</th>
-                {['T+1', 'T+7', 'T+15', 'T+30', 'T+45'].map(w => (
-                  <th key={w} style={{ padding: '4px 8px', textAlign: 'center', color: 'var(--color-text-tertiary)', fontWeight: 600 }}>{w}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {corridors.slice(0, 8).map((c, i) => (
-                <tr key={i}>
-                  <td style={{ padding: '4px 8px', color: 'var(--color-text-primary)', fontWeight: 600 }}>{c.from}–{c.to}</td>
-                  {[1, 7, 15, 30, 45].map(d => {
-                    const fare = c.currentFare ? Math.round(c.currentFare * (1 + (45 - d) / 120)) : null
-                    const intensity = fare ? Math.min(1, (fare - 3000) / 12000) : 0
-                    return (
-                      <td key={d} style={{ padding: '4px 8px', textAlign: 'center', background: fare ? `rgba(99,102,241,${0.1 + intensity * 0.5})` : 'var(--color-surface-secondary)', borderRadius: 3, color: fare ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)' }}>
-                        {fare ? `₹${fare.toLocaleString('en-IN')}` : 'N/A'}
-                      </td>
-                    )
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Elasticity Chart */}
-      <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', padding: 'var(--space-xl)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-lg)' }}>
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>ADVANCE-PURCHASE ELASTICITY</div>
-            <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginTop: 2 }}>Fare vs days-in-advance per corridor</div>
-          </div>
-          <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--color-warning)', background: 'var(--color-warning-bg)', padding: '2px 6px', borderRadius: 3, fontFamily: 'var(--font-sans)' }}>AWAITING VERIFIED FARES</span>
-        </div>
-        {/* Corridor tabs */}
-        <div style={{ display: 'flex', gap: 'var(--space-xs)', flexWrap: 'wrap', marginBottom: 'var(--space-lg)' }}>
-          {corridors.slice(0, 6).map((c, i) => (
-            <button key={i} onClick={() => setElasticCorr(i)} style={{
-              padding: '4px 10px', borderRadius: 'var(--radius-full)',
-              border: '1px solid var(--color-border-primary)',
-              background: elasticCorr === i ? 'var(--color-brand-primary)' : 'var(--color-surface-secondary)',
-              color: elasticCorr === i ? 'white' : 'var(--color-text-secondary)',
-              fontSize: 11, fontWeight: 500, cursor: 'pointer', fontFamily: 'var(--font-sans)',
-            }}>
-              {c.from}-{c.to}
-            </button>
-          ))}
-        </div>
-        {(() => {
-          const c = corridors[elasticCorr]
-          if (!c) return null
-          const pts = [1, 7, 15, 30, 45].map(d => ({
-            d, fare: c.currentFare ? Math.round(c.currentFare * (1 + (45 - d) / 120)) : 0
-          }))
-          const maxF = Math.max(...pts.map(p => p.fare))
-          const minF = Math.min(...pts.map(p => p.fare))
-          const W = 400, H = 100
-          const xs = pts.map((p, i) => (i / (pts.length - 1)) * (W - 40) + 20)
-          const ys = pts.map(p => H - 10 - ((p.fare - minF) / (maxF - minF || 1)) * (H - 20))
-          const d = xs.map((x, i) => `${i === 0 ? 'M' : 'L'} ${x} ${ys[i]}`).join(' ')
-          return (
-            <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ overflow: 'visible' }}>
-              <path d={d} fill="none" stroke="var(--color-brand-primary)" strokeWidth={2} strokeLinejoin="round" />
-              {pts.map((p, i) => (
-                <g key={i}>
-                  <circle cx={xs[i]} cy={ys[i]} r={4} fill="var(--color-brand-primary)" />
-                  <text x={xs[i]} y={H + 2} textAnchor="middle" fontSize={9} fill="var(--color-text-tertiary)" fontFamily="var(--font-sans)">T+{p.d}</text>
-                  <text x={xs[i]} y={ys[i] - 8} textAnchor="middle" fontSize={9} fill="var(--color-text-primary)" fontFamily="var(--font-mono)">₹{p.fare.toLocaleString('en-IN')}</text>
-                </g>
-              ))}
-            </svg>
-          )
-        })()}
-      </div>
-
-      {/* Government Data Source Center */}
-      <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', padding: 'var(--space-xl)' }}>
-        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginBottom: 'var(--space-lg)' }}>GOVERNMENT DATA SOURCE CENTER</div>
+      <Panel title="Government Data Source Center" eyebrow="BACKEND REGISTRY">
         <div style={{ overflowX: 'auto' }}>
           <table className="ap-table">
             <thead>
               <tr>
-                {['Source', 'Org', 'Status', 'Format', 'Last Retrieved', 'Records', 'Reference Period'].map(h => (
-                  <th key={h}>{h}</th>
-                ))}
+                {['Source', 'Org', 'Status', 'Format', 'Last Retrieved', 'Records', 'Reference Period'].map(header => <th key={header}>{header}</th>)}
               </tr>
             </thead>
             <tbody>
-              {datasets.map(ds => {
-                const isOk = ds.status === 'CONNECTED' || ds.status === 'HEALTHY'
+              {datasets.map(dataset => {
+                const ok = ['CONNECTED', 'HEALTHY'].includes(dataset.status)
                 return (
-                  <tr key={ds.id}>
-                    <td style={{ fontWeight: 500 }}>{ds.source}</td>
-                    <td style={{ color: 'var(--color-text-secondary)', fontSize: 11 }}>{ds.organization}</td>
-                    <td>
-                      <span className={`ap-badge ${isOk ? 'ap-badge-official' : 'ap-badge-gen'}`}>{ds.status}</span>
-                    </td>
-                    <td style={{ color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{ds.format}</td>
-                    <td style={{ color: 'var(--color-text-secondary)', fontSize: 11 }}>{ds.last_retrieved ? new Date(ds.last_retrieved).toLocaleDateString('en-IN') : '—'}</td>
-                    <td style={{ color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{ds.record_count ?? '—'}</td>
-                    <td style={{ color: 'var(--color-text-secondary)', fontSize: 11 }}>{ds.reference_period ?? '—'}</td>
+                  <tr key={dataset.id}>
+                    <td style={{ fontWeight: 700 }}>{dataset.source}</td>
+                    <td style={{ color: 'var(--color-text-secondary)', fontSize: 11 }}>{dataset.organization}</td>
+                    <td><span className={badgeClass(ok)}>{dataset.status}</span></td>
+                    <td style={{ color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{dataset.format}</td>
+                    <td style={{ color: 'var(--color-text-secondary)', fontSize: 11 }}>{formatDate(dataset.last_retrieved)}</td>
+                    <td style={{ color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{dataset.record_count ?? '—'}</td>
+                    <td style={{ color: 'var(--color-text-secondary)', fontSize: 11 }}>{dataset.reference_period ?? '—'}</td>
                   </tr>
                 )
               })}
             </tbody>
           </table>
         </div>
-      </div>
+      </Panel>
 
-      {/* Statistical Notes */}
-      <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', padding: 'var(--space-xl)' }}>
-        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginBottom: 'var(--space-lg)' }}>STATISTICAL NOTES — INDEX METHODOLOGY</div>
-        <div style={{ background: 'var(--color-surface-secondary)', borderRadius: 'var(--radius-md)', padding: 'var(--space-lg)', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.8, whiteSpace: 'pre-wrap' }}>
-          {STAT_NOTES}
+      <Panel title="Index Methodology" eyebrow="AEROPRICE BACKEND">
+        <div style={{ background: 'var(--color-surface-secondary)', borderRadius: 8, padding: 16, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.7 }}>
+          The current index endpoint reports status, route coverage, required route count, real observation count, method, and base period. This page displays the published index only when that endpoint returns a calculated or published value. It does not claim MoSPI/IMF compliance and does not use static carrier-share or fare fixtures.
         </div>
-        <div style={{ marginTop: 'var(--space-lg)', display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
-          <CheckCircle size={13} style={{ color: 'var(--color-info)' }} />
-          <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>
-            Methodology compliant with MoSPI Price Statistics Manual (2023) and IMF CPI Manual (2020, Chapter 10).
-          </span>
-        </div>
-      </div>
+      </Panel>
     </div>
   )
 }

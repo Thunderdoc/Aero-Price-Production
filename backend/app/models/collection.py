@@ -43,3 +43,8 @@ class SourceHealth(Base):
     freshness_minutes  = Column(Integer, nullable=True)
     challenge_reason   = Column(Text, nullable=True)   # Why CHALLENGE_DETECTED
     updated_at         = Column(DateTime(timezone=True), nullable=False, default=func.now(), onupdate=func.now())
+
+    @property
+    def error_message(self) -> str | None:
+        """Backward-compatible name used by older health consumers."""
+        return self.failure_reason

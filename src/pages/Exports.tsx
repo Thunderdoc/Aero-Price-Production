@@ -3,14 +3,11 @@ import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
 import { Download, FileText, Table, Code, RefreshCw } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
-import { AIRLINE_STATS, ROUTE_STATS, MONTHLY_STATS, OVERALL_STATS, DATASET_META } from '../data/kaggleData'
-import { corridors, priceHistoryData } from '../data/sampleData'
+import { apiDownload } from '../services/api'
 
 type ExportStatus = 'idle' | 'downloading' | 'done' | 'error'
 
-function downloadCSV(filename: string, rows: string[][]) {
-  const csv = rows.map(r => r.join(',')).join('\n')
-  const blob = new Blob([csv], { type: 'text/csv' })
+function downloadBlob(filename: string, blob: Blob) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url; a.download = filename; a.click()
@@ -58,7 +55,7 @@ const EXPORT_DEFS: ExportEntry[] = [
 ]
 
 export default function Exports() {
-  const { token: _token } = useAuth()
+  const { token } = useAuth()
   const [statuses, setStatuses] = useState<Record<string, ExportStatus>>({})
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
 
@@ -67,48 +64,17 @@ export default function Exports() {
     setTimeout(() => setSuccessMsg(null), 2000)
   }
 
-  function handleDownload(entry: ExportEntry) {
+  async function handleDownload(entry: ExportEntry) {
     setStatuses(s => ({ ...s, [entry.id]: 'downloading' }))
-    const today = new Date().toISOString().slice(0, 10)
     try {
-      if (entry.id === 'csv') {
-        const header = ['route','origin','destination','count','avg_price_inr','min_price_inr','max_price_inr','data_origin','coverage']
-        const rows = [
-          header,
-          ...ROUTE_STATS.map(r => [
-            r.route, r.origin, r.destination,
-            String(r.count), String(r.avg_price), String(r.min_price), String(r.max_price),
-            DATASET_META.data_origin, DATASET_META.coverage,
-          ]),
-          ['OVERALL','ALL','ALL', String(OVERALL_STATS.total_obs), String(OVERALL_STATS.overall_avg),
-            String(OVERALL_STATS.overall_min), String(OVERALL_STATS.overall_max),
-            DATASET_META.data_origin, DATASET_META.coverage],
-          ...AIRLINE_STATS.map(a => [
-            a.airline,'','',String(a.count),String(a.avg_price),String(a.min_price),String(a.max_price),
-            DATASET_META.data_origin, DATASET_META.coverage,
-          ]),
-        ]
-        downloadCSV(`aeroprice-fare-observations-${today}.csv`, rows)
-      } else if (entry.id === 'json') {
-        const header = ['date','DEL_BOM','DEL_BLR','BOM_BLR','DEL_MAA','index','data_origin']
-        const rows = [
-          header,
-          ...priceHistoryData.map(p => [
-            p.date, String(p.DEL_BOM), String(p.DEL_BLR), String(p.BOM_BLR), String(p.DEL_MAA),
-            String(p.index), 'SAMPLE',
-          ]),
-        ]
-        downloadCSV(`aeroprice-index-history-${today}.csv`, rows)
-      } else if (entry.id === 'dgca') {
-        const header = ['month','observations','avg_price_inr','data_origin','coverage']
-        const rows = [
-          header,
-          ...MONTHLY_STATS.map(m => [
-            m.month, String(m.count), String(m.avg_price), DATASET_META.data_origin, DATASET_META.coverage,
-          ]),
-        ]
-        downloadCSV(`aeroprice-dgca-monthly-${today}.csv`, rows)
-      }
+      const path = entry.id === 'csv'
+        ? '/api/exports/fares?fmt=csv'
+        : entry.id === 'json'
+          ? '/api/exports/index-history?fmt=json'
+          : '/api/exports/dgca-monthly?fmt=csv'
+      const blob = await apiDownload(path, token ?? undefined)
+      const extension = entry.id === 'json' ? 'json' : 'csv'
+      downloadBlob(`aeroprice-${entry.id}-export.${extension}`, blob)
       setStatuses(s => ({ ...s, [entry.id]: 'done' }))
       setTimeout(() => setStatuses(s => ({ ...s, [entry.id]: 'idle' })), 3000)
       showSuccess(`${entry.label} downloaded successfully.`)
@@ -148,7 +114,7 @@ export default function Exports() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', background: 'rgba(22,163,74,0.15)', borderRadius: 99, border: '1px solid rgba(22,163,74,0.3)' }}>
             <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--color-success)', animation: 'pulse-dot 2s ease-in-out infinite' }} />
             <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-success)', letterSpacing: '0.08em', fontFamily: 'var(--font-mono)' }}>
-              CLIENT EXPORT READY
+              BACKEND EXPORTS
             </span>
           </div>
         </div>
@@ -213,7 +179,7 @@ export default function Exports() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)', fontSize: 'var(--text-body-size)', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', lineHeight: 1.65 }}>
           <p style={{ margin: 0 }}>Fare observation exports include <strong style={{ color: 'var(--color-text-primary)' }}>data_origin</strong> on every row — only <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>REAL</code> and <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>OFFICIAL</code> records enter live analytical exports.</p>
           <p style={{ margin: 0 }}>Publication IDs follow the format <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>AP-YYYY-MM-DD-NNN</code> where NNN is a daily sequence number.</p>
-          <p style={{ margin: 0 }}>If no real airfare observations exist yet (all airline sources show CHALLENGE_DETECTED), the fares export will be empty — this is correct and honest behaviour.</p>
+          <p style={{ margin: 0 }}>If no eligible records exist for an export, the backend returns an empty file instead of generated rows.</p>
         </div>
       </div>
     </div>

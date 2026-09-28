@@ -6,6 +6,7 @@ from app.core.database import AsyncSessionLocal
 from app.core.auth import require_admin, require_analyst
 from app.models.collection import CollectionRun, SourceHealth
 from app.services.collector import run_collection
+from app.services.source_health import effective_status
 
 router = APIRouter(prefix="/collections", tags=["collections"])
 
@@ -72,9 +73,11 @@ async def source_health(
                 "source_name": s.source_name,
                 "source_type": s.source_type,
                 "enabled": s.enabled,
-                "status": s.status,
+                "status": effective_status({}, s),
                 "last_attempt": s.last_attempt.isoformat() if s.last_attempt else None,
                 "last_success": s.last_success.isoformat() if s.last_success else None,
+                "last_failure": s.last_failure.isoformat() if s.last_failure else None,
+                "failure_reason": s.failure_reason,
                 "records_total": s.records_total,
                 "records_rejected": s.records_rejected,
                 "latency_ms_avg": s.latency_ms_avg,

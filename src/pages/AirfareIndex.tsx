@@ -15,29 +15,28 @@ export default function AirfareIndex() {
   const [history, setHistory] = useState<IndexHistoryResponse['observations']>([])
   const [basket, setBasket] = useState<IndexBasketRoute[]>([])
   const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState('')
   const [lastRefreshed, setLastRefreshed] = useState<string>(
     new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST'
   )
 
   async function load() {
     setLoading(true)
+    setLoadError('')
     try {
-      const [index, indexHistory, indexBasket] = await Promise.all([
+      const [indexResult, historyResult, basketResult] = await Promise.allSettled([
         apiIndexCurrent(token ?? undefined),
         apiIndexHistory(token ?? undefined) as Promise<IndexHistoryResponse>,
         apiIndexBasket(token ?? undefined),
       ])
-      setCurrent(index ?? DEFAULT_INDEX_CURRENT)
-      if (indexHistory?.observations?.length) {
-        setHistory(indexHistory.observations.filter(row => row.status === 'PUBLISHED'))
-      } else {
-        setHistory([])
+      if (indexResult.status === 'fulfilled') setCurrent(indexResult.value)
+      else {
+        setCurrent(DEFAULT_INDEX_CURRENT)
+        setLoadError('The index endpoint could not be reached. Check your session and backend connection.')
       }
-      setBasket(indexBasket?.routes ?? [])
-    } catch {
-      setCurrent(DEFAULT_INDEX_CURRENT)
-      setHistory([])
-      setBasket([])
+      setHistory(historyResult.status === 'fulfilled'
+        ? historyResult.value.observations.filter(row => row.status === 'PUBLISHED') : [])
+      setBasket(basketResult.status === 'fulfilled' ? basketResult.value.routes : [])
     } finally {
       setLoading(false)
       setLastRefreshed(
@@ -52,7 +51,7 @@ export default function AirfareIndex() {
     : current.covered_routes_count != null && current.required_routes
       ? `${current.covered_routes_count}/${current.required_routes}`
       : '—'
-  const currentStatusLabel = isPublished ? 'PUBLISHED · REAL' : current.status === 'INSUFFICIENT_DATA' ? 'AWAITING VERIFIED DATA' : 'NO VERIFIED INDEX'
+  const currentStatusLabel = isPublished ? 'PUBLISHED · VERIFIED FARES' : current.status === 'INSUFFICIENT_DATA' ? 'AWAITING VERIFIED DATA' : 'NO VERIFIED INDEX'
 
   useEffect(() => {
     void load()
@@ -113,7 +112,7 @@ export default function AirfareIndex() {
               <span className={isPublished ? 'ap-badge ap-badge-real' : 'ap-badge ap-badge-gen'}>{currentStatusLabel}</span>
             </div>
             <p style={{ margin: 0, fontSize: 13, color: 'var(--color-text-secondary)' }}>
-              Matched-sample Jevons elementary aggregate index across India&apos;s 12 major trunk corridors.
+              Matched-sample Jevons index for observed basket routes; not an official national price index.
             </p>
           </div>
         </div>
@@ -144,7 +143,7 @@ export default function AirfareIndex() {
             style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 18px', fontSize: 12 }}
           >
             <RefreshCw size={14} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
-            {loading ? 'Recalculating…' : 'Recalculate Index'}
+            {loading ? 'Loading…' : 'Refresh Index'}
           </button>
         </div>
       </div>
@@ -167,7 +166,7 @@ export default function AirfareIndex() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
               <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#38bdf8', boxShadow: '0 0 10px #38bdf8' }} />
               <span style={{ fontSize: 11, letterSpacing: '0.14em', color: '#93c5fd', fontWeight: 800, fontFamily: 'var(--font-mono)' }}>
-                CURRENT ALL-INDIA COMPOSITE
+                OBSERVED ROUTE-BASKET COMPOSITE
               </span>
             </div>
             <div style={{ fontSize: 64, fontWeight: 900, fontFamily: 'var(--font-mono)', lineHeight: 1, letterSpacing: '-0.03em' }}>
@@ -185,7 +184,7 @@ export default function AirfareIndex() {
 
           <div style={{ borderLeft: '1px solid rgba(255,255,255,0.12)', paddingLeft: 36 }}>
             <div style={{ fontSize: 14, lineHeight: 1.65, color: '#cbd5e1', marginBottom: 16 }}>
-              {current.message}
+              {loadError || current.message || 'Calculated from matched, verified fare observations. See the coverage and observation period below.'}
             </div>
             <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
               <div>
@@ -205,14 +204,14 @@ export default function AirfareIndex() {
 
           <div style={{ textAlign: 'right' }}>
             <div style={{ padding: '8px 14px', borderRadius: 8, background: 'rgba(56,189,248,0.15)', border: '1px solid rgba(56,189,248,0.3)', color: '#38bdf8', fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', marginBottom: 8 }}>
-              REFRESHED: {lastRefreshed}
+              VIEW LOADED: {lastRefreshed}
             </div>
-            <div style={{ fontSize: 11, color: '#64748b' }}>Next publication in: 15 min</div>
+            <div style={{ fontSize: 11, color: '#94a3b8' }}>Observation period: {current.observation_period ?? 'not published'}</div>
           </div>
         </div>
       </div>
 
-      {/* ── Published Quarterly History Table ── */}
+      {/* ── Published daily history table ── */}
       <div className="ap-card" style={{ padding: 'var(--space-2xl)' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
           <div>
@@ -220,7 +219,7 @@ export default function AirfareIndex() {
               Historical Index Series & Trends
             </h2>
             <p style={{ margin: 0, fontSize: 12, color: 'var(--color-text-secondary)' }}>
-              Quarterly published matched-sample indices with observation counts and audit status.
+              One latest published value per observed day, with sample counts and provenance.
             </p>
           </div>
         </div>
@@ -230,7 +229,7 @@ export default function AirfareIndex() {
             <tr>
               <th>Period</th>
               <th>Index Value</th>
-              <th>Quarterly Change</th>
+              <th>Change vs prior period</th>
               <th>Route Basket</th>
               <th>Sample Observations</th>
               <th>Data Provenance</th>
@@ -286,7 +285,7 @@ export default function AirfareIndex() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
           <Layers size={18} style={{ color: 'var(--color-brand-primary)' }} />
           <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: 'var(--color-text-primary)' }}>
-            DGCA Domestic Route Weights in Basket
+            Configured Route Basket — Not DGCA Weights
           </h2>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>

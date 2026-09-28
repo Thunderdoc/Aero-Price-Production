@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from datetime import datetime, timezone
 from app.core.database import get_db
-from app.core.auth import require_admin, get_current_user, DEMO_USERS, oauth2_optional_scheme
+from app.core.auth import require_admin, get_current_user, require_admin_or_local, oauth2_optional_scheme
 from app.core.config import settings
 from app.models.user import AuditLog, User
 from app.models.fare import FareObservation
@@ -37,15 +37,6 @@ class AccessDecision(BaseModel):
     rejection_reason: str | None = Field(default=None, max_length=2000)
 
 
-async def require_admin_or_local(token: str | None = Depends(oauth2_optional_scheme)):
-    if not token and not settings.is_production:
-        return {"email": "local-admin", "role": "ADMIN", "plan": "ADMIN", "name": "Local Admin"}
-    if not token:
-        from fastapi import HTTPException, status
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
-    return await get_current_user(token)
-
-
 def _firebase_users():
     """Read Firebase Auth users when the Admin SDK is configured server-side."""
     try:
@@ -54,21 +45,35 @@ def _firebase_users():
         if not firebase_admin:
             return None
         from firebase_admin import auth
-        users = []
+        users_by_email = {}
+        admin_emails = {
+            email.strip().lower()
+            for email in settings.FIREBASE_ADMIN_EMAILS.split(",")
+            if email.strip()
+        }
+        analyst_emails = {
+            email.strip().lower()
+            for email in settings.FIREBASE_ANALYST_EMAILS.split(",")
+            if email.strip()
+        }
         page = auth.list_users()
         while page:
             for record in page.users:
+                email = (record.email or "").strip().lower()
+                if not email:
+                    continue
                 last_login = record.user_metadata.last_sign_in_timestamp
-                users.append({
-                    "email": record.email or "",
-                    "role": "ADMIN" if record.email == "admin@aeroprice.in" else "PUBLIC",
-                    "plan": "ADMIN" if record.email == "admin@aeroprice.in" else "FREE",
-                    "name": record.display_name or record.email or "Firebase User",
+                role = "ADMIN" if email in admin_emails else "ANALYST" if email in analyst_emails else "PUBLIC"
+                users_by_email[email] = {
+                    "email": email,
+                    "role": role,
+                    "plan": "ADMIN" if role == "ADMIN" else "GOVERNMENT" if role == "ANALYST" else "FREE",
+                    "name": record.display_name or email or "Firebase User",
                     "is_active": not record.disabled,
                     "last_login": datetime.fromtimestamp(last_login / 1000, timezone.utc).isoformat() if last_login else None,
-                })
+                }
             page = page.get_next_page() if page.has_next_page else None
-        return users
+        return list(users_by_email.values())
     except Exception:
         return None
 
@@ -81,11 +86,20 @@ async def list_users(
     firebase_users = _firebase_users()
     if firebase_users is not None:
         return {"users": firebase_users, "total": len(firebase_users), "source": "firebase"}
-    rows = (await db.execute(select(User).order_by(User.created_at.desc()))).scalars().all()
+    try:
+        rows = (await db.execute(select(User).order_by(User.created_at.desc()))).scalars().all()
+    except Exception:
+        # A fresh deployment may receive this request before its first
+        # migration. Return the safe demo fallback instead of a 500.
+        rows = []
     if rows:
-        return {"users": [{"email": row.email, "role": row.role, "plan": row.plan, "name": row.name, "is_active": row.is_active, "last_login": row.last_login.isoformat() if row.last_login else None} for row in rows], "total": len(rows)}
-    users = [{"email": email, "role": info["role"], "plan": info["plan"], "name": info["name"], "is_active": True, "last_login": None} for email, info in DEMO_USERS.items()]
-    return {"users": users, "total": len(users), "note": "Showing configured demo users; persistent users will appear when registered in the backend."}
+        return {"users": [{"email": row.email, "role": row.role, "plan": row.plan, "name": row.name, "is_active": row.is_active, "last_login": row.last_login.isoformat() if row.last_login else None} for row in rows], "total": len(rows), "source": "local_database"}
+    return {
+        "users": [],
+        "total": 0,
+        "source": "local_database",
+        "note": "No Firebase or local database users are available. Demo accounts are not included in admin user management.",
+    }
 
 
 @router.post("/admin/feedback")
@@ -311,4 +325,26 @@ async def system_metrics(
         "note": "Verified aggregator fares are available. Direct airline sites may remain unavailable without authorized NDC access."
                 if obs_count else "No verified live fares have been collected yet.",
         "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.get("/admin/system-parameters")
+async def system_parameters(current_user=Depends(require_admin)):
+    """Read-only values actually used by the running backend algorithms."""
+    from app.services.anomaly_detector import Z_THRESHOLD, MIN_SAMPLE_FOR_ZSCORE
+    from app.services.forecast_engine import MIN_OBS_FOR_FORECAST
+    from app.services.index_engine import MIN_CORRIDORS_TO_PUBLISH, MIN_OBS_PER_CORRIDOR
+    from app.services.source_health import LIVE_FRESHNESS
+
+    return {
+        "mode": "READ_ONLY",
+        "note": "These are backend code settings. Editing browser fields does not change collection or analytics.",
+        "parameters": [
+            {"key": "anomaly_zscore", "label": "Anomaly Z-score threshold", "value": Z_THRESHOLD, "unit": "σ"},
+            {"key": "anomaly_min_sample", "label": "Minimum observations for anomaly detection", "value": MIN_SAMPLE_FOR_ZSCORE, "unit": "quotes"},
+            {"key": "min_corridors_index", "label": "Minimum matched corridors for index", "value": MIN_CORRIDORS_TO_PUBLISH, "unit": "routes"},
+            {"key": "min_fares_per_corridor", "label": "Minimum fares per index corridor", "value": MIN_OBS_PER_CORRIDOR, "unit": "quotes"},
+            {"key": "min_daily_forecast", "label": "Minimum daily observations for forecast", "value": MIN_OBS_FOR_FORECAST, "unit": "days"},
+            {"key": "source_live_freshness", "label": "Provider live-status freshness window", "value": LIVE_FRESHNESS.total_seconds() / 3600, "unit": "hours"},
+        ],
     }

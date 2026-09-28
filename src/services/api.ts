@@ -25,6 +25,16 @@ export const BASE_URL = import.meta.env.DEV
 // correctly rejects that token.
 export const AUTH_EXPIRED_EVENT = 'aeroprice:auth-expired'
 
+function isFirebaseIdToken(token?: string): boolean {
+  if (!token) return false
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
+    return typeof payload?.iss === 'string' && payload.iss.includes('securetoken.google.com')
+  } catch {
+    return false
+  }
+}
+
 // ── Auth ───────────────────────────────────────────────────────────────────
 
 export interface ApiUser {
@@ -48,6 +58,19 @@ export async function apiLogin(email: string, password: string): Promise<TokenRe
     body: form.toString(),
   })
   if (!resp.ok) throw new Error('Invalid credentials')
+  return resp.json()
+}
+
+export async function apiFirebaseLogin(idToken: string): Promise<TokenResponse> {
+  const resp = await fetch(`${BASE_URL}/api/auth/firebase`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id_token: idToken }),
+  })
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => null) as { detail?: string } | null
+    throw new Error(body?.detail || `Firebase session verification failed (${resp.status})`)
+  }
   return resp.json()
 }
 
@@ -76,8 +99,8 @@ async function apiFetch<T>(path: string, token?: string, init?: RequestInit): Pr
     cache: 'no-store',
     headers: { ...authHeaders(token), ...(init?.headers ?? {}) },
   })
-  if (resp.status === 401 && typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT))
+  if (resp.status === 401 && typeof window !== 'undefined' && !isFirebaseIdToken(token)) {
+    window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { token } }))
   }
   if (!resp.ok) {
     const text = await resp.text().catch(() => resp.statusText)
@@ -101,6 +124,21 @@ export interface HealthResponse {
 
 export async function apiHealth(): Promise<HealthResponse> {
   return apiFetch('/api/health')
+}
+
+export async function apiDownload(path: string, token?: string): Promise<Blob> {
+  const resp = await fetch(`${BASE_URL}${path}`, {
+    cache: 'no-store',
+    headers: authHeaders(token),
+  })
+  if (resp.status === 401 && typeof window !== 'undefined' && !isFirebaseIdToken(token)) {
+    window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { token } }))
+  }
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => resp.statusText)
+    throw new Error(`API ${path}: ${resp.status} ${text}`)
+  }
+  return resp.blob()
 }
 
 // ── Dashboard ──────────────────────────────────────────────────────────────
@@ -211,6 +249,33 @@ export async function apiFares(
   return apiFetch(`/api/fares?${qs}`, token)
 }
 
+export interface AirlineFareStats {
+  observations: number
+  average_fare: number
+  minimum_fare: number
+  maximum_fare: number
+  latest_collected_at: string | null
+}
+
+export interface AirlineFareSummary extends AirlineFareStats {
+  name: string
+  routes: number
+  share_of_observed_quotes_pct: number
+  route_details: Array<AirlineFareStats & { route: string }>
+  booking_windows: Array<AirlineFareStats & { advance_days: number }>
+}
+
+export interface AirlineFaresResponse {
+  status: 'STORED_OBSERVATIONS' | 'NO_DATA'
+  total_observations: number
+  basis: string
+  airlines: AirlineFareSummary[]
+}
+
+export async function apiAirlineFares(token?: string): Promise<AirlineFaresResponse> {
+  return apiFetch('/api/fares/airlines/summary', token)
+}
+
 export async function apiLiveFares(route: string, travelDate: string, token?: string): Promise<{
   status: string
   provider_status: string
@@ -227,6 +292,29 @@ export async function apiLiveFares(route: string, travelDate: string, token?: st
 
 export async function apiFareSummary(route: string, token?: string) {
   return apiFetch(`/api/fares/summary/${route}`, token)
+}
+
+export interface RouteBasketItem {
+  route: string
+  origin: string
+  destination: string
+  origin_name: string
+  destination_name: string
+  observations_7d: number
+  has_data: boolean
+  status: string
+}
+
+export interface RouteBasketResponse {
+  routes: RouteBasketItem[]
+  total: number
+  advance_windows: number[]
+  basket_version: string
+  timestamp: string
+}
+
+export async function apiRouteBasket(token?: string): Promise<RouteBasketResponse> {
+  return apiFetch('/api/routes', token)
 }
 
 export interface ForecastResponse {
@@ -322,7 +410,10 @@ export interface SourceApi {
   name: string
   type: string
   status: string
+  api_available?: boolean
   challenge_reason?: string
+  note?: string
+  registration_url?: string
   robots_txt?: string
   captcha_detected?: boolean
   records_total?: number
@@ -331,7 +422,7 @@ export interface SourceApi {
   latency_ms_avg?: number
 }
 
-export async function apiSources(token?: string): Promise<{ airfare: SourceApi[]; government: SourceApi[] }> {
+export async function apiSources(token?: string): Promise<{ airfare?: SourceApi[]; government?: SourceApi[]; airfare_sources?: SourceApi[]; government_sources?: SourceApi[]; live_count?: number; total_count?: number }> {
   return apiFetch('/api/sources', token)
 }
 
@@ -410,12 +501,12 @@ export async function apiCollections(token?: string) {
   return apiFetch('/api/collections', token)
 }
 
-export async function apiTriggerCollection(token?: string) {
+export async function apiTriggerCollection(token?: string): Promise<{ status: string; message: string }> {
   return apiFetch('/api/collections/trigger', token, { method: 'POST' })
 }
 
 export async function apiSourceHealth(token?: string) {
-  return apiFetch('/api/source-health', token)
+  return apiFetch('/api/collections/source-health', token)
 }
 
 // ── Admin ──────────────────────────────────────────────────────────────────
@@ -482,6 +573,16 @@ export async function apiAuditLog(token: string, limit = 50) {
 
 export async function apiSystemMetrics(token: string): Promise<{ hasAnyConfiguredApi?: boolean; [key: string]: any }> {
   return apiFetch('/api/admin/system-metrics', token)
+}
+
+export interface SystemParametersResponse {
+  mode: 'READ_ONLY'
+  note: string
+  parameters: Array<{ key: string; label: string; value: number; unit: string }>
+}
+
+export async function apiSystemParameters(token?: string): Promise<SystemParametersResponse> {
+  return apiFetch('/api/admin/system-parameters', token)
 }
 
 // ── Backend availability check ─────────────────────────────────────────────

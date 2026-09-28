@@ -9,9 +9,8 @@ import {
 import DataStatusBanner from './DataStatusBanner'
 import { useAuth, canAccess, type UserRole, type UserPlan } from '../contexts/AuthContext'
 import { useGovData } from '../hooks/useGovData'
-import { corridors } from '../data/sampleData'
 import UserSupportModal from './UserSupportModal'
-import { apiHealth, apiNotifications } from '../services/api'
+import { apiHealth, apiNotifications, apiRouteBasket } from '../services/api'
 import { useAviationRadar } from '../services/aviationRadar'
 import type { AviationPanel } from '../pages/AviationLive'
 
@@ -25,7 +24,7 @@ export type Page =
 // ── Portal definitions ─────────────────────────────────────────────────────
 export type Portal = 'gov' | 'admin' | 'aviation'
 
-export type AdminTab = 'pipeline' | 'users' | 'access' | 'feedback' | 'audit' | 'config'
+export type AdminTab = 'overview' | 'pipeline' | 'users' | 'access' | 'feedback' | 'audit' | 'config' | 'health'
 interface NavItem { page: Page; icon: typeof Home; label: string; badge?: string; minRole?: 'ANALYST' | 'ADMIN' | 'SUBSCRIBER'; supportAction?: 'settings' | 'help' | 'feedback'; section?: string; aviationAction?: AviationPanel; adminTab?: AdminTab }
 interface LocalNotification { id: string; email?: string; title: string; message: string; createdAt: string; read?: boolean }
 
@@ -50,16 +49,20 @@ const govNav: NavItem[] = [
 
 // Admin Control Center
 const adminNav: NavItem[] = [
-  { page: 'admin',      icon: Shield,    label: 'Overview',          minRole: 'ADMIN', adminTab: 'pipeline' },
+  { page: 'admin',      icon: Shield,    label: 'Overview',          minRole: 'ADMIN', adminTab: 'overview' },
   { page: 'sources',    icon: Database,  label: 'Data Sources',      minRole: 'ADMIN' },
   { page: 'collection', icon: Activity,  label: 'Collection Jobs',   minRole: 'ADMIN' },
-  { page: 'collection', icon: Route,     label: 'Data Pipelines',    minRole: 'ADMIN' },
+  // Collection Jobs is the standalone collection screen. Data Pipelines is
+  // the admin dashboard's pipeline tab; keeping distinct pages prevents both
+  // navigation rows from appearing active at the same time.
+  { page: 'admin',      icon: Route,     label: 'Data Pipelines',    minRole: 'ADMIN', adminTab: 'pipeline' },
   { page: 'admin',      icon: Users,     label: 'User Management',   minRole: 'ADMIN', adminTab: 'users' },
   { page: 'admin',      icon: Shield,    label: 'Access Requests',   minRole: 'ADMIN', adminTab: 'access' },
+  { page: 'admin',      icon: MessageSquare, label: 'Feedback',       minRole: 'ADMIN', adminTab: 'feedback' },
   { page: 'admin',      icon: BookOpen,  label: 'Audit Trail',       minRole: 'ADMIN', adminTab: 'audit' },
   { page: 'admin',      icon: Settings,  label: 'System Parameters', minRole: 'ADMIN', adminTab: 'config' },
   { page: 'exports',    icon: Download,  label: 'Reports & Exports', minRole: 'ADMIN' },
-  { page: 'admin',      icon: Activity,  label: 'System Health',     minRole: 'ADMIN', adminTab: 'pipeline' },
+  { page: 'admin',      icon: Activity,  label: 'System Health',     minRole: 'ADMIN', adminTab: 'health' },
 ]
 
 // Aviation Intelligence
@@ -197,6 +200,7 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [notifications, setNotifications] = useState<LocalNotification[]>([])
   const [fareFeed, setFareFeed] = useState<{ connected: boolean; live: boolean; observations: number | null }>({ connected: false, live: false, observations: null })
+  const [routeSearchCodes, setRouteSearchCodes] = useState<string[]>([])
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('aeroprice_theme') === 'dark')
   const [adminNavKey, setAdminNavKey] = useState(() => sessionStorage.getItem('admin-nav-key') || 'Overview')
   const searchRef = useRef<HTMLDivElement>(null)
@@ -264,6 +268,18 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
 
   useEffect(() => {
     let active = true
+    if (!token) {
+      setRouteSearchCodes([])
+      return () => { active = false }
+    }
+    apiRouteBasket(token)
+      .then(result => { if (active) setRouteSearchCodes(result.routes.map(route => route.route)) })
+      .catch(() => { if (active) setRouteSearchCodes([]) })
+    return () => { active = false }
+  }, [token])
+
+  useEffect(() => {
+    let active = true
     apiHealth()
       .then(health => {
         if (active) setFareFeed({
@@ -303,7 +319,7 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
   const searchMatches = searchQuery.trim().length >= 2
     ? [
         ...activeNav.filter(isVisible).filter(item => !item.supportAction).map(item => ({ key: `page-${item.label}`, title: item.label, sub: derivedPortal.toUpperCase(), page: item.page })),
-        ...corridors.map(c => ({ key: `route-${c.id}`, title: `${c.from} → ${c.to}`, sub: 'Route Explorer', page: 'routes' as Page })),
+        ...routeSearchCodes.map(route => ({ key: `route-${route}`, title: route, sub: 'Route Explorer', page: 'routes' as Page })),
         ...radar.aircraft.map(a => ({ key: `air-${a.icao24 || a.callsign}`, title: a.callsign || a.registration || a.icao24.toUpperCase(), sub: `${a.registration || 'Aircraft'} · Live Flight Map`, page: 'aviationlive' as Page })),
         ...['DEL','BOM','BLR','MAA','CCU','HYD','AMD','GAU'].map(code => ({ key: `apt-${code}`, title: code, sub: 'Airport reference', page: 'aviationlive' as Page })),
       ].filter(item => `${item.title} ${item.sub}`.toLowerCase().includes(searchQuery.toLowerCase())).slice(0, 7)
@@ -373,7 +389,7 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
             </div>
           </div>
           {/* Role badge */}
-          <div role={role === 'ADMIN' ? 'button' : undefined} tabIndex={role === 'ADMIN' ? 0 : undefined} onClick={event => { if (role === 'ADMIN') { event.stopPropagation(); setAdminNavKey('Overview'); sessionStorage.setItem('admin-nav-key', 'Overview'); sessionStorage.setItem('admin-tab', 'pipeline'); navClick('admin'); window.dispatchEvent(new CustomEvent('admin-nav', { detail: 'Overview' })); window.dispatchEvent(new CustomEvent('admin-tab', { detail: 'pipeline' })) } }} onKeyDown={event => { if (role === 'ADMIN' && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); event.stopPropagation(); setAdminNavKey('Overview'); sessionStorage.setItem('admin-nav-key', 'Overview'); sessionStorage.setItem('admin-tab', 'pipeline'); navClick('admin'); window.dispatchEvent(new CustomEvent('admin-nav', { detail: 'Overview' })); window.dispatchEvent(new CustomEvent('admin-tab', { detail: 'pipeline' })) } }} title={role === 'ADMIN' ? 'Open Admin Control Center' : undefined} style={{
+          <div role={role === 'ADMIN' ? 'button' : undefined} tabIndex={role === 'ADMIN' ? 0 : undefined} onClick={event => { if (role === 'ADMIN') { event.stopPropagation(); setAdminNavKey('Overview'); sessionStorage.setItem('admin-nav-key', 'Overview'); sessionStorage.setItem('admin-tab', 'overview'); navClick('admin'); window.dispatchEvent(new CustomEvent('admin-nav', { detail: 'Overview' })); window.dispatchEvent(new CustomEvent('admin-tab', { detail: 'overview' })) } }} onKeyDown={event => { if (role === 'ADMIN' && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); event.stopPropagation(); setAdminNavKey('Overview'); sessionStorage.setItem('admin-nav-key', 'Overview'); sessionStorage.setItem('admin-tab', 'overview'); navClick('admin'); window.dispatchEvent(new CustomEvent('admin-nav', { detail: 'Overview' })); window.dispatchEvent(new CustomEvent('admin-tab', { detail: 'overview' })) } }} title={role === 'ADMIN' ? 'Open Admin Control Center' : undefined} style={{
             display: 'inline-flex', alignItems: 'center', gap: 5,
             padding: '3px 9px',
             background: roleBadge.bg,

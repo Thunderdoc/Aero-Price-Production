@@ -376,6 +376,7 @@ html, body, #root { min-width: 0; }
 .admin-empty-state svg { width: 42px; height: 42px; padding: 10px; border-radius: 12px; color: var(--color-brand-primary); background: var(--color-brand-muted); }
 .admin-empty-state strong { color: var(--color-text-primary); font-size: 15px; }
 .admin-empty-state span { max-width: 420px; color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }
+.admin-empty-state .spin { animation: spin 1s linear infinite; }
 .admin-tab-surface { box-shadow: 0 6px 20px rgba(25,71,130,.05); }
 .admin-tab-toolbar { min-height: 56px; align-items: center; background: var(--color-surface-secondary); }
 .admin-table-scroll { overflow-x: auto; }

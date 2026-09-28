@@ -44,6 +44,11 @@ export type GovSourceStatus =
   | 'AUTH_REQUIRED'
 
 export type AirfareSourceStatus =
+  | 'LIVE'
+  | 'CONFIGURED'
+  | 'STALE_DATA'
+  | 'DEGRADED'
+  | 'NO_DATA'
   | 'CHALLENGE_DETECTED'
   | 'SOURCE_BLOCKED'
   | 'AUTH_REQUIRED'
@@ -77,7 +82,7 @@ export interface AirfareSource {
   source_url: string
   status: AirfareSourceStatus
   status_reason: string
-  robots_txt: 'DISALLOWED' | 'ALLOWED' | 'UNKNOWN'
+  robots_txt: 'DISALLOWED' | 'ALLOWED' | 'UNKNOWN' | 'PUBLIC_INTERFACE'
   captcha_detected: boolean
   api_available: boolean
   last_attempt: string | null

@@ -84,6 +84,7 @@ export default function PriceAlerts({ onNavigate }: { onNavigate?: (page: Page) 
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
+    if (!user?.email) return
     const newAlert: UserPriceAlert = {
       id: `alert-${Date.now()}`,
       route: `${form.from}-${form.to}`,
@@ -98,7 +99,7 @@ export default function PriceAlerts({ onNavigate }: { onNavigate?: (page: Page) 
       return next
     })
     if (SUPABASE_CONFIGURED) {
-      await savePriceAlert({ user_email: user?.email ?? 'demo@aeroprice.in', route: newAlert.route, threshold_fare: form.threshold })
+      await savePriceAlert({ user_email: user.email, route: newAlert.route, threshold_fare: form.threshold })
     }
     setShowCreate(false)
     setForm(INITIAL_FORM)
@@ -111,7 +112,7 @@ export default function PriceAlerts({ onNavigate }: { onNavigate?: (page: Page) 
       return next
     })
     if (SUPABASE_CONFIGURED) {
-      await supabase.from('price_alerts').delete().eq('route', route).eq('user_email', user?.email ?? 'demo@aeroprice.in')
+      if (user?.email) await supabase.from('price_alerts').delete().eq('route', route).eq('user_email', user.email)
     }
   }
 
@@ -160,10 +161,12 @@ export default function PriceAlerts({ onNavigate }: { onNavigate?: (page: Page) 
     <div style={{ maxWidth: 900, fontFamily: 'var(--font-sans)', display: 'flex', flexDirection: 'column', gap: 20 }}>
 
       {/* Data source notice */}
-      <div style={{ background: 'var(--color-success-bg)', border: '1px solid rgba(22,163,74,0.25)', borderRadius: 10, padding: '12px 16px', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+      <div style={{ background: SUPABASE_CONFIGURED ? 'var(--color-success-bg)' : 'var(--color-warning-bg)', border: `1px solid ${SUPABASE_CONFIGURED ? 'rgba(22,163,74,0.25)' : 'rgba(217,119,6,0.28)'}`, borderRadius: 10, padding: '12px 16px', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
         <CheckCircle size={14} style={{ color: 'var(--color-success)', flexShrink: 0, marginTop: 1 }} />
         <span style={{ fontSize: 12, color: 'var(--color-text-primary)' }}>
-          <strong style={{ color: 'var(--color-success)' }}>CONTINUOUS SURVEILLANCE ACTIVE</strong> — Price alert triggers are dynamically synced with DGCA corridor benchmarks and live multi-carrier flight offers.
+          <strong style={{ color: SUPABASE_CONFIGURED ? 'var(--color-success)' : '#b45309' }}>{SUPABASE_CONFIGURED ? 'PERSISTENT ALERT STORAGE ACTIVE' : 'LOCAL ALERT STORAGE ONLY'}</strong> — {SUPABASE_CONFIGURED
+            ? 'Alerts are saved persistently and can trigger when matching verified fare observations are available.'
+            : 'No alert database is configured. Alerts remain in this browser and automatic email delivery is unavailable.'}
         </span>
       </div>
 
@@ -211,7 +214,7 @@ export default function PriceAlerts({ onNavigate }: { onNavigate?: (page: Page) 
                     {alert.route.replace('-', ' → ')}
                   </span>
                   <Badge
-                    label={isTriggered ? 'TRIGGERED' : 'MONITORING · LIVE FEED'}
+                    label={isTriggered ? 'TRIGGERED' : 'MONITORING VERIFIED DATA'}
                     variant={isTriggered ? 'success' : 'warning'}
                   />
                 </div>
@@ -222,7 +225,7 @@ export default function PriceAlerts({ onNavigate }: { onNavigate?: (page: Page) 
                   </div>
                   <div>
                     <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-text-tertiary)', letterSpacing: '0.1em', marginBottom: 4 }}>CURRENT OBS.</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>{alert.currentFare == null ? 'No verified live fare yet' : `₹${alert.currentFare.toLocaleString('en-IN')}`}</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>{alert.currentFare == null ? 'No verified fare yet' : `₹${alert.currentFare.toLocaleString('en-IN')}`}</div>
                   </div>
                   <div>
                     <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-text-tertiary)', letterSpacing: '0.1em', marginBottom: 4 }}>CREATED</div>

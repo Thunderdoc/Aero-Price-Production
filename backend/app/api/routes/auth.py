@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
 from app.core.auth import authenticate_user, create_access_token, get_password_hash, verify_password
+from app.core.firebase_tokens import verify_firebase_identity
 from app.core.database import get_db
 from app.models.auth_account import AuthAccount
 
@@ -25,6 +26,20 @@ class RegistrationRequest(BaseModel):
     name: str
     email: str
     password: str
+
+class FirebaseLoginRequest(BaseModel):
+    id_token: str
+
+@router.post("/firebase", response_model=TokenResponse)
+async def firebase_login(payload: FirebaseLoginRequest):
+    """Exchange a verified Firebase ID token for an API token.
+
+    API endpoints use the app's own JWT so Firebase sign-in and backend
+    authorization share one stable session.
+    """
+    identity = await verify_firebase_identity(payload.id_token)
+    token = create_access_token(data={"sub": identity["email"], **identity})
+    return TokenResponse(access_token=token, user=identity)
 
 
 @router.post("/token", response_model=TokenResponse)

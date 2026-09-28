@@ -7,25 +7,15 @@ from app.core.database import get_db
 from app.core.auth import get_current_user, require_analyst
 from app.models.index import IndexObservation, IndexPublication, RouteBasket
 from app.models.fare import FareObservation
+from app.services.collector import ROUTE_BASKET as COLLECTION_ROUTE_BASKET
+from app.services.index_engine import MIN_CORRIDORS_TO_PUBLISH
 
 router = APIRouter(prefix="/index", tags=["index"])
 
 ROUTE_BASKET = [
-    {"route": "DEL-BOM", "region": "North-West", "weight": 1.0, "weight_source": "CONFIGURED"},
-    {"route": "DEL-BLR", "region": "North-South", "weight": 1.0, "weight_source": "CONFIGURED"},
-    {"route": "BOM-BLR", "region": "West-South",  "weight": 0.8, "weight_source": "CONFIGURED"},
-    {"route": "DEL-CCU", "region": "North-East",  "weight": 0.7, "weight_source": "CONFIGURED"},
-    {"route": "DEL-HYD", "region": "North-South", "weight": 0.7, "weight_source": "CONFIGURED"},
-    {"route": "DEL-MAA", "region": "North-South", "weight": 0.6, "weight_source": "CONFIGURED"},
-    {"route": "BOM-CCU", "region": "West-East",   "weight": 0.6, "weight_source": "CONFIGURED"},
-    {"route": "BOM-HYD", "region": "West-South",  "weight": 0.6, "weight_source": "CONFIGURED"},
-    {"route": "BLR-CCU", "region": "South-East",  "weight": 0.5, "weight_source": "CONFIGURED"},
-    {"route": "BLR-HYD", "region": "South",       "weight": 0.5, "weight_source": "CONFIGURED"},
-    {"route": "MAA-DEL", "region": "South-North",  "weight": 0.5, "weight_source": "CONFIGURED"},
-    {"route": "MAA-BOM", "region": "South-West",   "weight": 0.5, "weight_source": "CONFIGURED"},
+    {"route": route, "region": "India", "weight": 1.0, "weight_source": "EQUAL_CONFIGURED"}
+    for route in COLLECTION_ROUTE_BASKET
 ]
-
-MIN_CORRIDORS_TO_PUBLISH = 10
 
 
 @router.get("/current")
@@ -85,7 +75,7 @@ async def current_index(
             "base_value": 100.0,
             "method": "JEVONS_MATCHED_SAMPLE",
             "version": "v1.0",
-            "data_origin": "REAL",
+            "data_origin": "DERIVED",
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -100,7 +90,7 @@ async def current_index(
         "route_count": latest.route_count,
         "observation_count": latest.observation_count,
         "coverage_pct": latest.coverage_pct,
-        "data_origin": latest.data_origin,
+        "data_origin": "DERIVED",
         "covered_routes_count": covered_routes,
         "required_routes": MIN_CORRIDORS_TO_PUBLISH,
         "real_observations": real_fare_count or 0,
@@ -117,7 +107,7 @@ async def route_basket(
     return {
         "routes": ROUTE_BASKET,
         "total": len(ROUTE_BASKET),
-        "weight_source_note": "Weights are CONFIGURED defaults. Official DGCA corridor weights will be used when available.",
+        "weight_source_note": "The current index calculation uses equal 1.0 weights for every collection route. No DGCA traffic weights are applied.",
         "min_corridors_to_publish": MIN_CORRIDORS_TO_PUBLISH,
     }
 
@@ -134,10 +124,20 @@ async def index_history(
     index history. Returning them here made the dashboard look like it had a
     broken or empty published series.
     """
+    ranked = select(
+        IndexObservation.id.label("id"),
+        func.row_number().over(
+            partition_by=IndexObservation.observation_period,
+            order_by=(IndexObservation.calculation_ts.desc(), IndexObservation.id.desc()),
+        ).label("period_rank"),
+    ).where(
+        IndexObservation.status == "PUBLISHED",
+        IndexObservation.data_origin.in_(["REAL", "OFFICIAL", "DERIVED"]),
+    ).subquery()
     rows = await db.execute(
         select(IndexObservation)
-        .where(IndexObservation.status == "PUBLISHED")
-        .where(IndexObservation.data_origin.in_(["REAL", "OFFICIAL", "DERIVED"]))
+        .join(ranked, IndexObservation.id == ranked.c.id)
+        .where(ranked.c.period_rank == 1)
         .order_by(IndexObservation.observation_period.desc())
         .limit(limit)
     )
@@ -151,7 +151,7 @@ async def index_history(
                 "status": o.status,
                 "route_count": o.route_count,
                 "observation_count": o.observation_count,
-                "data_origin": o.data_origin,
+                "data_origin": "DERIVED",
             }
             for o in obs
         ],

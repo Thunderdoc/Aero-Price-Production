@@ -1,6 +1,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import model_validator
 from typing import List
+import logging
 
 
 class Settings(BaseSettings):
@@ -11,6 +12,11 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "local-development-only-change-me"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
     ALGORITHM: str = "HS256"
+
+    # Firebase token verification and server-side role mapping
+    FIREBASE_PROJECT_ID: str = ""
+    FIREBASE_ADMIN_EMAILS: str = ""
+    FIREBASE_ANALYST_EMAILS: str = ""
 
     # Collection
     COLLECTION_INTERVAL_MINUTES: int = 60
@@ -83,6 +89,8 @@ class Settings(BaseSettings):
     SERPER_API_KEY: str = ""
     SERPAPI_API_KEY: str = ""
     GOOGLEFLIGHTS_WORKER_COMMAND: str = ""
+    SCRAPLING_ENABLED: bool = True
+    SCRAPLING_HEADLESS: bool = True
 
     # Data mode
     # live = only real collected/official data returned
@@ -111,6 +119,42 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.ENVIRONMENT == "production"
+
+    @property
+    def amadeus_configured(self) -> bool:
+        return bool(self.AMADEUS_API_KEY.strip() and self.AMADEUS_API_SECRET.strip())
+
+    @property
+    def duffel_configured(self) -> bool:
+        return bool(self.DUFFEL_API_TOKEN.strip())
+
+    @property
+    def aviationstack_configured(self) -> bool:
+        return bool(self.AVIATIONSTACK_API_KEY.strip())
+
+    def log_credential_status(self) -> None:
+        logger = logging.getLogger(__name__)
+        if not self.COLLECTION_ENABLED:
+            logger.info("Collection enabled: False")
+            logger.warning("Collection is DISABLED")
+            return
+        configured = 0
+        if self.amadeus_configured:
+            configured += 1
+            logger.info("Amadeus API credentials configured")
+        else:
+            logger.warning("Amadeus API credentials NOT configured")
+        if self.duffel_configured:
+            configured += 1
+            logger.info("Duffel API token configured")
+        else:
+            logger.warning("Duffel API token NOT configured")
+        if self.aviationstack_configured:
+            configured += 1
+            logger.info("AviationStack API key configured")
+        logger.info(f"Total configured sources: {configured}")
+        if configured == 0:
+            logger.error("NO EXTERNAL API CREDENTIALS CONFIGURED")
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
 

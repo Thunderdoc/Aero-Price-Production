@@ -6,6 +6,7 @@ import os
 from app.core.database import get_db
 from app.models.fare import FareObservation
 from app.models.collection import CollectionRun, SourceHealth
+from app.services.source_health import is_live_now
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -19,18 +20,17 @@ async def health_check(db: AsyncSession = Depends(get_db)):
     except Exception:
         db_ok = False
 
-    fare_count = await db.scalar(
-        select(func.count()).select_from(FareObservation)
-        .where(FareObservation.data_origin.in_(["REAL", "OFFICIAL"]))
-    )
-    last_run = await db.scalar(
-        select(CollectionRun.ended_at)
-        .order_by(CollectionRun.started_at.desc())
-        .limit(1)
-    )
-    sources = await db.execute(select(SourceHealth))
-    source_rows = sources.scalars().all()
-    live_sources = sum(1 for s in source_rows if s.status == "LIVE")
+    try:
+        fare_count = await db.scalar(select(func.count()).select_from(FareObservation).where(FareObservation.data_origin.in_(["REAL", "OFFICIAL"])))
+        last_run = await db.scalar(select(CollectionRun.ended_at).order_by(CollectionRun.started_at.desc()).limit(1))
+        sources = await db.execute(select(SourceHealth))
+        source_rows = sources.scalars().all()
+    except Exception:
+        # Health must remain useful during first boot, before migrations create
+        # the application tables.
+        db_ok = False
+        fare_count, last_run, source_rows = 0, None, []
+    live_sources = sum(1 for s in source_rows if is_live_now(s))
     snapshot_fallback = os.getenv("AEROPRICE_SNAPSHOT_FALLBACK") == "1"
 
     return {

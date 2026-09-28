@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
-import { apiLogin, apiRegister, AUTH_EXPIRED_EVENT } from '../services/api'
+import { apiFirebaseLogin, apiLogin, apiRegister, AUTH_EXPIRED_EVENT } from '../services/api'
 
 export type UserRole = 'PUBLIC' | 'ANALYST' | 'ADMIN'
 export type UserPlan = 'FREE' | 'SUBSCRIBER' | 'GOVERNMENT' | 'ADMIN'
@@ -18,7 +18,7 @@ interface AuthContextValue {
   user: AuthUser | null
   token: string | null
   login: (email: string, password: string, remember?: boolean) => Promise<{ success: boolean; error?: string; user?: AuthUser }>
-  loginWithGoogle: (workspace?: AuthWorkspace) => Promise<{ success: boolean; error?: string }>
+  loginWithGoogle: (workspace?: AuthWorkspace, passwordToLink?: string) => Promise<{ success: boolean; error?: string }>
   createAccount: (name: string, email: string, password: string, workspace?: AuthWorkspace) => Promise<{ success: boolean; error?: string }>
   resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>
   logout: () => void
@@ -28,6 +28,7 @@ const STORAGE_KEY = 'aeroprice_auth'
 const TOKEN_KEY = 'aeroprice_token'
 const SESSION_STORAGE_KEY = 'aeroprice_session_auth'
 const SESSION_TOKEN_KEY = 'aeroprice_session_token'
+const FIREBASE_SESSION_KEY = 'aeroprice_firebase_session'
 
 function envEmailList(value?: string): string[] {
   return (value ?? '')
@@ -110,23 +111,63 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(loadStoredToken)
 
   useEffect(() => {
-    const handleAuthExpired = () => {
-      setUser(null)
-      setToken(null)
-      clearStoredSession()
-    }
+    // API data failures are not proof that the identity session is invalid.
+    // In particular, Firebase sessions can be valid while an optional backend
+    // endpoint is unavailable. Never eject a signed-in user from this global
+    // event; explicit logout and Firebase sign-out are the only session-clearing
+    // paths.
+    const handleAuthExpired = () => undefined
     window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired)
     return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired)
   }, [])
 
   useEffect(() => {
-    if (USE_BACKEND_AUTH) return
+    const hasFirebaseSession = localStorage.getItem(FIREBASE_SESSION_KEY) === '1' || sessionStorage.getItem(FIREBASE_SESSION_KEY) === '1'
+    if (USE_BACKEND_AUTH && !hasFirebaseSession) return
     let active = true
-    import('../services/firebase').then(async ({ getFirebaseIdToken }) => {
+    import('../services/firebase').then(async ({ getFirebaseIdToken, getGoogleRedirectResult }) => {
+      const redirectCredential = await getGoogleRedirectResult().catch(() => null)
+      if (redirectCredential?.user) {
+        const firebaseUser = redirectCredential.user
+        const email = firebaseUser.email || ''
+        const access = roleForFirebaseEmail(email)
+        const name = firebaseUser.displayName || email
+        const restoredUser: AuthUser = { name, email, role: access.role, plan: access.plan, initials: name.slice(0, 2).toUpperCase() }
+        const firebaseToken = await firebaseUser.getIdToken()
+        const pendingPassword = sessionStorage.getItem('aeroprice_pending_google_password')
+        if (pendingPassword) {
+          const { linkPasswordToCurrentFirebaseUser } = await import('../services/firebase')
+          await linkPasswordToCurrentFirebaseUser(pendingPassword).catch(() => undefined)
+          sessionStorage.removeItem('aeroprice_pending_google_password')
+        }
+        setUser(restoredUser)
+        localStorage.setItem(FIREBASE_SESSION_KEY, '1')
+        try {
+          const apiSession = await apiFirebaseLogin(firebaseToken)
+          setToken(apiSession.access_token)
+          saveStoredSession(restoredUser, apiSession.access_token, true)
+        } catch {
+          setToken(firebaseToken)
+          saveStoredSession(restoredUser, firebaseToken, true)
+        }
+        return
+      }
       const idToken = await getFirebaseIdToken()
       if (!active || !idToken) return
-      setToken(idToken)
-      localStorage.setItem(TOKEN_KEY, idToken)
+      try {
+        const apiSession = await apiFirebaseLogin(idToken)
+        if (!active) return
+        setToken(apiSession.access_token)
+        const store = localStorage.getItem(FIREBASE_SESSION_KEY) === '1' ? localStorage : sessionStorage
+        store.setItem(store === localStorage ? TOKEN_KEY : SESSION_TOKEN_KEY, apiSession.access_token)
+      } catch {
+        // Keep the refreshed Firebase token as a usable fallback if the API is
+        // temporarily unavailable; it must never invalidate the user session.
+        if (!active) return
+        setToken(idToken)
+        const store = localStorage.getItem(FIREBASE_SESSION_KEY) === '1' ? localStorage : sessionStorage
+        store.setItem(store === localStorage ? TOKEN_KEY : SESSION_TOKEN_KEY, idToken)
+      }
     }).catch(() => {
       // Keep the restored session; Firebase may be unavailable temporarily.
     })
@@ -138,6 +179,56 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     try {
       const { FIREBASE_CONFIGURED, signInFirebaseEmailUser } = await import('../services/firebase')
+      // A Firebase password-reset email must be followed by a Firebase sign-in.
+      // The previous implementation forced backend auth whenever VITE_AUTH_MODE
+      // was "backend", so a password changed through Firebase could never work.
+      // Try the configured identity provider first; backend accounts remain a
+      // supported fallback for users that do not exist in Firebase.
+      if (FIREBASE_CONFIGURED) {
+        try {
+          const credential = await signInFirebaseEmailUser(emailLower, password)
+          const firebaseUser = credential.user
+          if (!firebaseUser.emailVerified) {
+            await firebaseUser.reload()
+          }
+          if (!firebaseUser.emailVerified) {
+            return { success: false, error: 'Email is not verified. Please verify your email before signing in.' }
+          }
+          const mappedAccess = roleForFirebaseEmail(firebaseUser.email || emailLower)
+          const displayName = firebaseUser.displayName || firebaseUser.email || emailLower
+          const authedUser: AuthUser = {
+            name: displayName,
+            email: firebaseUser.email || emailLower,
+            role: mappedAccess.role,
+            plan: mappedAccess.plan,
+            initials: displayName.slice(0, 2).toUpperCase(),
+          }
+          const idToken = await firebaseUser.getIdToken()
+          const apiSession = await apiFirebaseLogin(idToken)
+          setUser(authedUser)
+          setToken(apiSession.access_token)
+          ;(remember ? localStorage : sessionStorage).setItem(FIREBASE_SESSION_KEY, '1')
+          localStorage.removeItem('aeroprice_pending_workspace')
+          saveStoredSession(authedUser, apiSession.access_token, remember)
+          return { success: true, user: authedUser }
+        } catch (firebaseError) {
+          // Google-only accounts do not have a password credential. Do not
+          // incorrectly fall through to backend auth and report "incorrect
+          // password" for a valid Google account.
+          const code = typeof firebaseError === 'object' && firebaseError && 'code' in firebaseError
+            ? String((firebaseError as { code?: string }).code)
+            : ''
+          if (code.includes('invalid-credential') || code.includes('user-not-found') || code.includes('wrong-password')) {
+            const { getFirebaseSignInMethods } = await import('../services/firebase')
+            const methods = await getFirebaseSignInMethods(emailLower).catch((): string[] => [])
+            if (methods.includes('google.com')) {
+              return { success: false, error: 'This account uses Google sign-in. Click “Continue with Google”; it does not have a separate password.' }
+            }
+          }
+          // If Firebase does not know this account, continue with backend auth.
+        }
+      }
+
       if (!FIREBASE_CONFIGURED || USE_BACKEND_AUTH) {
         const response = await apiLogin(emailLower, password)
         const displayName = response.user.name || response.user.email
@@ -153,32 +244,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         saveStoredSession(authedUser, response.access_token, remember)
         return { success: true, user: authedUser }
       }
-      const credential = await signInFirebaseEmailUser(emailLower, password)
-      const firebaseUser = credential.user
-      if (!firebaseUser.emailVerified) {
-        await firebaseUser.reload()
-      }
-      if (!firebaseUser.emailVerified) {
-        setUser(null)
-        setToken(null)
-        clearStoredSession()
-        return { success: false, error: 'Email is not verified. Please verify your Firebase email before signing in.' }
-      }
-      const mappedAccess = roleForFirebaseEmail(firebaseUser.email || emailLower)
-      const displayName = firebaseUser.displayName || firebaseUser.email || emailLower
-      const authedUser: AuthUser = {
-        name: displayName,
-        email: firebaseUser.email || emailLower,
-        role: mappedAccess.role,
-        plan: mappedAccess.plan,
-        initials: displayName.slice(0, 2).toUpperCase(),
-      }
-      setUser(authedUser)
-      const idToken = await firebaseUser.getIdToken()
-      setToken(idToken)
-      localStorage.removeItem('aeroprice_pending_workspace')
-      saveStoredSession(authedUser, idToken, remember)
-      return { success: true, user: authedUser }
+      return { success: false, error: 'Invalid email or password.' }
     } catch (firebaseErr) {
       const code = typeof firebaseErr === 'object' && firebaseErr && 'code' in firebaseErr ? String((firebaseErr as { code?: string }).code) : ''
       // Keep the deployed prototype usable when Firebase rejects a local/demo
@@ -216,35 +282,69 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function loginWithGoogle(workspace?: AuthWorkspace): Promise<{ success: boolean; error?: string }> {
+  async function loginWithGoogle(workspace?: AuthWorkspace, passwordToLink?: string): Promise<{ success: boolean; error?: string }> {
     try {
-      const { signInWithGooglePopup } = await import('../services/firebase')
+      const { signInWithGooglePopup, linkPasswordToCurrentFirebaseUser } = await import('../services/firebase')
       const credential = await signInWithGooglePopup()
       const firebaseUser = credential.user
       const email = firebaseUser.email || ''
-      const mappedAccess = roleForWorkspace(email, workspace)
-      const displayName = firebaseUser.displayName || firebaseUser.email || 'Google User'
+      const access = roleForWorkspace(email, workspace)
+      const name = firebaseUser.displayName || email
       const authedUser: AuthUser = {
-        name: displayName,
+        name,
         email,
-        role: mappedAccess.role,
-        plan: mappedAccess.plan,
-        initials: displayName.slice(0, 2).toUpperCase(),
+        role: access.role,
+        plan: access.plan,
+        initials: name.slice(0, 2).toUpperCase(),
       }
-      setUser(authedUser)
+
+      if (passwordToLink && passwordToLink.length >= 6) {
+        try {
+          await linkPasswordToCurrentFirebaseUser(passwordToLink)
+        } catch (linkError) {
+          const linkCode = typeof linkError === 'object' && linkError && 'code' in linkError
+            ? String((linkError as { code?: string }).code)
+            : ''
+          // A Google account that already has an email/password provider is
+          // fully usable. Do not turn this harmless duplicate-link condition
+          // into a failed Google/admin login.
+          if (!linkCode.includes('provider-already-linked') && !linkCode.includes('credential-already-in-use')) {
+            return { success: false, error: 'Google sign-in succeeded, but the password could not be linked. Use the existing password or reset it.' }
+          }
+        }
+      }
+
       const idToken = await firebaseUser.getIdToken()
-      setToken(idToken)
-      saveStoredSession(authedUser, idToken, true)
+      localStorage.setItem(FIREBASE_SESSION_KEY, '1')
+      try {
+        const apiSession = await apiFirebaseLogin(idToken)
+        const serverUser: AuthUser = {
+          name: apiSession.user.name || authedUser.name,
+          email: apiSession.user.email || authedUser.email,
+          role: apiSession.user.role,
+          plan: apiSession.user.plan,
+          initials: (apiSession.user.name || authedUser.name).slice(0, 2).toUpperCase(),
+        }
+        setUser(serverUser)
+        setToken(apiSession.access_token)
+        saveStoredSession(serverUser, apiSession.access_token, true)
+      } catch {
+        // Firebase identity remains a valid session if the optional API
+        // exchange is temporarily unavailable; do not sign the user out.
+        setUser(authedUser)
+        setToken(idToken)
+        saveStoredSession(authedUser, idToken, true)
+      }
       return { success: true }
     } catch (err) {
       const code = typeof err === 'object' && err && 'code' in err ? String((err as { code?: string }).code) : ''
-      if (code.includes('popup-closed-by-user') || code.includes('cancelled-popup-request')) {
-        return { success: false, error: 'Google sign-in was cancelled.' }
+      if (code.includes('popup-closed-by-user') || code.includes('cancelled-popup-request') || code.includes('popup-blocked')) {
+        return { success: false, error: 'Google sign-in popup was blocked or closed. Allow pop-ups for localhost:8443, then try again.' }
       }
       if (code.includes('unauthorized-domain')) {
         return { success: false, error: 'This deployment domain is not authorized in Firebase Authentication.' }
       }
-      return { success: false, error: 'Unable to connect to Google sign-in. Please try again.' }
+      return { success: false, error: err instanceof Error ? err.message : 'Unable to connect to Google sign-in. Please try again.' }
     }
   }
 
@@ -289,7 +389,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       const code = typeof err === 'object' && err && 'code' in err ? String((err as { code?: string }).code) : ''
       if (code.includes('user-not-found')) return { success: false, error: 'No Firebase account exists for this email yet. Create an account first.' }
-      if (code.includes('no-password-provider')) return { success: false, error: 'This email uses Google sign-in, so there is no password to reset. Continue with Google instead.' }
+      // Firebase can establish a password credential for an account that was
+      // originally created with Google. Do not block the reset request merely
+      // because Google was the first provider used.
       if (code.includes('operation-not-allowed')) return { success: false, error: 'Firebase Email/Password authentication is not enabled yet.' }
       if (code.includes('unauthorized-domain')) return { success: false, error: 'This domain is not authorized in Firebase Authentication.' }
       return { success: false, error: 'Unable to send reset email. Check Firebase Auth settings and try again.' }
@@ -300,6 +402,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null)
     setToken(null)
     clearStoredSession()
+    localStorage.removeItem(FIREBASE_SESSION_KEY)
+    sessionStorage.removeItem(FIREBASE_SESSION_KEY)
   }
 
   return <AuthContext.Provider value={{ user, token, login, loginWithGoogle, createAccount, resetPassword, logout }}>{children}</AuthContext.Provider>

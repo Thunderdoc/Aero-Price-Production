@@ -1,39 +1,46 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Calendar, TrendingDown, TrendingUp, Info } from 'lucide-react'
-import { OVERALL_STATS } from '../data/kaggleData'
+import { apiFares, type FareObservationApi } from '../services/api'
+import { useAuth } from '../contexts/AuthContext'
 
 const WINDOWS = [
-  { label:'0–1 day',   key:'0d',  description:'Last-minute',  multiplier:1.55, color:'var(--color-danger)',  obs: 850 },
-  { label:'2–3 days',  key:'3d',  description:'Ultra short',  multiplier:1.38, color:'var(--color-warning)', obs: 1240 },
-  { label:'4–7 days',  key:'7d',  description:'Short haul',   multiplier:1.22, color:'var(--color-warning)', obs: 2100 },
-  { label:'8–14 days', key:'14d', description:'Standard',     multiplier:1.08, color:'var(--color-success)', obs: 2800 },
-  { label:'15–30 days',key:'30d', description:'Advance',      multiplier:0.95, color:'var(--color-success)', obs: 2300 },
-  { label:'30+ days',  key:'30p', description:'Early bird',   multiplier:0.82, color:'var(--color-info)',     obs: 1393 },
+  { label:'T+1 day',  key:'1d',  advanceDays: 1,  description:'Last-minute', color:'var(--color-danger)' },
+  { label:'T+7 days', key:'7d',  advanceDays: 7,  description:'Short booking window', color:'var(--color-warning)' },
+  { label:'T+15 days',key:'15d', advanceDays: 15, description:'Standard advance', color:'var(--color-success)' },
+  { label:'T+30 days',key:'30d', advanceDays: 30, description:'Advance booking', color:'var(--color-success)' },
+  { label:'T+45 days',key:'45d', advanceDays: 45, description:'Early booking', color:'var(--color-info)' },
 ]
-
-// Per-route multiplier offsets (small variation)
-const ROUTE_OFFSETS: Record<string, number[]> = {
-  'DEL-BOM': [0,    0,    0,    0,    0,    0   ],
-  'DEL-BLR': [0.02, 0.01, 0,   -0.01,-0.01,-0.02],
-  'DEL-CCU': [0.03, 0.02, 0.01, 0,   -0.01,-0.02],
-  'BOM-MAA': [-0.01,0,    0.01, 0.02, 0.01, 0   ],
-  'BLR-HYD': [-0.02,-0.01,0,   0.01, 0.02, 0.01],
-  'DEL-HYD': [0.01, 0.01, 0,    0,   -0.01,-0.01],
-  'DEL-MAA': [0.02, 0,   -0.01, 0,    0.01, 0   ],
-  'BOM-BLR': [-0.01,0.01, 0.01,-0.01, 0,    0.01],
-}
 
 const ROUTES = ['DEL-BOM','DEL-BLR','DEL-CCU','BOM-MAA','BLR-HYD','DEL-HYD','DEL-MAA','BOM-BLR']
 
 export default function BookingWindow() {
+  const { token } = useAuth()
   const [activeRoute, setActiveRoute] = useState('DEL-BOM')
   const [hoveredWindow, setHoveredWindow] = useState<string|null>(null)
+  const [observations, setObservations] = useState<FareObservationApi[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  const baseRef = OVERALL_STATS.overall_avg // Kaggle 2019 avg INR
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    setError(null)
+    apiFares({ route: activeRoute, data_origin: 'REAL', limit: 1000 }, token ?? undefined)
+      .then(result => { if (active) setObservations(result.observations ?? []) })
+      .catch(() => { if (active) { setObservations([]); setError('Verified fare data is unavailable for this route.') } })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [activeRoute, token])
 
+  const windowData = useMemo(() => WINDOWS.map(window => {
+    const values = observations.filter(item => item.advance_days === window.advanceDays).map(item => Number(item.total_fare)).filter(Number.isFinite).sort((a, b) => a - b)
+    const median = values.length ? values[Math.floor(values.length / 2)] : null
+    return { ...window, median, count: values.length }
+  }), [observations])
+  const baseRef = windowData[0]?.median ?? null
   function getMultiplier(windowIdx: number) {
-    const offsets = ROUTE_OFFSETS[activeRoute] ?? ROUTE_OFFSETS['DEL-BOM']
-    return WINDOWS[windowIdx].multiplier + (offsets[windowIdx] ?? 0)
+    const value = windowData[windowIdx]?.median
+    return value != null && baseRef != null && baseRef > 0 ? value / baseRef : null
   }
 
   return (
@@ -47,11 +54,11 @@ export default function BookingWindow() {
           </h1>
           <span style={{ padding:'2px 8px', borderRadius:99, fontSize:9, fontWeight:700, letterSpacing:'0.12em',
             background:'var(--color-success-bg)', color:'var(--color-success)', border:'1px solid rgba(22,163,74,0.3)' }}>
-            30-YEAR LONGITUDINAL · 1995–2026
+            VERIFIED ROUTE OBSERVATIONS
           </span>
         </div>
         <p style={{ margin:0, fontSize:12, color:'var(--color-text-secondary)' }}>
-          Advance-purchase fare elasticity across booking windows · 2,840,000+ multi-decade observations · DGCA &amp; MoSPI calibrated series
+          Advance-purchase fare comparison from stored REAL observations for the selected route.
         </p>
       </div>
 
@@ -62,9 +69,8 @@ export default function BookingWindow() {
           background:'var(--color-success-bg)', border:'1px solid rgba(22,163,74,0.22)', borderRadius:10 }}>
           <Info size={14} style={{ color:'var(--color-success)', flexShrink:0, marginTop:1 }}/>
           <div style={{ fontSize:12, color:'var(--color-text-primary)', lineHeight:1.6 }}>
-            <strong style={{ color: 'var(--color-success)' }}>30-YEAR LONGITUDINAL DATASET (1995–2026).</strong>{' '}
-            Calibrated against DGCA monthly passenger volumes, MoSPI CPI Transport index, and real-time corridor monitoring. 
-            Multipliers represent empirical 30-year price elasticity curves for Indian domestic airspace.
+            <strong style={{ color: 'var(--color-brand-primary)' }}>BACKEND-REPORTED FARE DATA.</strong>{' '}
+            Values below are calculated only from verified REAL observations returned for {activeRoute}. Missing booking windows remain unavailable; no estimates are inserted.
           </div>
         </div>
 
@@ -82,13 +88,17 @@ export default function BookingWindow() {
             </button>
           ))}
         </div>
+        <div style={{ marginBottom: 16, padding: '10px 12px', borderRadius: 9, background: loading ? 'var(--color-info-bg)' : error ? 'var(--color-warning-bg)' : 'var(--color-surface-secondary)', color: error ? 'var(--color-warning)' : 'var(--color-text-secondary)', fontSize: 11 }}>
+          {loading ? 'Loading verified route observations…' : error ?? `${observations.length.toLocaleString('en-IN')} verified REAL observations loaded for ${activeRoute}.`}
+        </div>
 
         {/* Window cards */}
         <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12, marginBottom:24 }}>
           {WINDOWS.map((w, wi) => {
             const isHovered = hoveredWindow === w.key
             const mult = getMultiplier(wi)
-            const estFare = Math.round(baseRef * mult)
+            const medianFare = windowData[wi]?.median
+            const count = windowData[wi]?.count ?? 0
             return (
               <div key={w.key}
                 onMouseEnter={()=>setHoveredWindow(w.key)}
@@ -105,32 +115,32 @@ export default function BookingWindow() {
                       {w.description}
                     </div>
                   </div>
-                  {mult > 1
+                  {mult != null && mult > 1
                     ? <TrendingUp size={15} style={{ color:w.color, flexShrink:0 }}/>
-                    : <TrendingDown size={15} style={{ color:w.color, flexShrink:0 }}/>
+                    : mult != null ? <TrendingDown size={15} style={{ color:w.color, flexShrink:0 }}/> : null
                   }
                 </div>
                 <div style={{ display:'flex', alignItems:'baseline', gap:6, marginBottom:8 }}>
                   <span style={{ fontSize:11, color:'var(--color-text-tertiary)', fontFamily:'var(--font-mono)' }}>
-                    ×{mult.toFixed(2)} of base
+                    {mult == null ? 'No verified observation' : `×${mult.toFixed(2)} of first window`}
                   </span>
                 </div>
                 <div style={{ height:4, borderRadius:2, background:'var(--color-surface-secondary)', marginBottom:8, overflow:'hidden' }}>
-                  <div style={{ height:'100%', width:`${Math.min(mult / 1.6 * 100, 100)}%`,
+                  <div style={{ height:'100%', width:`${mult == null ? 0 : Math.min(mult / 1.6 * 100, 100)}%`,
                     background: w.color, borderRadius:2, opacity:0.7 }}/>
                 </div>
                 <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
                   <div style={{ fontSize:10, color:'var(--color-text-tertiary)' }}>
-                    <span style={{ fontWeight:600 }}>Est.:</span>{' '}
+                    <span style={{ fontWeight:600 }}>Median:</span>{' '}
                     <span style={{ fontFamily:'var(--font-mono)', color:'var(--color-text-secondary)' }}>
-                      ₹{estFare.toLocaleString()}
+                      {medianFare == null ? '—' : `₹${Math.round(medianFare).toLocaleString('en-IN')}`}
                     </span>
-                    <span style={{ fontSize:9, color:'var(--color-success)', marginLeft:4 }}>DGCA &amp; MoSPI 30Y</span>
+                    <span style={{ fontSize:9, color:'var(--color-text-tertiary)', marginLeft:4 }}>REAL</span>
                   </div>
                   <span style={{ fontSize:9, fontWeight:700, padding:'1px 6px', borderRadius:99,
                     background:'var(--color-brand-muted)', color:'var(--color-brand-primary)',
                     letterSpacing:'0.07em' }}>
-                    {w.obs.toLocaleString()} OBS
+                    {count.toLocaleString('en-IN')} OBS
                   </span>
                 </div>
               </div>
@@ -147,13 +157,13 @@ export default function BookingWindow() {
                 Advance-Purchase Elasticity — {activeRoute}
               </h3>
               <p style={{ margin:'3px 0 0', fontSize:11, color:'var(--color-text-tertiary)' }}>
-                30-Year Longitudinal Indian Aviation Index · 2.84M calibrated observations
+                Verified fare observations grouped by the backend booking windows.
               </p>
             </div>
             <div style={{ display:'flex', alignItems:'center', gap:6, padding:'5px 10px', borderRadius:8,
               background:'var(--color-surface-secondary)', border:'1px solid var(--color-border-primary)' }}>
               <Info size={12} style={{ color:'var(--color-brand-primary)' }}/>
-              <span style={{ fontSize:10, color:'var(--color-text-secondary)' }}>DGCA Calibrated Matrix</span>
+              <span style={{ fontSize:10, color:'var(--color-text-secondary)' }}>Backend summary</span>
             </div>
           </div>
 
@@ -189,11 +199,11 @@ export default function BookingWindow() {
               )
             })}
 
-            {/* Benchmark curve */}
-            {(() => {
+            {/* Verified route curve. It is intentionally omitted until every backend window has data. */}
+            {windowData.every(window => window.median != null) ? (() => {
               const pts = WINDOWS.map((w,i) => ({
                 x: 50 + i * (630 / (WINDOWS.length - 1)),
-                y: 140 - (getMultiplier(i) - 0.7) / 0.8 * 120,
+                y: 140 - ((getMultiplier(i) ?? 1) - 0.7) / 0.8 * 120,
               }))
               const pathD = pts.map((p,i) => `${i===0?'M':'L'} ${p.x} ${p.y}`).join(' ')
               const areaD = pathD + ` L ${pts[pts.length-1].x} 140 L 50 140 Z`
@@ -209,13 +219,7 @@ export default function BookingWindow() {
                   ))}
                 </>
               )
-            })()}
-
-            {/* Dataset label */}
-            <text x="365" y="80" textAnchor="middle" fontSize="11" fill="var(--color-brand-primary)"
-              fontFamily="var(--font-sans)" opacity="0.9" fontWeight="600">
-              30-YEAR LONGITUDINAL BENCHMARK (1995–2026) — {activeRoute} advance-purchase curve
-            </text>
+            })() : <text x="365" y="80" textAnchor="middle" fontSize="11" fill="var(--color-text-tertiary)" fontFamily="var(--font-sans)">A complete verified booking-window series is not available yet.</text>}
           </svg>
         </div>
 
@@ -230,7 +234,7 @@ export default function BookingWindow() {
           <table style={{ width:'100%', borderCollapse:'collapse' }}>
             <thead>
               <tr style={{ background:'var(--color-surface-secondary)' }}>
-                {['Window','Description','Multiplier','Demo Est. Fare','Observations','Empirical Avg'].map(h => (
+                {['Window','Description','Multiplier','Verified Median Fare','Observations','Source'].map(h => (
                   <th key={h} style={{ padding:'9px 14px', textAlign:'left', fontSize:10, fontWeight:700,
                     color:'var(--color-text-tertiary)', letterSpacing:'0.07em', whiteSpace:'nowrap' }}>
                     {h.toUpperCase()}
@@ -241,6 +245,8 @@ export default function BookingWindow() {
             <tbody>
               {WINDOWS.map((w,i) => {
                 const mult = getMultiplier(i)
+                const medianFare = windowData[i]?.median
+                const count = windowData[i]?.count ?? 0
                 return (
                 <tr key={w.key} style={{ borderTop:'1px solid var(--color-border-primary)',
                   background: i%2===0 ? 'transparent' : 'var(--color-surface-canvas)' }}>
@@ -251,17 +257,17 @@ export default function BookingWindow() {
                   </td>
                   <td style={{ padding:'10px 14px', fontSize:12, fontWeight:700, color:w.color,
                     fontFamily:'var(--font-mono)' }}>
-                    ×{mult.toFixed(2)}
+                    {mult == null ? '—' : `×${mult.toFixed(2)}`}
                   </td>
                   <td style={{ padding:'10px 14px', fontSize:12, color:'var(--color-text-secondary)',
                     fontFamily:'var(--font-mono)' }}>
-                    ₹{Math.round(baseRef * mult).toLocaleString()}
-                    <span style={{ fontSize:9, marginLeft:5, color:'var(--color-info)', opacity:0.8 }}>HISTORICAL</span>
+                    {medianFare == null ? '—' : `₹${Math.round(medianFare).toLocaleString('en-IN')}`}
+                    <span style={{ fontSize:9, marginLeft:5, color:'var(--color-info)', opacity:0.8 }}>REAL</span>
                   </td>
                   <td style={{ padding:'10px 14px', fontSize:12, fontFamily:'var(--font-mono)',
-                    color:'var(--color-brand-primary)', fontWeight:600 }}>{w.obs.toLocaleString()}</td>
+                    color:'var(--color-brand-primary)', fontWeight:600 }}>{count.toLocaleString('en-IN')}</td>
                   <td style={{ padding:'10px 14px', fontSize:12, color:'var(--color-text-tertiary)' }}>
-                    ₹{Math.round(baseRef * mult).toLocaleString()}
+                    {medianFare == null ? '—' : 'Backend observation'}
                   </td>
                 </tr>
               )})}

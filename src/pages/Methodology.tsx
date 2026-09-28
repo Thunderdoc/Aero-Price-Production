@@ -1,9 +1,21 @@
 import { useState } from 'react'
-import { ChevronDown, ChevronRight, CheckCircle, Clock, GitBranch, ShieldCheck } from 'lucide-react'
-import { methodologySteps } from '../data/sampleData'
+import { ChevronDown, ChevronRight, BookOpen, GitBranch, ShieldCheck } from 'lucide-react'
 import type { Page } from '../components/AppShell'
 
-type NodeStatus = 'ACTIVE' | 'CONNECTED'
+type MethodologyStep = { step: number; title: string; description: string; category: string }
+
+const methodologySteps: MethodologyStep[] = [
+  { step: 1, title: 'Source Registry', description: 'The backend records configured and public-interface sources separately. The no-key Google Flights connector is unofficial and can fail when the public interface changes. Blocked, stale, and unconfigured sources are not labelled live.', category: 'COLLECTION' },
+  { step: 2, title: 'Normalization and Deduplication', description: 'Provider responses are normalized into the fare observation schema and duplicate fingerprints are removed before a row can enter the analytical path.', category: 'PROCESSING' },
+  { step: 3, title: 'Provenance Gate', description: 'REAL and OFFICIAL observations can enter production analytics. Generated test fixtures and sandbox responses are excluded from the live fare, index, forecast, and anomaly endpoints.', category: 'VALIDATION' },
+  { step: 4, title: 'Booking Window and Cabin Buckets', description: 'Verified observations are grouped by route, advance-days window, and cabin so displayed medians and comparisons are calculated from the selected backend slice.', category: 'PROCESSING' },
+  { step: 5, title: 'Route and Fare Summaries', description: 'Route cards, fare ranges, movements, exports, and source counts are calculated from persisted observations returned by the backend; missing history is displayed as unavailable.', category: 'INDEXING' },
+  { step: 6, title: 'Matched-Sample Index', description: 'The index endpoint publishes a value only when the backend confirms enough matched REAL/OFFICIAL corridor observations. Otherwise it returns an explicit no-data state.', category: 'INDEXING' },
+  { step: 7, title: 'Backend Anomaly Detection', description: 'Anomaly results are produced by the backend detector from eligible persisted observations. The interface does not invent expected fares, causes, deviations, or scores.', category: 'VALIDATION' },
+  { step: 8, title: 'Freshness and Health', description: 'Health and source status distinguish a connected database, stored observations, and currently live provider data. Historical rows are never presented as live.', category: 'VALIDATION' },
+]
+
+type NodeStatus = 'DOCUMENTED'
 
 interface StepMeta {
   status: NodeStatus
@@ -12,18 +24,14 @@ interface StepMeta {
 }
 
 const STEP_META: Record<number, StepMeta> = {
-  1: { status: 'ACTIVE', statusDetail: 'Multi-Source Acquisition Live: 8 distributed collectors active across AWS ap-south-1 (IndiGo, Air India, SpiceJet, Akasa, AI Express, EaseMyTrip, MakeMyTrip, Cleartrip)', linkedSource: 'sources' },
-  2: { status: 'ACTIVE', statusDetail: 'Deduplication & Schema Normalisation: 24,000+ daily raw fare quotes parsed, canonical flight IDs matched' },
-  3: { status: 'ACTIVE', statusDetail: 'Outlier & Error Filtering: Hampel filter & MAD z-score trimming active; test bookings & taxes decoupled' },
-  4: { status: 'ACTIVE', statusDetail: 'Tax & Surcharge Decomposition: Base fare isolated from UDF, ADF, CGST, SGST and fuel surcharges' },
-  5: { status: 'ACTIVE', statusDetail: 'Seat Bucket & Class Segregation: Economy Standard, Flexi, Premium Economy and Business buckets mapped' },
-  6: { status: 'ACTIVE', statusDetail: 'Advance Purchase Stratification: T+1, T+3, T+7, T+14, T+30, T+45 booking windows aggregated' },
-  7: { status: 'CONNECTED', statusDetail: 'DGCA Passenger Traffic Weights: MoCA/DGCA route passenger volume weights calibrated for FY 2024-25', linkedSource: 'government' },
-  8: { status: 'ACTIVE', statusDetail: 'Jevons Matched-Sample Index: 24 domestic corridors matched; current published index is 108.45 (+8.45% YoY)' },
-  9: { status: 'ACTIVE', statusDetail: 'STL Seasonal Decomposition: 365-day trend, festival seasonality (Diwali, Holi, Durga Puja) isolated' },
-  10: { status: 'ACTIVE', statusDetail: 'Isolation Forest & Anomaly Detection: Machine learning anomaly scoring calibrated with 99.4% specificity' },
-  11: { status: 'ACTIVE', statusDetail: 'Cross-Source Consensus Verification: Multi-channel fare verification confirms consensus spread < 1.2%' },
-  12: { status: 'ACTIVE', statusDetail: 'Live Freshness & Telemetry Health: Real-time telemetry heartbeat 99.98% uptime across all pipelines' },
+  1: { status: 'DOCUMENTED', statusDetail: 'Current provider availability is shown in Data Sources.', linkedSource: 'sources' },
+  2: { status: 'DOCUMENTED', statusDetail: 'The backend normalizes and deduplicates eligible observations.' },
+  3: { status: 'DOCUMENTED', statusDetail: 'Production provenance filtering is enforced by the backend.' },
+  4: { status: 'DOCUMENTED', statusDetail: 'Groups are calculated from returned observations.' },
+  5: { status: 'DOCUMENTED', statusDetail: 'Missing history is shown as unavailable.' },
+  6: { status: 'DOCUMENTED', statusDetail: 'Publication requires at least ten matched corridors.' },
+  7: { status: 'DOCUMENTED', statusDetail: 'Detector output depends on eligible persisted observations.' },
+  8: { status: 'DOCUMENTED', statusDetail: 'See Data Sources for current freshness.', linkedSource: 'sources' },
 }
 
 const CATEGORY_STYLE: Record<string, { label: string; color: string; bg: string }> = {
@@ -33,21 +41,20 @@ const CATEGORY_STYLE: Record<string, { label: string; color: string; bg: string 
   VALIDATION:  { label: 'VALIDATION',  color: 'var(--color-success)',       bg: 'var(--color-success-bg)' },
 }
 
-const NODE_STATUS_STYLE: Record<NodeStatus, { icon: typeof CheckCircle; color: string; bg: string; label: string }> = {
-  ACTIVE:    { icon: CheckCircle, color: 'var(--color-success)', bg: 'var(--color-success-bg)', label: 'ACTIVE' },
-  CONNECTED: { icon: CheckCircle, color: 'var(--color-info)',    bg: 'var(--color-info-bg)',    label: 'CONNECTED' },
+const NODE_STATUS_STYLE: Record<NodeStatus, { icon: typeof BookOpen; color: string; bg: string; label: string }> = {
+  DOCUMENTED: { icon: BookOpen, color: 'var(--color-info)', bg: 'var(--color-info-bg)', label: 'METHOD' },
 }
 
 const JEVONS = `P = Π (p_it / p_i0)^(1/n)
 
 where:
   p_it   = fare for corridor i at time t (current period)
-  p_i0   = base-period fare (January 2025 = 100.00)
-  n      = matched corridors with obs. in both periods (24 corridors active)
+  p_i0   = median fare on the first verified collection day
+  n      = matched corridors with observations in both periods
   Π      = geometric product over all matched corridors i
 
-Current Published Airfare Index: 108.45 (+8.45% YoY)
-Methodology: Jevons Matched-Model Geometric Mean with DGCA Route Weights`
+The index is published only when the backend confirms the required matched REAL/OFFICIAL observations.
+Current backend collection uses equal weights (1.0) for each route. This is an AeroPrice sample index, not an official DGCA or MoSPI index.`
 
 export default function Methodology({ onNavigate }: { onNavigate?: (page: Page) => void }) {
   const [expanded, setExpanded] = useState<Set<number>>(new Set([1, 7, 8]))
@@ -78,7 +85,7 @@ export default function Methodology({ onNavigate }: { onNavigate?: (page: Page) 
             <div style={{ width: 28, height: 28, borderRadius: 7, background: 'var(--gradient-brand)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <GitBranch size={13} color="white" />
             </div>
-            <span style={{ fontSize: 9, fontWeight: 700, color: 'rgba(147,197,253,0.7)', letterSpacing: '0.14em', fontFamily: 'var(--font-mono)' }}>12-STAGE PIPELINE · VERIFIED SYSTEM ARCHITECTURE</span>
+            <span style={{ fontSize: 9, fontWeight: 700, color: 'rgba(147,197,253,0.7)', letterSpacing: '0.14em', fontFamily: 'var(--font-mono)' }}>8-STAGE PIPELINE · BACKEND METHOD</span>
           </div>
           <h1 style={{ fontSize: 22, fontWeight: 800, color: 'rgba(255,255,255,0.92)', fontFamily: 'var(--font-sans)', letterSpacing: '-0.025em', margin: 0, marginBottom: 4 }}>
             Collection &amp; Processing Pipeline
@@ -93,9 +100,9 @@ export default function Methodology({ onNavigate }: { onNavigate?: (page: Page) 
       <div style={{ padding: '14px 18px', borderRadius: 'var(--radius-md)', background: 'var(--color-success-bg)', border: '1px solid rgba(22,163,74,0.3)', display: 'flex', alignItems: 'flex-start', gap: 12 }}>
         <ShieldCheck size={18} style={{ color: 'var(--color-success)', flexShrink: 0, marginTop: 1 }} />
         <div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-success)', fontFamily: 'var(--font-sans)' }}>PIPELINE OPERATIONAL — ALL 12 STAGES VERIFIED</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-info)', fontFamily: 'var(--font-sans)' }}>BACKEND DATA CONTRACT — NOT A LIVE STATUS REPORT</div>
           <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', marginTop: 3, lineHeight: 1.5 }}>
-            Full end-to-end data acquisition active. 8 domestic airline scrapers &amp; GDS feeds operational across AWS ap-south-1. Jevons Price Index published at <strong>108.45 (+8.45% YoY)</strong> with matched-sample validation.
+            This page documents how the backend processes data. Check Data Sources and the index page for current availability and publication status.
           </div>
         </div>
       </div>
@@ -110,7 +117,7 @@ export default function Methodology({ onNavigate }: { onNavigate?: (page: Page) 
             </span>
           )
         })}
-        <span className="ap-badge" style={{ background: 'var(--color-success-bg)', color: 'var(--color-success)' }}>12/12 ACTIVE</span>
+        <span className="ap-badge" style={{ background: 'var(--color-info-bg)', color: 'var(--color-info)' }}>{methodologySteps.length} BACKEND RULES</span>
       </div>
 
       {/* Pipeline accordion */}
@@ -119,7 +126,7 @@ export default function Methodology({ onNavigate }: { onNavigate?: (page: Page) 
         <div style={{ position: 'absolute', left: 22, top: 40, bottom: 40, width: 2, background: 'var(--color-border-primary)', zIndex: 0 }} />
 
         {methodologySteps.map((step) => {
-          const meta = STEP_META[step.step] ?? { status: 'ACTIVE' as NodeStatus, statusDetail: 'Stage active and calibrated.' }
+          const meta = STEP_META[step.step]
           const ns = NODE_STATUS_STYLE[meta.status]
           const NodeIcon = ns.icon
           const cat = CATEGORY_STYLE[step.category] ?? { label: step.category, color: 'var(--color-text-tertiary)', bg: 'var(--color-surface-secondary)' }
@@ -179,7 +186,7 @@ export default function Methodology({ onNavigate }: { onNavigate?: (page: Page) 
 
       {/* Jevons formula */}
       <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', padding: 'var(--space-xl)' }}>
-        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginBottom: 'var(--space-md)' }}>JEVONS PRICE INDEX FORMULA (OFFICIAL DGCA / MOSPI SPECIFICATION)</div>
+        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginBottom: 'var(--space-md)' }}>AEROPRICE MATCHED-SAMPLE JEVONS FORMULA (NOT AN OFFICIAL INDEX)</div>
         <div style={{ background: 'var(--color-surface-dark)', color: 'rgba(255,255,255,0.85)', borderRadius: 'var(--radius-md)', padding: 'var(--space-xl)', fontFamily: 'var(--font-mono)', fontSize: 13, lineHeight: 2, whiteSpace: 'pre-wrap' }}>
           {JEVONS}
         </div>

@@ -5,7 +5,7 @@ Formula:   P_t = Π (p_it / p_i0)^(1/n)
 
 where:
   p_it = observed fare for corridor i at time t
-  p_i0 = base-period fare for corridor i (January 2025 = 100)
+  p_i0 = fare on the first verified collection day for corridor i
   n    = number of corridors with observations in BOTH periods
 
 Only published when n >= MIN_CORRIDORS_TO_PUBLISH.
@@ -132,7 +132,7 @@ async def calculate_index(
         "observation_period": observation_period,
         "method": METHOD,
         "version": INDEX_VERSION,
-        "data_origin": "REAL",
+        "data_origin": "DERIVED",
     }
 
 

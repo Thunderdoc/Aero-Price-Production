@@ -3,64 +3,59 @@ import { AlertTriangle, CheckCircle2, Globe, RefreshCw, Server, Shield, XCircle,
 import StatusBadge from '../components/StatusBadge'
 import { GovSourceCard } from '../components/SourceCard'
 import { useGovData } from '../hooks/useGovData'
-import { isBackendAvailable, apiSourceHealth } from '../services/api'
+import { apiSources } from '../services/api'
 import type { AirfareSource } from '../types/observation'
-
-export const AIRFARE_SOURCES: AirfareSource[] = [
-  {
-    id: 'amadeus',
-    name: 'Amadeus GDS Global Distribution',
-    organization: 'Amadeus IT Group SA',
-    source_url: 'https://developers.amadeus.com',
-    status: 'NOT_CONFIGURED',
-    status_reason: 'Awaiting an authorized Amadeus API credential; no fare rows are claimed.',
-    robots_txt: 'UNKNOWN',
-    captcha_detected: false,
-    api_available: false,
-    last_attempt: null,
-    records_received: 0,
-  },
-]
+import { useAuth } from '../contexts/AuthContext'
 
 function isoTimestamp(iso: string | null | undefined): string {
-  if (!iso) return 'Just now'
+  if (!iso) return 'Never'
   return new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST'
 }
 
 export default function DataSources() {
+  const { token } = useAuth()
   const { datasets, isLoading, refresh } = useGovData()
   const [tab, setTab] = useState<'airfare' | 'government'>('airfare')
-  const [liveSourceStatus, setLiveSourceStatus] = useState<Record<string, { status: string; records: number }>>({})
+  const [displaySources, setDisplaySources] = useState<AirfareSource[]>([])
+  const [airfareLoading, setAirfareLoading] = useState(true)
   const [hoveredSourceId, setHoveredSourceId] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [refreshMsg, setRefreshMsg] = useState<string | null>(null)
 
-  useEffect(() => {
-    isBackendAvailable().then(up => {
-      if (!up) return
-      apiSourceHealth()
-        .then(resp => {
-          const raw = resp as unknown as { sources?: Array<{ source_id: string; status: string; records_total?: number }> } | Array<{ source_id: string; status: string; records_total?: number }>
-          const list = Array.isArray(raw) ? raw : (raw.sources ?? [])
-          const map: Record<string, { status: string; records: number }> = {}
-          for (const s of list) {
-            map[s.source_id] = { status: s.status, records: s.records_total ?? 0 }
-          }
-          setLiveSourceStatus(map)
-        })
-        .catch(() => {})
-    })
-  }, [])
-
-  const displaySources: AirfareSource[] = AIRFARE_SOURCES.map(s => {
-    const live = liveSourceStatus[s.id]
-    if (live) {
-      return { ...s, status: live.status as AirfareSource['status'], records_received: live.records || s.records_received }
+  async function loadAirfareSources() {
+    setAirfareLoading(true)
+    try {
+      const response = await apiSources(token ?? undefined)
+      const sources = response.airfare_sources ?? response.airfare ?? []
+      setDisplaySources(
+        sources.map(source => ({
+          id: source.id,
+          name: source.name,
+          organization: source.type,
+          source_url: source.registration_url ?? '',
+          status: source.status as AirfareSource['status'],
+          status_reason:
+            source.challenge_reason ?? source.note ??
+            (source.status === 'LIVE' ? 'Backend reported a live source.' : 'No verified live response has been recorded.'),
+          robots_txt: (source.robots_txt ?? 'UNKNOWN') as AirfareSource['robots_txt'],
+          captcha_detected: Boolean(source.captcha_detected),
+          api_available: Boolean(source.api_available),
+          last_attempt: source.last_attempt ?? null,
+          records_received: source.records_total ?? 0,
+        })),
+      )
+    } catch {
+      setDisplaySources([])
+    } finally {
+      setAirfareLoading(false)
     }
-    return s
-  })
+  }
 
-  const connectedAirfare = displaySources.filter(s => ['CONNECTED', 'HEALTHY'].includes(s.status as string)).length
+  useEffect(() => {
+    void loadAirfareSources()
+  }, [token])
+
+  const connectedAirfare = displaySources.filter(s => ['LIVE', 'CONNECTED', 'HEALTHY'].includes(s.status as string)).length
   const govConnected = datasets.filter(d => ['CONNECTED', 'HEALTHY', 'STALE'].includes(d.status)).length
   const totalRecords = displaySources.reduce((acc, s) => acc + (s.records_received ?? 0), 0)
 
@@ -68,15 +63,14 @@ export default function DataSources() {
     { label: 'AIRFARE FEEDS', value: `${connectedAirfare}/${displaySources.length}`, color: 'var(--color-success)', dot: 'var(--color-success)' },
     { label: 'GOV REGISTRIES', value: `${govConnected}/${datasets.length}`, color: 'var(--color-success)', dot: 'var(--color-success)' },
     { label: 'SYSTEM LATENCY', value: '—', color: 'var(--color-text-tertiary)', dot: null },
-    { label: 'TOTAL SYNCED RECORDS', value: totalRecords.toLocaleString('en-IN'), color: 'var(--color-text-primary)', dot: null },
+    { label: 'SOURCE-REPORTED RECORDS', value: totalRecords.toLocaleString('en-IN'), color: 'var(--color-text-primary)', dot: null },
     { label: 'PIPELINE UPTIME', value: '—', color: 'var(--color-text-tertiary)', dot: null },
   ]
 
   async function handleRefreshAll() {
     setRefreshing(true)
     setRefreshMsg(null)
-    await new Promise(r => setTimeout(r, 600))
-    await refresh()
+    await Promise.all([refresh(), loadAirfareSources()])
     setRefreshing(false)
     setRefreshMsg('Sources refreshed. Only configured providers with verified responses are marked connected.')
     setTimeout(() => setRefreshMsg(null), 5000)
@@ -338,7 +332,15 @@ export default function DataSources() {
 
       {tab === 'airfare' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
-          {displaySources.map(s => {
+          {airfareLoading ? (
+            <div className="ap-card" style={{ padding: 24, color: 'var(--color-text-secondary)' }}>
+              Loading source status from the backend…
+            </div>
+          ) : displaySources.length === 0 ? (
+            <div className="ap-card" style={{ padding: 24, color: 'var(--color-text-secondary)' }}>
+              The backend returned no airfare source registry records.
+            </div>
+          ) : displaySources.map(s => {
             const hovered = hoveredSourceId === s.id
             return (
               <div
@@ -348,7 +350,7 @@ export default function DataSources() {
                 style={{
                   background: 'var(--color-surface-bg)',
                   border: `1px solid ${hovered ? 'var(--color-border-secondary)' : 'var(--color-border-primary)'}`,
-                  borderLeft: '4px solid #16a34a',
+                  borderLeft: `4px solid ${['LIVE', 'CONNECTED', 'HEALTHY'].includes(s.status as string) ? '#16a34a' : '#94a3b8'}`,
                   borderRadius: 'var(--radius-lg)',
                   padding: 'var(--space-xl)',
                   boxShadow: hovered ? 'var(--shadow-md)' : 'var(--shadow-sm)',
@@ -373,7 +375,7 @@ export default function DataSources() {
                         <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}>
                           {s.name}
                         </span>
-                        <span className={`ap-badge ${s.status === 'CONNECTED' || s.status === 'HEALTHY' ? 'ap-badge-real' : 'ap-badge-sandbox'}`}>{s.status}</span>
+                        <span className={`ap-badge ${['LIVE', 'CONNECTED', 'HEALTHY'].includes(s.status as string) ? 'ap-badge-real' : 'ap-badge-sandbox'}`}>{s.status}</span>
                       </div>
                       <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>
                         {s.organization}
@@ -386,7 +388,7 @@ export default function DataSources() {
                       {s.last_attempt ? `LAST: ${isoTimestamp(s.last_attempt)}` : 'NOT CHECKED'}
                     </div>
                     <div style={{ padding: '4px 10px', borderRadius: 6, background: 'var(--color-surface-secondary)', color: 'var(--color-text-secondary)', fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
-                      {s.api_available ? 'AUTHORIZED' : 'NOT CONFIGURED'}
+                      {s.api_available ? 'API SUPPORTED' : 'NO OFFICIAL API'}
                     </div>
                   </div>
                 </div>
@@ -418,7 +420,7 @@ export default function DataSources() {
                 >
                   <div>
                     <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>
-                      SYNCHRONIZED RECORDS
+                      SOURCE-REPORTED RECORDS
                     </div>
                     <div style={{ fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--color-text-primary)', marginTop: 2 }}>
                       {(s.records_received ?? 0).toLocaleString('en-IN')} offers
@@ -436,10 +438,10 @@ export default function DataSources() {
 
                   <div>
                     <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>
-                      AUTHENTICATION
+                      API CAPABILITY
                     </div>
                     <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: '#16a34a', marginTop: 2, fontWeight: 700 }}>
-                      {s.api_available ? 'CONFIGURED' : 'NOT CONFIGURED'}
+                      {s.api_available ? 'SUPPORTED' : 'NOT LISTED'}
                     </div>
                   </div>
 
@@ -456,7 +458,7 @@ export default function DataSources() {
                       fontWeight: 600,
                     }}
                   >
-                    {s.source_url.replace('https://', '')} ↗
+                    {s.source_url ? `${s.source_url.replace('https://', '')} ↗` : 'No provider URL returned'}
                   </a>
                 </div>
               </div>

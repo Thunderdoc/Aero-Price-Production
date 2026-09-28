@@ -32,6 +32,8 @@ export interface Corridor {
   carriers: string[]
   bookingWindowOptimal: number
   anomalyScore: number
+  /** True only when the backend supplied a comparable prior period. */
+  movementAvailable?: boolean
 }
 
 export const corridors: Corridor[] = [

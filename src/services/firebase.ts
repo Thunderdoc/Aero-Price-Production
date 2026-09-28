@@ -6,8 +6,13 @@ import {
   GoogleAuthProvider,
   sendEmailVerification,
   sendPasswordResetEmail,
+  fetchSignInMethodsForEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
+  EmailAuthProvider,
+  linkWithCredential,
   updateProfile,
   type Auth,
 } from 'firebase/auth'
@@ -80,6 +85,27 @@ export async function signInWithGooglePopup() {
   return signInWithPopup(firebaseAuth, provider)
 }
 
+export async function signInWithGoogleRedirect() {
+  const firebaseAuth = getFirebaseAuth()
+  if (!firebaseAuth) throw new Error('Firebase Google authentication is not configured.')
+  const provider = new GoogleAuthProvider()
+  provider.setCustomParameters({ prompt: 'select_account' })
+  await signInWithRedirect(firebaseAuth, provider)
+}
+
+export async function getGoogleRedirectResult() {
+  const firebaseAuth = getFirebaseAuth()
+  if (!firebaseAuth) return null
+  return getRedirectResult(firebaseAuth)
+}
+
+export async function linkPasswordToCurrentFirebaseUser(password: string) {
+  const firebaseAuth = getFirebaseAuth()
+  if (!firebaseAuth?.currentUser) throw new Error('Complete Google sign-in before setting a password.')
+  const credential = EmailAuthProvider.credential(firebaseAuth.currentUser.email || '', password)
+  return linkWithCredential(firebaseAuth.currentUser, credential)
+}
+
 export async function sendFirebasePasswordReset(email: string) {
   const firebaseAuth = getFirebaseAuth()
   if (!firebaseAuth) {
@@ -107,4 +133,10 @@ export async function signInFirebaseEmailUser(email: string, password: string) {
     throw new Error('Firebase authentication is not configured.')
   }
   return signInWithEmailAndPassword(firebaseAuth, email, password)
+}
+
+export async function getFirebaseSignInMethods(email: string): Promise<string[]> {
+  const firebaseAuth = getFirebaseAuth()
+  if (!firebaseAuth) return []
+  return fetchSignInMethodsForEmail(firebaseAuth, email.trim().toLowerCase())
 }

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, distinct
 from typing import Optional
 from datetime import datetime, timezone, date, timedelta
 import uuid
@@ -116,21 +116,100 @@ async def list_fares(
         ),
         "observations": [_fare_dict(o) for o in obs],
         "status": (
-            "LIVE" if has_real
+            "STORED_REAL" if has_real
             else "SANDBOX_TEST_ONLY" if has_sandbox
             else "NO_LIVE_OBSERVATIONS"
         ),
         "message": (
-            None if has_real
+            "These are stored observations, not a guarantee of currently available prices." if has_real
             else (
                 "Amadeus sandbox data available — configure AMADEUS_ENV=production "
                 "with production credentials for real fare observations."
                 if has_sandbox
                 else
-                "No real airfare observations. "
-                "Set AMADEUS_API_KEY + AMADEUS_API_SECRET and trigger a collection run."
+                "No real airfare observations are stored. Check provider status and trigger a collection run."
             )
         ),
+    }
+
+
+@router.get("/airlines/summary")
+async def airline_fare_summary(
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Observed airline fares, not airline market share or flight frequency.
+
+    Aggregate only valid INR economy observations from real or official
+    sources. Every count is a count of stored quotes, not passengers or flights.
+    """
+    filters = (
+        FareObservation.data_origin.in_(list(_LIVE_ORIGINS)),
+        FareObservation.is_valid.is_(True),
+        FareObservation.currency == "INR",
+        FareObservation.cabin == "ECONOMY",
+    )
+    aggregate = (
+        func.count(FareObservation.observation_id).label("observations"),
+        func.avg(FareObservation.total_fare).label("average_fare"),
+        func.min(FareObservation.total_fare).label("minimum_fare"),
+        func.max(FareObservation.total_fare).label("maximum_fare"),
+        func.max(FareObservation.collected_at).label("latest_collected_at"),
+    )
+    airline_rows = (await db.execute(
+        select(
+            FareObservation.airline,
+            func.count(distinct(FareObservation.route)).label("routes"),
+            *aggregate,
+        ).where(*filters)
+        .group_by(FareObservation.airline)
+        .order_by(func.count(FareObservation.observation_id).desc())
+    )).all()
+    route_rows = (await db.execute(
+        select(FareObservation.airline, FareObservation.route, *aggregate)
+        .where(*filters)
+        .group_by(FareObservation.airline, FareObservation.route)
+        .order_by(FareObservation.airline, func.count(FareObservation.observation_id).desc())
+    )).all()
+    window_rows = (await db.execute(
+        select(FareObservation.airline, FareObservation.advance_days, *aggregate)
+        .where(*filters)
+        .group_by(FareObservation.airline, FareObservation.advance_days)
+        .order_by(FareObservation.airline, FareObservation.advance_days)
+    )).all()
+
+    def stats(row):
+        return {
+            "observations": row.observations,
+            "average_fare": round(row.average_fare, 2),
+            "minimum_fare": row.minimum_fare,
+            "maximum_fare": row.maximum_fare,
+            "latest_collected_at": row.latest_collected_at.isoformat() if row.latest_collected_at else None,
+        }
+
+    routes_by_airline = {}
+    for row in route_rows:
+        routes_by_airline.setdefault(row.airline, []).append({"route": row.route, **stats(row)})
+    windows_by_airline = {}
+    for row in window_rows:
+        windows_by_airline.setdefault(row.airline, []).append({"advance_days": row.advance_days, **stats(row)})
+
+    total = sum(row.observations for row in airline_rows)
+    return {
+        "status": "STORED_OBSERVATIONS" if total else "NO_DATA",
+        "total_observations": total,
+        "basis": "Stored valid INR economy fare quotes; not market share or flight frequency.",
+        "airlines": [
+            {
+                "name": row.airline,
+                "routes": row.routes,
+                **stats(row),
+                "share_of_observed_quotes_pct": round(100 * row.observations / total, 2) if total else 0,
+                "route_details": routes_by_airline.get(row.airline, []),
+                "booking_windows": windows_by_airline.get(row.airline, []),
+            }
+            for row in airline_rows
+        ],
     }
 
 
@@ -202,23 +281,60 @@ async def route_fare_summary(
     Only REAL and OFFICIAL records feed this summary — SANDBOX_TEST is excluded
     because synthetic Amadeus fares would produce meaningless statistics.
     """
+    eligible = (
+        FareObservation.route == route.upper(),
+        FareObservation.data_origin.in_(list(_LIVE_ORIGINS)),
+        FareObservation.is_valid.is_(True),
+        FareObservation.currency == "INR",
+        FareObservation.cabin == "ECONOMY",
+    )
+    latest_day = await db.scalar(
+        select(func.max(func.date(FareObservation.collected_at))).where(*eligible)
+    )
+    latest_rows = (await db.execute(
+        select(FareObservation).where(
+            *eligible,
+            func.date(FareObservation.collected_at) == latest_day,
+        )
+    )).scalars().all() if latest_day else []
+    latest_fares = sorted(row.total_fare for row in latest_rows)
+    midpoint = len(latest_fares) // 2
+    latest_median = (
+        (latest_fares[midpoint - 1] + latest_fares[midpoint]) / 2
+        if len(latest_fares) % 2 == 0 else latest_fares[midpoint]
+    ) if latest_fares else None
+    overall = {
+        "median": latest_median,
+        "min": min(latest_fares) if latest_fares else None,
+        "max": max(latest_fares) if latest_fares else None,
+        "count": len(latest_fares),
+        "sample_period": latest_day,
+        "last_collected_at": max(
+            (row.collected_at for row in latest_rows if row.collected_at), default=None
+        ),
+        "data_origin": "REAL" if latest_fares else "NO_DATA",
+        "status": "STORED_OBSERVATIONS" if latest_fares else "INSUFFICIENT_DATA",
+    }
+    if overall["last_collected_at"]:
+        overall["last_collected_at"] = overall["last_collected_at"].isoformat()
+
     result = {}
     for window in ADVANCE_WINDOWS:
         rows = await db.execute(
             select(FareObservation).where(
                 and_(
-                    FareObservation.route == route.upper(),
+                    *eligible,
                     FareObservation.advance_days == window,
-                    FareObservation.data_origin.in_(list(_LIVE_ORIGINS)),
-                    FareObservation.is_valid == True,
                 )
             )
         )
         obs = rows.scalars().all()
         if obs:
             fares = [o.total_fare for o in obs]
+            ordered_fares = sorted(fares)
+            middle = len(ordered_fares) // 2
             result[f"T+{window}"] = {
-                "median": sorted(fares)[len(fares) // 2],
+                "median": (ordered_fares[middle - 1] + ordered_fares[middle]) / 2 if len(ordered_fares) % 2 == 0 else ordered_fares[middle],
                 "min": min(fares),
                 "max": max(fares),
                 "count": len(fares),
@@ -237,6 +353,7 @@ async def route_fare_summary(
 
     return {
         "route": route.upper(),
+        "overall": overall,
         "windows": result,
         "has_real_data": any(v["status"] == "AVAILABLE" for v in result.values()),
         "timestamp": datetime.now(timezone.utc).isoformat(),

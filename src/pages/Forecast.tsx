@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useRef } from 'react'
 import { TrendingUp, RefreshCw, Download, CheckCircle2, Sliders, Calendar, Activity } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { apiForecast, type ForecastResponse } from '../services/api'
@@ -9,92 +9,56 @@ const routes = [
 ]
 const windows = [1, 7, 15, 30, 45]
 
-const BASE_FARES: Record<string, number> = {
-  'DEL-BOM': 5840,
-  'DEL-BLR': 6120,
-  'BOM-BLR': 3940,
-  'DEL-CCU': 5580,
-  'DEL-HYD': 4890,
-  'DEL-MAA': 6480,
-  'BOM-CCU': 5580,
-  'BOM-HYD': 3760,
-  'BLR-CCU': 5240,
-  'BLR-HYD': 2920,
-  'MAA-DEL': 6480,
-  'MAA-BOM': 4280,
-}
-
 interface HorizonForecast {
   horizon_days: number
   target_date: string
   forecast_fare: number
   lower_bound: number
   upper_bound: number
-  seasonal_index: number
-  trend_direction: 'UP' | 'DOWN' | 'STABLE'
-}
-
-function calculateForecasts(route: string, windowDays: number): HorizonForecast[] {
-  const base = BASE_FARES[route] ?? 5200
-  const windowFactor = windowDays === 1 ? 1.55 : windowDays === 7 ? 1.22 : windowDays === 15 ? 1.0 : windowDays === 30 ? 0.88 : 0.82
-  const effectiveBase = Math.round(base * windowFactor)
-
-  const horizons = [3, 7, 14, 21, 30, 45]
-  const today = new Date()
-
-  return horizons.map(h => {
-    const targetDate = new Date(today)
-    targetDate.setDate(today.getDate() + h)
-
-    // Seasonal wave factor
-    const cycle = Math.sin((h / 30) * Math.PI) * 0.08
-    const price = Math.round(effectiveBase * (1 + cycle + (h > 14 ? -0.04 : 0.06)))
-    const spread = Math.round(price * (0.06 + (h / 45) * 0.08))
-
-    return {
-      horizon_days: h,
-      target_date: targetDate.toISOString().slice(0, 10),
-      forecast_fare: price,
-      lower_bound: price - spread,
-      upper_bound: price + spread,
-      seasonal_index: Number((1 + cycle).toFixed(3)),
-      trend_direction: cycle > 0.02 ? 'UP' : cycle < -0.02 ? 'DOWN' : 'STABLE',
-    }
-  })
 }
 
 export default function Forecast() {
   const { token } = useAuth()
   const [route, setRoute] = useState('DEL-BOM')
   const [windowDays, setWindowDays] = useState(7)
-  const [forecasts, setForecasts] = useState<HorizonForecast[]>(() => calculateForecasts('DEL-BOM', 7))
+  const [forecasts, setForecasts] = useState<HorizonForecast[]>([])
+  const [metrics, setMetrics] = useState<ForecastResponse['metrics']>(null)
+  const [message, setMessage] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const [lastUpdated, setLastUpdated] = useState<string>(
-    new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST'
-  )
+  const [lastUpdated, setLastUpdated] = useState<string | null>(null)
+  const requestSeq = useRef(0)
 
   async function load() {
+    const requestId = requestSeq.current + 1
+    requestSeq.current = requestId
     setLoading(true)
+    setMessage(null)
+    setMetrics(null)
     try {
       const resp = await apiForecast(route, windowDays, token ?? undefined)
+      if (requestSeq.current !== requestId) return
       if (resp && resp.status === 'FORECAST' && resp.forecasts?.length) {
+        const baseDate = resp.metrics?.trained_at ? new Date(resp.metrics.trained_at) : new Date()
         setForecasts(
           resp.forecasts.map(f => ({
             horizon_days: f.horizon_days,
-            target_date: new Date(Date.now() + f.horizon_days * 86400000).toISOString().slice(0, 10),
+            target_date: new Date(baseDate.getTime() + f.horizon_days * 86400000).toISOString().slice(0, 10),
             forecast_fare: f.forecast_fare,
             lower_bound: f.lower_bound,
             upper_bound: f.upper_bound,
-            seasonal_index: 1.04,
-            trend_direction: 'UP',
           }))
         )
+        setMetrics(resp.metrics)
       } else {
-        setForecasts(calculateForecasts(route, windowDays))
+        setForecasts([])
+        setMessage(resp?.message ?? 'Forecast requires sufficient verified fare observations for this route and booking window.')
       }
     } catch {
-      setForecasts(calculateForecasts(route, windowDays))
+      if (requestSeq.current !== requestId) return
+      setForecasts([])
+      setMessage('Forecast data is unavailable because the backend did not return a verified model result.')
     } finally {
+      if (requestSeq.current !== requestId) return
       setLoading(false)
       setLastUpdated(
         new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST'
@@ -107,9 +71,10 @@ export default function Forecast() {
   }, [route, windowDays, token])
 
   function exportCsv() {
-    const header = 'Route,Booking Window,Horizon Days,Target Date,Forecast Fare,Lower Bound (80% CI),Upper Bound (95% CI),Seasonal Index,Currency'
+    if (!forecasts.length) return
+    const header = 'Route,Booking Window,Horizon Days,Horizon Date,Point Forecast Fare,Approx Lower Bound,Approx Upper Bound,Currency'
     const rows = forecasts.map(f =>
-      [route, `T+${windowDays}`, f.horizon_days, f.target_date, f.forecast_fare, f.lower_bound, f.upper_bound, f.seasonal_index, 'INR'].join(',')
+      [route, `T+${windowDays}`, f.horizon_days, f.target_date, f.forecast_fare, f.lower_bound, f.upper_bound, 'INR'].join(',')
     )
     const csv = [header, ...rows].join('\n')
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
@@ -124,13 +89,12 @@ export default function Forecast() {
   // Visual SVG sparkline coordinates
   const svgData = useMemo(() => {
     if (!forecasts.length) return null
-    const fares = forecasts.map(f => f.forecast_fare)
     const min = Math.min(...forecasts.map(f => f.lower_bound)) - 200
     const max = Math.max(...forecasts.map(f => f.upper_bound)) + 200
     const w = 500, h = 180
 
     const pts = forecasts.map((f, i) => {
-      const x = (i / (forecasts.length - 1)) * (w - 60) + 30
+      const x = (i / Math.max(1, forecasts.length - 1)) * (w - 60) + 30
       const y = h - ((f.forecast_fare - min) / (max - min)) * (h - 40) - 20
       const yLow = h - ((f.lower_bound - min) / (max - min)) * (h - 40) - 20
       const yHigh = h - ((f.upper_bound - min) / (max - min)) * (h - 40) - 20
@@ -182,10 +146,10 @@ export default function Forecast() {
               <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: 'var(--color-text-primary)' }}>
                 Airfare Predictive Forecast
               </h1>
-              <span className="ap-badge ap-badge-real">HOLT-WINTERS ML · ACTIVE</span>
+              <span className="ap-badge ap-badge-official">BACKEND STATISTICAL MODEL</span>
             </div>
             <p style={{ margin: '4px 0 0', color: 'var(--color-text-secondary)', fontSize: 13 }}>
-              Multi-horizon fare projections trained on 10,875 verified Indian domestic observations with confidence bands.
+              Forecasts are shown only when the backend has enough verified fare history for the selected route and booking window.
             </p>
           </div>
         </div>
@@ -193,6 +157,7 @@ export default function Forecast() {
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <button
             onClick={exportCsv}
+            disabled={!forecasts.length}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -203,8 +168,9 @@ export default function Forecast() {
               background: 'var(--color-surface-secondary)',
               fontSize: 12,
               fontWeight: 700,
-              cursor: 'pointer',
+              cursor: forecasts.length ? 'pointer' : 'not-allowed',
               color: 'var(--color-text-secondary)',
+              opacity: forecasts.length ? 1 : 0.55,
             }}
           >
             <Download size={13} /> Export Projections CSV
@@ -216,7 +182,7 @@ export default function Forecast() {
             style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 18px', fontSize: 12 }}
           >
             <RefreshCw size={13} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
-            {loading ? 'Simulating…' : 'Recalculate Projections'}
+            {loading ? 'Refreshing…' : 'Refresh Forecast'}
           </button>
         </div>
       </div>
@@ -265,7 +231,7 @@ export default function Forecast() {
         </label>
 
         <div style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>
-          Model Version: v2.6.4 · Refreshed {lastUpdated}
+          Model: {metrics?.model_version ?? '—'} · Checked {lastUpdated ?? '—'}
         </div>
       </div>
 
@@ -292,18 +258,24 @@ export default function Forecast() {
                 {route} · T+{windowDays} Projected Price Trajectory
               </div>
               <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 2 }}>
-                Blue line: median projection. Shaded region: 80% to 95% confidence corridor.
+                Blue line: point forecast. Shaded region: backend-provided approximate uncertainty bounds.
               </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 11 }}>
               <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ width: 12, height: 3, background: 'var(--color-brand-primary)', borderRadius: 2 }} /> Median
+                <span style={{ width: 12, height: 3, background: 'var(--color-brand-primary)', borderRadius: 2 }} /> Point forecast
               </span>
               <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ width: 12, height: 10, background: 'rgba(37,99,235,0.18)', borderRadius: 2 }} /> Confidence Band
+                <span style={{ width: 12, height: 10, background: 'rgba(37,99,235,0.18)', borderRadius: 2 }} /> Approx bounds
               </span>
             </div>
           </div>
+
+          {!loading && message && (
+            <div style={{ padding: '32px 16px', color: 'var(--color-text-secondary)', fontSize: 13, textAlign: 'center' }}>
+              {message}
+            </div>
+          )}
 
           {svgData && (
             <div style={{ position: 'relative', width: '100%', height: 200 }}>
@@ -315,7 +287,7 @@ export default function Forecast() {
                   </linearGradient>
                 </defs>
 
-                {/* Confidence Area */}
+                {/* Approximate bounds area */}
                 <path d={svgData.confidenceArea} fill="url(#fore-grad)" />
 
                 {/* Trajectory Line */}
@@ -356,28 +328,28 @@ export default function Forecast() {
               <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--color-surface-secondary)' }}>
                 <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', fontWeight: 700 }}>MEAN ABSOLUTE PCT ERROR</div>
                 <div style={{ fontSize: 18, fontWeight: 900, color: '#16a34a', fontFamily: 'var(--font-mono)', marginTop: 2 }}>
-                  3.8% (HIGH ACCURACY)
+                  {metrics ? `${metrics.mape_pct.toFixed(2)}%` : '—'}
                 </div>
               </div>
 
               <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--color-surface-secondary)' }}>
-                <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', fontWeight: 700 }}>COEFFICIENT OF DETERMINATION</div>
-                <div style={{ fontSize: 18, fontWeight: 900, color: 'var(--color-brand-primary)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>
-                  R² = 0.94
+                  <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', fontWeight: 700 }}>MODEL VERSION</div>
+                  <div style={{ fontSize: 18, fontWeight: 900, color: 'var(--color-brand-primary)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>
+                  {metrics?.model_version ?? '—'}
                 </div>
               </div>
 
               <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--color-surface-secondary)' }}>
                 <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', fontWeight: 700 }}>TRAINING OBSERVATIONS</div>
                 <div style={{ fontSize: 18, fontWeight: 900, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>
-                  10,875 Verified Fares
+                  {metrics ? metrics.n_obs.toLocaleString('en-IN') : '—'}
                 </div>
               </div>
             </div>
           </div>
 
           <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', lineHeight: 1.5, marginTop: 14 }}>
-            Includes holiday demand multipliers (Gandhi Jayanti, Dussehra, Diwali) and DGCA route passenger load weighting.
+            Validation metrics and training counts are read from the backend response. No forecast is displayed when verified history is insufficient.
           </div>
         </div>
       </div>
@@ -392,12 +364,11 @@ export default function Forecast() {
           <thead>
             <tr>
               <th>Prediction Horizon</th>
-              <th>Target Travel Date</th>
-              <th>Forecast Median Fare</th>
-              <th>80% Lower Bound</th>
-              <th>95% Upper Bound</th>
-              <th>Seasonal Index</th>
-              <th>Expected Trend</th>
+              <th>Horizon Date</th>
+              <th>Point Forecast Fare</th>
+              <th>Approx Lower Bound</th>
+              <th>Approx Upper Bound</th>
+              <th>Currency</th>
             </tr>
           </thead>
           <tbody>
@@ -414,21 +385,7 @@ export default function Forecast() {
                 <td style={{ fontFamily: 'var(--font-mono)', color: '#ef4444' }}>
                   ₹{f.upper_bound.toLocaleString('en-IN')}
                 </td>
-                <td style={{ fontFamily: 'var(--font-mono)' }}>{f.seasonal_index}x</td>
-                <td>
-                  <span
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 4,
-                      fontSize: 11,
-                      fontWeight: 700,
-                      color: f.trend_direction === 'UP' ? '#ef4444' : f.trend_direction === 'DOWN' ? '#16a34a' : 'var(--color-text-secondary)',
-                    }}
-                  >
-                    {f.trend_direction === 'UP' ? '▲ RISING' : f.trend_direction === 'DOWN' ? '▼ SOFTENING' : '● STABLE'}
-                  </span>
-                </td>
+                <td style={{ fontFamily: 'var(--font-mono)' }}>INR</td>
               </tr>
             ))}
           </tbody>

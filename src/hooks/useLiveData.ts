@@ -8,11 +8,11 @@
  *   - connectionStatus="delayed" when backend is up but no real observations exist yet.
  *
  * No synthetic price variance. No fake LIVE indicators.
- * Flight positions are always synthetic and always labelled as such.
  */
 import { useState, useEffect } from 'react'
-import { type Corridor } from '../data/sampleData'
 import { apiDashboard, BASE_URL, isBackendAvailable } from '../services/api'
+
+type Corridor = never
 
 export interface LiveFlight {
   icao24: string
@@ -47,27 +47,6 @@ function formatTimestamp(): string {
     hour12: false, timeZone: 'Asia/Kolkata',
   }) + ' IST'
 }
-
-// Synthetic flight blips — static module-level constant so they don't shift hook counts
-const SYNTHETIC_FLIGHTS: LiveFlight[] = (() => {
-  const waypoints: [number, number, string][] = [
-    [28.56, 77.10, 'IGO123'], [19.09, 72.87, 'AIC456'], [13.20, 77.71, 'SGD789'],
-    [22.65, 88.45, 'QPA012'], [17.24, 78.43, 'IGO345'], [12.99, 80.17, 'AIC678'],
-    [26.82, 75.81, 'SGD901'], [15.38, 73.83, 'IGO234'], [10.15, 76.40, 'AIC567'],
-    [23.08, 72.63, 'IGO890'], [20.24, 85.82, 'AIC123'], [26.11, 91.59, 'IGO456'],
-    [30.67, 76.79, 'SGD012'], [8.90,  77.45, 'AIC789'], [25.59, 85.09, 'IGO321'],
-  ]
-  return waypoints.map(([lat, lng, callsign], i) => ({
-    icao24: `syn${i.toString().padStart(4, '0')}`,
-    callsign,
-    lat: lat + (Math.random() - 0.5) * 1.5,
-    lng: lng + (Math.random() - 0.5) * 1.5,
-    altitude: 8000 + Math.random() * 4000,
-    velocity: 200 + Math.random() * 150,
-    heading: Math.random() * 360,
-    origin_country: 'India',
-  }))
-})()
 
 export function useLiveData(): UseLiveDataResult {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('offline')

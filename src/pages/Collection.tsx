@@ -1,8 +1,7 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Button } from '../components/ui/Button'
 import { Play, RefreshCw, Database, CheckCircle, Clock, Zap, Activity, ShieldCheck } from 'lucide-react'
 import { apiCollections, apiTriggerCollection, apiSourceHealth, isBackendAvailable } from '../services/api'
-import { fetchLiveFlights } from '../services/flightData'
 import { useAuth } from '../contexts/AuthContext'
 
 interface CollectionRun {
@@ -29,28 +28,6 @@ interface SourceHealthItem {
   latency_ms_avg?: number
 }
 
-const DEFAULT_SOURCES: SourceHealthItem[] = []
-/* Historical fixture rows are intentionally not shown as live source health. */
-/*
-  { source_id: 'indigo-direct',  source_name: 'IndiGo Direct Collector',     source_type: 'Direct API / Scraper',  status: 'LIVE', records_total: 24190, latency_ms_avg: 74,  last_success: new Date(Date.now() - 120_000).toISOString(), last_attempt: new Date().toISOString() },
-  { source_id: 'airindia-gds',   source_name: 'Air India GDS / NDC Feed',     source_type: 'GDS / Amadeus NDC',     status: 'LIVE', records_total: 11480, latency_ms_avg: 110, last_success: new Date(Date.now() - 180_000).toISOString(), last_attempt: new Date().toISOString() },
-  { source_id: 'spicejet-api',   source_name: 'SpiceJet Webhook Stream',     source_type: 'Navitaire Webhook',     status: 'LIVE', records_total: 4890,  latency_ms_avg: 88,  last_success: new Date(Date.now() - 240_000).toISOString(), last_attempt: new Date().toISOString() },
-  { source_id: 'akasa-direct',   source_name: 'Akasa Air Direct Feed',       source_type: 'Direct API Stream',     status: 'LIVE', records_total: 3920,  latency_ms_avg: 95,  last_success: new Date(Date.now() - 300_000).toISOString(), last_attempt: new Date().toISOString() },
-  { source_id: 'aiexpress-feed', source_name: 'Air India Express Collector', source_type: 'Direct API',            status: 'LIVE', records_total: 4110,  latency_ms_avg: 82,  last_success: new Date(Date.now() - 360_000).toISOString(), last_attempt: new Date().toISOString() },
-  { source_id: 'dgca-stats',     source_name: 'DGCA Monthly Passenger Stats',source_type: 'Official DGCA Portal',  status: 'LIVE', records_total: 10875, latency_ms_avg: 64,  last_success: new Date(Date.now() - 600_000).toISOString(), last_attempt: new Date().toISOString() },
-  { source_id: 'mospi-cpi',      source_name: 'MoSPI CPI Transport Series',  source_type: 'MoSPI eSankhyiki API',  status: 'LIVE', records_total: 3450,  latency_ms_avg: 55,  last_success: new Date(Date.now() - 720_000).toISOString(), last_attempt: new Date().toISOString() },
-  { source_id: 'adsb-radar',     source_name: 'AviationStack / ADS-B Telemetry', source_type: '1090 MHz Transponder', status: 'LIVE', records_total: 5420,  latency_ms_avg: 42,  last_success: new Date(Date.now() - 60_000).toISOString(),  last_attempt: new Date().toISOString() },
-]
-*/
-
-const DEFAULT_RUNS: CollectionRun[] = []
-/*
-  { run_id: 'RUN-20260921-04', triggered_by: 'CRON_SCHEDULER', status: 'COMPLETED', routes_planned: 24, routes_done: 24, observations_collected: 12450, observations_rejected: 0, started_at: new Date(Date.now() - 15*60_000).toISOString(), ended_at: new Date(Date.now() - 14*60_000).toISOString() },
-  { run_id: 'RUN-20260921-03', triggered_by: 'CRON_SCHEDULER', status: 'COMPLETED', routes_planned: 24, routes_done: 24, observations_collected: 11890, observations_rejected: 0, started_at: new Date(Date.now() - 75*60_000).toISOString(), ended_at: new Date(Date.now() - 74*60_000).toISOString() },
-  { run_id: 'RUN-20260921-02', triggered_by: 'ADMIN',          status: 'COMPLETED', routes_planned: 24, routes_done: 24, observations_collected: 10875, observations_rejected: 0, started_at: new Date(Date.now() - 135*60_000).toISOString(), ended_at: new Date(Date.now() - 134*60_000).toISOString() },
-]
-*/
-
 function relativeTime(iso: string | null | undefined): string {
   if (!iso) return '—'
   const diff = Date.now() - new Date(iso).getTime()
@@ -61,87 +38,58 @@ function relativeTime(iso: string | null | undefined): string {
 }
 
 export default function Collection() {
-  const { user } = useAuth()
-  const [runs, setRuns] = useState<CollectionRun[]>(DEFAULT_RUNS)
-  const [sourceHealth, setSourceHealth] = useState<SourceHealthItem[]>(DEFAULT_SOURCES)
+  const { user, token } = useAuth()
+  const [runs, setRuns] = useState<CollectionRun[]>([])
+  const [sourceHealth, setSourceHealth] = useState<SourceHealthItem[]>([])
   const [loading, setLoading] = useState(false)
   const [triggering, setTriggering] = useState(false)
-  const [simOpen, setSimOpen] = useState(false)
-  const [simProgress, setSimProgress] = useState(0)
-  const [simStage, setSimStage] = useState(0)
-  const [simFlightCount, setSimFlightCount] = useState<number | null>(null)
-  const simTimers = useRef<ReturnType<typeof setTimeout>[]>([])
+  const [requestOpen, setRequestOpen] = useState(false)
+  const [triggerMessage, setTriggerMessage] = useState<string | null>(null)
 
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
       if (await isBackendAvailable()) {
         const [runsResp, healthResp] = await Promise.allSettled([
-          apiCollections(),
-          apiSourceHealth(),
+          apiCollections(token ?? undefined),
+          apiSourceHealth(token ?? undefined),
         ])
         if (runsResp.status === 'fulfilled') {
           const raw = runsResp.value as unknown as { runs?: CollectionRun[] }
-          if (raw.runs && raw.runs.length > 0) setRuns(raw.runs)
+          setRuns(raw.runs ?? [])
         }
         if (healthResp.status === 'fulfilled') {
           const raw = healthResp.value as unknown as { sources?: SourceHealthItem[] } | SourceHealthItem[]
-          if (Array.isArray(raw) && raw.length > 0) setSourceHealth(raw)
-          else if ('sources' in raw && raw.sources && raw.sources.length > 0) setSourceHealth(raw.sources)
+          if (Array.isArray(raw)) setSourceHealth(raw)
+          else if ('sources' in raw) setSourceHealth(raw.sources ?? [])
         }
       }
     } catch {
-      // Keep rich default active state
+      setRuns([])
+      setSourceHealth([])
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [token])
 
   useEffect(() => { loadData() }, [loadData])
 
   async function handleTrigger() {
     setTriggering(true)
-    setSimOpen(true)
-    setSimProgress(0)
-    setSimStage(0)
-    setSimFlightCount(null)
-
-    fetchLiveFlights('DEL').then(r => {
-      setSimFlightCount(r.flights.length)
-    }).catch(() => setSimFlightCount(42))
-
-    const stages = [
-      { pct: 25, delay: 400 },
-      { pct: 55, delay: 1000 },
-      { pct: 85, delay: 1800 },
-      { pct: 100, delay: 2600 },
-    ]
-    stages.forEach(({ pct, delay }, i) => {
-      const t = setTimeout(() => {
-        setSimProgress(pct)
-        setSimStage(i + 1)
-        if (i === stages.length - 1) {
-          setTriggering(false)
-          // Add a new completed run
-          const newRun: CollectionRun = {
-            run_id: `RUN-${Date.now().toString().slice(-6)}`,
-            triggered_by: user?.email ?? 'ADMIN',
-            status: 'COMPLETED',
-            routes_planned: 24,
-            routes_done: 24,
-            observations_collected: 14280,
-            observations_rejected: 0,
-            started_at: new Date().toISOString(),
-            ended_at: new Date().toISOString(),
-          }
-          setRuns(prev => [newRun, ...prev])
-        }
-      }, delay)
-      simTimers.current.push(t)
-    })
+    setRequestOpen(true)
+    setTriggerMessage(null)
+    try {
+      const result = await apiTriggerCollection(token ?? undefined)
+      setTriggerMessage(result?.message ?? 'The backend accepted the collection request.')
+      await loadData()
+    } catch (cause) {
+      setTriggerMessage(cause instanceof Error ? cause.message : 'The backend rejected the collection request.')
+    } finally {
+      setTriggering(false)
+    }
   }
 
-  const liveCount = sourceHealth.length
+  const liveCount = sourceHealth.filter(source => source.status === 'LIVE').length
   const totalObs = sourceHealth.reduce((sum, s) => sum + (s.records_total ?? 0), 0)
   const lastRun = runs[0]
 
@@ -165,7 +113,7 @@ export default function Collection() {
                     Data Ingestion &amp; Pipeline Engine
                   </h1>
                   <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', fontFamily: 'var(--font-mono)' }}>
-                    Continuous Multi-Source Acquisition · 8 Active Channels
+                    Backend collection control · {liveCount} live source{liveCount === 1 ? '' : 's'}
                   </span>
                 </div>
               </div>
@@ -187,31 +135,16 @@ export default function Collection() {
         </div>
       </div>
 
-      {/* Simulation Box */}
-      {simOpen && (
+      {/* Backend request status */}
+      {requestOpen && (
         <div style={{ background: 'var(--color-surface-bg)', border: '1px solid var(--color-brand-primary)40', borderRadius: 'var(--radius-xl)', padding: 'var(--space-xl)' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-md)' }}>
-            <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--color-brand-primary)', fontFamily: 'var(--font-mono)' }}>LIVE HARVEST SIMULATION</span>
-            <button onClick={() => setSimOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', fontSize: 16 }}>×</button>
+            <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--color-brand-primary)', fontFamily: 'var(--font-mono)' }}>BACKEND COLLECTION REQUEST</span>
+            <button onClick={() => setRequestOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', fontSize: 16 }}>×</button>
           </div>
-          <div style={{ height: 6, background: 'var(--color-surface-secondary)', borderRadius: 'var(--radius-full)', overflow: 'hidden', marginBottom: 'var(--space-lg)' }}>
-            <div style={{ height: '100%', width: `${simProgress}%`, background: simProgress === 100 ? 'var(--color-success)' : 'var(--color-brand-primary)', transition: 'width 0.4s ease' }} />
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-            <div style={{ color: simStage >= 1 ? 'var(--color-success)' : 'var(--color-text-tertiary)' }}>
-              {simStage >= 1 ? '✓' : '○'} Stage 1: Ingesting IndiGo direct quotes... {simStage >= 1 ? 'SUCCESS (4,820 fares)' : ''}
-            </div>
-            <div style={{ color: simStage >= 2 ? 'var(--color-success)' : 'var(--color-text-tertiary)' }}>
-              {simStage >= 2 ? '✓' : '○'} Stage 2: Ingesting Air India GDS / NDC stream... {simStage >= 2 ? 'SUCCESS (2,940 fares)' : ''}
-            </div>
-            <div style={{ color: simStage >= 3 ? 'var(--color-success)' : 'var(--color-text-tertiary)' }}>
-              {simStage >= 3 ? '✓' : '○'} Stage 3: Live ADS-B radar synchronization... {simStage >= 3 ? `COMPLETE (${simFlightCount ?? 42} aircraft)` : ''}
-            </div>
-            {simStage >= 4 && (
-              <div style={{ marginTop: 8, padding: '10px 14px', background: 'var(--color-success-bg)', border: '1px solid rgba(22,163,74,0.3)', borderRadius: 'var(--radius-sm)', color: 'var(--color-success)', fontSize: 12, lineHeight: 1.5 }}>
-                ✓ Harvest complete! 14,280 fare observations verified and calibrated into the Jevons Index model.
-              </div>
-            )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text-secondary)' }}>
+            <div>{triggering ? 'Sending request to backend collection worker...' : triggerMessage ?? 'No collection request is currently running.'}</div>
+            <div style={{ marginTop: 8, fontFamily: 'var(--font-sans)', fontSize: 11, lineHeight: 1.5, color: 'var(--color-text-tertiary)' }}>Counts and source results below are refreshed from the backend; this panel does not invent progress or observation totals.</div>
           </div>
         </div>
       )}
@@ -219,10 +152,10 @@ export default function Collection() {
       {/* Summary stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 'var(--space-md)' }}>
         {[
-          { label: 'SOURCES ONLINE', value: `${liveCount} / 8`, color: 'var(--color-success)', icon: ShieldCheck },
+          { label: 'SOURCES LIVE', value: `${liveCount} / ${sourceHealth.length}`, color: liveCount ? 'var(--color-success)' : 'var(--color-warning)', icon: ShieldCheck },
           { label: 'TOTAL OBSERVATIONS', value: totalObs.toLocaleString('en-IN'), color: 'var(--color-brand-primary)', icon: Database },
-          { label: 'LAST HARVEST', value: lastRun ? relativeTime(lastRun.started_at) : 'Just now', color: 'var(--color-text-secondary)', icon: Clock },
-          { label: 'HARVEST STATUS', value: 'CHECKED', color: 'var(--color-success)', icon: Activity },
+          { label: 'LAST COLLECTION', value: lastRun ? relativeTime(lastRun.started_at) : '—', color: 'var(--color-text-secondary)', icon: Clock },
+          { label: 'COLLECTION STATUS', value: lastRun?.status ?? 'NO RUNS', color: lastRun?.status === 'COMPLETED' ? 'var(--color-success)' : 'var(--color-warning)', icon: Activity },
         ].map(({ label, value, color, icon: Icon }) => (
           <div key={label} className="ap-card" style={{ padding: 'var(--space-lg)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)', marginBottom: 'var(--space-sm)' }}>
@@ -240,7 +173,7 @@ export default function Collection() {
           ACTIVE COLLECTOR CHANNELS
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {sourceHealth.map(s => (
+          {sourceHealth.length ? sourceHealth.map(s => (
             <div key={s.source_id} style={{
               background: 'var(--color-surface-secondary)', border: '1px solid var(--color-border-primary)',
               borderRadius: 'var(--radius-md)', padding: '12px 16px', display: 'flex', alignItems: 'center',
@@ -259,12 +192,16 @@ export default function Collection() {
                   <div style={{ fontSize: 9, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>LATENCY</div>
                   <div style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--color-brand-primary)', fontWeight: 600 }}>{s.latency_ms_avg} ms</div>
                 </div>
-                <span style={{ fontSize: 9, fontWeight: 700, padding: '3px 8px', borderRadius: 99, background: 'var(--color-success-bg)', color: 'var(--color-success)', border: '1px solid rgba(22,163,74,0.3)' }}>
-                  ● LIVE
+                <span style={{ fontSize: 9, fontWeight: 700, padding: '3px 8px', borderRadius: 99, background: s.status === 'LIVE' ? 'var(--color-success-bg)' : 'var(--color-warning-bg)', color: s.status === 'LIVE' ? 'var(--color-success)' : 'var(--color-warning)', border: `1px solid ${s.status === 'LIVE' ? 'rgba(22,163,74,0.3)' : 'rgba(217,119,6,0.3)'}` }}>
+                  {s.status}
                 </span>
               </div>
             </div>
-          ))}
+          )) : (
+            <div style={{ padding: 18, border: '1px dashed var(--color-border-primary)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-secondary)', fontSize: 12 }}>
+              {loading ? 'Loading collector channels from backend...' : 'No collector channels were returned by the backend.'}
+            </div>
+          )}
         </div>
       </div>
 
@@ -282,7 +219,7 @@ export default function Collection() {
             </tr>
           </thead>
           <tbody>
-            {runs.map(r => (
+            {runs.length ? runs.map(r => (
               <tr key={r.run_id}>
                 <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--color-brand-primary)' }}>{r.run_id}</td>
                 <td style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>{r.triggered_by}</td>
@@ -291,11 +228,17 @@ export default function Collection() {
                 <td style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{relativeTime(r.ended_at)}</td>
                 <td>
                   <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 99, background: 'var(--color-success-bg)', color: 'var(--color-success)', border: '1px solid rgba(22,163,74,0.3)' }}>
-                    COMPLETED
+                    {r.status}
                   </span>
                 </td>
               </tr>
-            ))}
+            )) : (
+              <tr>
+                <td colSpan={6} style={{ padding: 18, color: 'var(--color-text-secondary)' }}>
+                  {loading ? 'Loading harvest runs from backend...' : 'No backend harvest runs were returned.'}
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>

@@ -6,6 +6,7 @@ from app.core.database import get_db
 from app.core.auth import get_current_user
 from app.models.fare import FareObservation
 from app.models.collection import CollectionRun, SourceHealth
+from app.services.source_health import is_live_now
 from app.models.government import DgcaMonthlyRecord, MospiTransportSeries
 from app.models.index import IndexObservation
 
@@ -176,7 +177,7 @@ async def dashboard_summary(
 
     sources = await db.execute(select(SourceHealth))
     source_rows = sources.scalars().all()
-    live_sources = [s for s in source_rows if s.status == "LIVE"]
+    live_sources = [s for s in source_rows if is_live_now(s)]
     challenge_sources = [s for s in source_rows if s.status == "CHALLENGE_DETECTED"]
 
     last_run = await db.scalar(
@@ -199,6 +200,12 @@ async def dashboard_summary(
         .order_by(IndexObservation.calculation_ts.desc())
         .limit(1)
     )
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    collection_runs_today = await db.scalar(
+        select(func.count()).select_from(CollectionRun)
+        .where(CollectionRun.started_at >= day_start)
+        .where(CollectionRun.status.in_(["COMPLETED", "PARTIAL"]))
+    ) or 0
     current_fare_rate = await db.scalar(
         select(func.avg(FareObservation.total_fare))
         .where(FareObservation.data_origin.in_(["REAL", "OFFICIAL"]))
@@ -231,7 +238,7 @@ async def dashboard_summary(
         "sources_live": len(live_sources),
         "sources_challenge_detected": len(challenge_sources),
         "gov_datasets_connected": 1 if dgca_latest else 0,
-        "collection_runs_today": 0,
+        "collection_runs_today": collection_runs_today,
         "index_status": index_status,
         "index_value": index_value,
         "current_fare_rate": round(current_fare_rate, 2) if current_fare_rate is not None else None,

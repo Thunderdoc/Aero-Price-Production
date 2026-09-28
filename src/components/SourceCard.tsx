@@ -8,6 +8,11 @@ interface AirfareSourceCardProps {
 }
 
 const AIRFARE_STATUS_CONFIG = {
+  LIVE: { label: 'LIVE', color: 'var(--color-success)', bg: 'var(--color-success-bg)', icon: CheckCircle, borderColor: 'var(--color-success)', badgeCls: 'ap-badge ap-badge-live' },
+  CONFIGURED: { label: 'CONFIGURED', color: 'var(--color-info)', bg: 'var(--color-info-bg)', icon: Clock, borderColor: 'var(--color-info)', badgeCls: 'ap-badge ap-badge-official' },
+  STALE_DATA: { label: 'STALE DATA', color: 'var(--color-warning)', bg: 'var(--color-warning-bg)', icon: Clock, borderColor: 'var(--color-warning)', badgeCls: 'ap-badge ap-badge-gen' },
+  DEGRADED: { label: 'DEGRADED', color: 'var(--color-warning)', bg: 'var(--color-warning-bg)', icon: AlertTriangle, borderColor: 'var(--color-warning)', badgeCls: 'ap-badge ap-badge-gen' },
+  NO_DATA: { label: 'NO DATA', color: 'var(--color-warning)', bg: 'var(--color-warning-bg)', icon: Clock, borderColor: 'var(--color-warning)', badgeCls: 'ap-badge ap-badge-gen' },
   CHALLENGE_DETECTED: { label: 'CHALLENGE DETECTED', color: 'var(--color-warning)', bg: 'var(--color-warning-bg)', icon: AlertTriangle, borderColor: 'var(--color-warning)', badgeCls: 'ap-badge ap-badge-gen' },
   SOURCE_BLOCKED: { label: 'SOURCE BLOCKED', color: 'var(--color-danger)', bg: 'var(--color-danger-bg)', icon: XCircle, borderColor: 'var(--color-danger)', badgeCls: 'ap-badge ap-badge-offline' },
   AUTH_REQUIRED: { label: 'AUTH REQUIRED', color: 'var(--color-info)', bg: 'var(--color-info-bg)', icon: Shield, borderColor: 'var(--color-info)', badgeCls: 'ap-badge ap-badge-official' },
@@ -20,7 +25,7 @@ const AIRFARE_STATUS_CONFIG = {
 export function AirfareSourceCard({ source }: AirfareSourceCardProps) {
   const cfg = AIRFARE_STATUS_CONFIG[source.status]
   const Icon = cfg.icon
-  const isActive = source.status === 'CONNECTED' || source.status === 'HEALTHY'
+  const isActive = source.status === 'LIVE' || source.status === 'CONNECTED' || source.status === 'HEALTHY'
 
   return (
     <div className="ap-card" style={{ padding: 'var(--space-xl)', display: 'flex', flexDirection: 'column', gap: 'var(--space-md)', borderLeft: `3px solid ${cfg.borderColor}` }}>
@@ -43,7 +48,7 @@ export function AirfareSourceCard({ source }: AirfareSourceCardProps) {
           { label: 'robots.txt', value: source.robots_txt },
           { label: 'CAPTCHA', value: source.captcha_detected ? 'DETECTED' : 'NONE' },
           { label: 'Public API', value: source.api_available ? 'YES' : 'NO' },
-          { label: 'Last Attempt', value: source.last_attempt ? 'Just now' : '—' },
+          { label: 'Last Attempt', value: source.last_attempt ? new Date(source.last_attempt).toLocaleString('en-IN') : 'Never' },
         ].map(r => (
           <div key={r.label}>
             <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--color-text-tertiary)', letterSpacing: '0.07em', fontFamily: 'var(--font-sans)' }}>{r.label}</div>
@@ -56,7 +61,7 @@ export function AirfareSourceCard({ source }: AirfareSourceCardProps) {
         {source.status_reason}
       </div>
 
-      <a
+      {source.source_url && <a
         href={source.source_url}
         target="_blank"
         rel="noopener noreferrer"
@@ -64,7 +69,7 @@ export function AirfareSourceCard({ source }: AirfareSourceCardProps) {
       >
         <ExternalLink size={11} />
         {source.source_url.replace('https://', '')}
-      </a>
+      </a>}
     </div>
   )
 }
