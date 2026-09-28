@@ -11,6 +11,7 @@
  */
 import { useState, useEffect } from 'react'
 import { apiDashboard, BASE_URL, isBackendAvailable } from '../services/api'
+import { useAuth } from '../contexts/AuthContext'
 
 type Corridor = never
 
@@ -49,6 +50,7 @@ function formatTimestamp(): string {
 }
 
 export function useLiveData(): UseLiveDataResult {
+  const { token } = useAuth()
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('offline')
   const [indexValue, setIndexValue] = useState<number | null>(null)
   const [indexChange7d] = useState<number | null>(null)
@@ -63,12 +65,16 @@ export function useLiveData(): UseLiveDataResult {
         setConnectionStatus('offline')
         return
       }
-      const dash = await apiDashboard()
+      if (!token) {
+        setConnectionStatus('offline')
+        return
+      }
+      const dash = await apiDashboard(token)
       setRealObservations(dash.real_observations ?? 0)
       setSourcesLive(dash.sources_live ?? 0)
       setIndexValue(dash.index_value ?? null)
       setLastUpdated(formatTimestamp())
-      setConnectionStatus(dash.real_observations > 0 ? 'live' : 'delayed')
+      setConnectionStatus((dash.sources_live ?? 0) > 0 ? 'live' : 'delayed')
       const flightResponse = await fetch(`${BASE_URL}/api/aviation/live?limit=150`, { signal: AbortSignal.timeout(8000) })
       if (!flightResponse.ok) throw new Error('aviation feed unavailable')
       const flightBody = await flightResponse.json() as { aircraft?: Array<Record<string, unknown>> }
@@ -89,7 +95,7 @@ export function useLiveData(): UseLiveDataResult {
     fetchDashboard()
     const timer = setInterval(fetchDashboard, REFRESH_MS)
     return () => clearInterval(timer)
-  }, [])
+  }, [token])
 
   return {
     corridors: [],            // no synthetic corridors — pages should use API directly
