@@ -535,6 +535,10 @@ export async function apiUpdateFeedback(id: string, status: 'NEW' | 'REVIEWED', 
   })
 }
 
+export async function apiDeleteFeedback(id: string, token?: string) {
+  return apiFetch(`/api/admin/feedback/${encodeURIComponent(id)}`, token, { method: 'DELETE' })
+}
+
 export async function apiCreateAccessRequest(featureKey: string, featureName: string, token?: string) {
   return apiFetch('/api/access-requests', token, {
     method: 'POST',
@@ -561,6 +565,10 @@ export async function apiRejectAccessRequest(id: string, reason?: string, token?
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ rejection_reason: reason || null }),
   })
+}
+
+export async function apiDeleteAccessRequest(id: string, token?: string) {
+  return apiFetch(`/api/admin/access-requests/${encodeURIComponent(id)}`, token, { method: 'DELETE' })
 }
 
 export async function apiNotifications(token?: string) {

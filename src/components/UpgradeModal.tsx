@@ -9,47 +9,31 @@ interface Props { onClose: () => void; feature?: string; featureKey?: string }
 export default function UpgradeModal({ onClose, feature = 'Price Alerts', featureKey = 'PRICE_ALERTS' }: Props) {
   const { user, token } = useAuth()
   const [message, setMessage] = useState('')
-  const existing = (() => {
-    try { return JSON.parse(localStorage.getItem('aeroprice_access_requests') || '[]') as Array<{ email?: string; featureKey?: string; status?: string; rejectionReason?: string }> } catch { return [] }
-  })()
-  const current = existing.find(request => request.email === user?.email && request.featureKey === featureKey)
-  const [status, setStatus] = useState(current?.status ?? null)
-  const [rejectionReason, setRejectionReason] = useState(current?.rejectionReason ?? '')
+  const [status, setStatus] = useState<string | null>(null)
+  const [rejectionReason, setRejectionReason] = useState('')
 
   useEffect(() => {
-    if (!user?.email) return
-    apiMyAccessRequests(token ?? undefined).then(result => {
+    if (!user?.email || !token) return
+    apiMyAccessRequests(token).then(result => {
       const request = (result?.requests ?? []).find((entry: any) => entry.feature_key === featureKey)
       if (!request) return
       setStatus(request.status)
       setRejectionReason(request.rejection_reason ?? '')
-      const local = (() => {
-        try { return JSON.parse(localStorage.getItem('aeroprice_access_requests') || '[]') as Array<Record<string, unknown>> } catch { return [] }
-      })()
-      const synced = [...local.filter(entry => !(entry.email === user.email && entry.featureKey === featureKey)), { id: request.id, email: user.email, name: user.name, feature, featureKey, status: request.status, createdAt: request.created_at, reviewedAt: request.reviewed_at, rejectionReason: request.rejection_reason }]
-      localStorage.setItem('aeroprice_access_requests', JSON.stringify(synced))
-    }).catch(() => {
-      // The local queue remains the fallback for an offline backend.
-    })
+    }).catch(() => setMessage('Unable to check access status. Please retry when the service is available.'))
   }, [feature, featureKey, token, user?.email, user?.name])
 
   async function requestAccess() {
     if (!user?.email) { setMessage('Please sign in before requesting access.'); return }
-    if (current?.status === 'PENDING') { setMessage('Your request is already under review.'); return }
-    let nextRequest = { id: `REQ-${Date.now().toString(36).toUpperCase()}`, email: user.email, name: user.name, feature, featureKey, status: 'PENDING', createdAt: new Date().toISOString() }
+    if (!token) { setMessage('Your session is not ready. Please sign in again.'); return }
+    if (status === 'PENDING') { setMessage('Your request is already under review.'); return }
     try {
-      const result = await apiCreateAccessRequest(featureKey, feature, token ?? undefined) as { id?: string; status?: string; created_at?: string }
-      nextRequest = { ...nextRequest, id: result.id ?? nextRequest.id, status: result.status ?? 'PENDING', createdAt: result.created_at ?? nextRequest.createdAt }
-    } catch {
-      // Keep the browser queue so the local admin workflow still works offline.
+      const result = await apiCreateAccessRequest(featureKey, feature, token) as { status?: string }
+      const nextStatus = result.status ?? 'PENDING'
+      setStatus(nextStatus)
+      setMessage(nextStatus === 'APPROVED' ? 'Access is already approved.' : 'Request submitted. The administrator will review it and notify you after a decision.')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The request could not be saved. Please retry.')
     }
-    const next = [
-      ...existing.filter(request => !(request.email === user.email && request.featureKey === featureKey)),
-      nextRequest,
-    ]
-    localStorage.setItem('aeroprice_access_requests', JSON.stringify(next))
-    setStatus(nextRequest.status)
-    setMessage(nextRequest.status === 'APPROVED' ? 'Access is already approved.' : 'Request submitted. The administrator will review it and notify you after a decision.')
   }
 
   return (

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
 import { useAuth } from '../contexts/AuthContext'
-import { apiAdminAccessRequests, apiAdminFeedback, apiAdminUsers, apiApproveAccessRequest, apiAuditLog, apiRejectAccessRequest, apiUpdateFeedback, apiSources, apiDashboard, apiHealth, apiSystemParameters, isBackendAvailable, type SystemParametersResponse } from '../services/api'
+import { apiAdminAccessRequests, apiAdminFeedback, apiAdminUsers, apiApproveAccessRequest, apiAuditLog, apiDeleteAccessRequest, apiDeleteFeedback, apiRejectAccessRequest, apiUpdateFeedback, apiSources, apiDashboard, apiHealth, apiSystemParameters, isBackendAvailable, type SystemParametersResponse } from '../services/api'
 import { CheckCircle, ShieldCheck, Activity, RefreshCw, Download, Plus, Trash2, XCircle, MailCheck, MessageSquare, Check } from 'lucide-react'
 import indiaMap from '../assets/india_map_clean.png'
 
@@ -190,62 +190,43 @@ export default function AdminDashboard() {
     } catch { /* local notifications are best effort */ }
   }
 
-  function approveFeatureRequest(id: string) {
-    setAccessRequests(prev => {
-      const request = prev.find(item => item.id === id)
-      const next = prev.map(r => r.id === id ? { ...r, status: 'APPROVED', reviewedAt: new Date().toISOString() } : r)
-      localStorage.setItem('aeroprice_access_requests', JSON.stringify(next))
-      notifyFeatureDecision(request?.email, true, request?.feature || 'the requested feature')
-      return next
-    })
-    void apiApproveAccessRequest(id, token ?? undefined).catch(() => {
-      // Local storage remains the fallback for a request created while offline.
-    })
-    showToast('Feature access approved. The user will see the update after refresh.')
+  async function approveFeatureRequest(id: string) {
+    try {
+      const result = await apiApproveAccessRequest(id, token ?? undefined) as { status: string; reviewed_at?: string }
+      setAccessRequests(prev => prev.map(r => r.id === id ? { ...r, status: result.status, reviewedAt: result.reviewed_at } : r))
+      showToast('Feature access approved. The user will see the update after refresh.')
+    } catch (error) { showToast(error instanceof Error ? error.message : 'Could not approve access request.') }
   }
 
-  function rejectFeatureRequest(id: string) {
-    setAccessRequests(prev => {
-      const request = prev.find(item => item.id === id)
-      const next = prev.map(r => r.id === id ? { ...r, status: 'REJECTED', reviewedAt: new Date().toISOString(), rejectionReason: 'Not approved by the administrator.' } : r)
-      localStorage.setItem('aeroprice_access_requests', JSON.stringify(next))
-      notifyFeatureDecision(request?.email, false, request?.feature || 'the requested feature')
-      return next
-    })
-    void apiRejectAccessRequest(id, 'Not approved by the administrator.', token ?? undefined).catch(() => {
-      // Local storage remains the fallback for a request created while offline.
-    })
-    showToast('Feature access request rejected.')
+  async function rejectFeatureRequest(id: string) {
+    try {
+      const result = await apiRejectAccessRequest(id, 'Not approved by the administrator.', token ?? undefined) as { status: string; reviewed_at?: string; rejection_reason?: string }
+      setAccessRequests(prev => prev.map(r => r.id === id ? { ...r, status: result.status, reviewedAt: result.reviewed_at, rejectionReason: result.rejection_reason } : r))
+      showToast('Feature access request rejected.')
+    } catch (error) { showToast(error instanceof Error ? error.message : 'Could not reject access request.') }
   }
 
-  function removeAccessRequest(id: string) {
-    setAccessRequests(prev => {
-      const next = prev.filter(r => r.id !== id)
-      localStorage.setItem('aeroprice_access_requests', JSON.stringify(next))
-      return next
-    })
-    showToast('Access request cleared; user can request again')
+  async function removeAccessRequest(id: string) {
+    try {
+      await apiDeleteAccessRequest(id, token ?? undefined)
+      setAccessRequests(prev => prev.filter(r => r.id !== id))
+      showToast('Access request cleared; user can request again')
+    } catch (error) { showToast(error instanceof Error ? error.message : 'Could not clear access request.') }
   }
 
   function updateFeedback(id: string, status: FeedbackEntry['status']) {
-    setFeedback(prev => {
-      const next = prev.map(item => item.id === id ? { ...item, status } : item)
-      localStorage.setItem('aeroprice_feedback', JSON.stringify(next))
-      return next
-    })
-    void apiUpdateFeedback(id, status, token ?? undefined).catch(() => {
-      // Local storage remains the fallback for a temporarily unavailable API.
-    })
-    showToast(status === 'REVIEWED' ? 'Feedback marked as reviewed.' : 'Feedback marked as new.')
+    void apiUpdateFeedback(id, status, token ?? undefined).then(() => {
+      setFeedback(prev => prev.map(item => item.id === id ? { ...item, status } : item))
+      showToast(status === 'REVIEWED' ? 'Feedback marked as reviewed.' : 'Feedback marked as new.')
+    }).catch(error => showToast(error instanceof Error ? error.message : 'Could not update feedback.'))
   }
 
-  function removeFeedback(id: string) {
-    setFeedback(prev => {
-      const next = prev.filter(item => item.id !== id)
-      localStorage.setItem('aeroprice_feedback', JSON.stringify(next))
-      return next
-    })
-    showToast('Feedback removed from the admin queue.')
+  async function removeFeedback(id: string) {
+    try {
+      await apiDeleteFeedback(id, token ?? undefined)
+      setFeedback(prev => prev.filter(item => item.id !== id))
+      showToast('Feedback removed from the admin queue.')
+    } catch (error) { showToast(error instanceof Error ? error.message : 'Could not remove feedback.') }
   }
 
   useEffect(() => {
@@ -311,19 +292,12 @@ export default function AdminDashboard() {
     async function loadAccessRequests() {
       try {
         const result = await apiAdminAccessRequests(token ?? undefined)
-        if (Array.isArray(result?.requests) && result.requests.length > 0) {
+        if (Array.isArray(result?.requests)) {
           const requests = result.requests.map((entry: any) => ({ id: entry.id, email: entry.email, name: entry.name, feature: entry.feature, featureKey: entry.feature_key, status: entry.status, createdAt: entry.created_at, reviewedAt: entry.reviewed_at, rejectionReason: entry.rejection_reason }))
           setAccessRequests(requests)
-          localStorage.setItem('aeroprice_access_requests', JSON.stringify(requests))
           return
         }
-      } catch { /* use local queue below when backend is unavailable */ }
-      try {
-        const requests = JSON.parse(localStorage.getItem('aeroprice_access_requests') || '[]')
-        setAccessRequests(Array.isArray(requests) ? requests : [])
-      } catch {
-        setAccessRequests([])
-      }
+      } catch { setAccessRequests([]) }
     }
     void loadAccessRequests()
   }, [tab, token])
@@ -337,13 +311,7 @@ export default function AdminDashboard() {
           setFeedback(result.feedback.map((entry: any) => ({ id: entry.id, email: entry.email, name: entry.name, message: entry.message, status: entry.status === 'REVIEWED' ? 'REVIEWED' : 'NEW', createdAt: entry.created_at || new Date().toISOString() })))
           return
         }
-      } catch { /* use local queue below when backend is unavailable */ }
-      try {
-        const entries = JSON.parse(localStorage.getItem('aeroprice_feedback') || '[]')
-        setFeedback(Array.isArray(entries) ? entries : [])
-      } catch {
-        setFeedback([])
-      }
+      } catch { setFeedback([]) }
     }
     void loadFeedback()
   }, [tab, token])

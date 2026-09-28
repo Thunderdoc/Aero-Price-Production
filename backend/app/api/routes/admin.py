@@ -2,7 +2,7 @@
 Admin API: user management, source configuration, anomaly detection, audit log.
 All endpoints require ADMIN role.
 """
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -152,6 +152,15 @@ async def update_feedback(
     return {"id": entry.id, "status": entry.status}
 
 
+@router.delete("/admin/feedback/{feedback_id}")
+async def delete_feedback(feedback_id: str, current_user=Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    entry = await db.get(UserFeedback, feedback_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Feedback not found")
+    await db.delete(entry)
+    return {"status": "DELETED", "id": feedback_id}
+
+
 def _access_request_dict(entry: FeatureAccessRequest) -> dict:
     return {
         "id": entry.id,
@@ -184,6 +193,15 @@ async def create_access_request(
     db.add(entry)
     await db.flush()
     return _access_request_dict(entry)
+
+
+@router.delete("/admin/access-requests/{request_id}")
+async def delete_access_request(request_id: str, current_user=Depends(require_admin_or_local), db: AsyncSession = Depends(get_db)):
+    entry = await db.get(FeatureAccessRequest, request_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Access request not found")
+    await db.delete(entry)
+    return {"status": "DELETED", "id": request_id}
 
 
 @router.get("/access-requests")
