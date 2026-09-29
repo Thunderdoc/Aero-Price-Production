@@ -93,6 +93,12 @@ const GOV_STATUS_CONFIG = {
 export function GovSourceCard({ dataset }: GovSourceCardProps) {
   const cfg = GOV_STATUS_CONFIG[dataset.status]
   const Icon = cfg.icon
+  // DGCA's public portal can be reachable while its page contains no
+  // machine-readable table. Do not call that connected, but avoid implying
+  // the connector itself is broken.
+  const displayLabel = dataset.status === 'STALE' && dataset.source.toLowerCase().includes('dgca')
+    ? 'SOURCE REACHABLE'
+    : cfg.label
   const isActive = dataset.status === 'CONNECTED' || dataset.status === 'HEALTHY'
   const lastRetrieved = dataset.last_retrieved
     ? new Date(dataset.last_retrieved).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST'
@@ -110,7 +116,7 @@ export function GovSourceCard({ dataset }: GovSourceCardProps) {
         </div>
         <span className={cfg.badgeCls} style={{ flexShrink: 0 }}>
           <Icon size={11} />
-          {cfg.label}
+          {displayLabel}
         </span>
       </div>
 
