@@ -26,7 +26,7 @@ const ACTION_COLOR: Record<string, string> = {
 
 type Tab = 'overview' | 'users' | 'pipeline' | 'health' | 'access' | 'audit' | 'config' | 'feedback'
 
-type ManagedUser = { email: string; role: string; plan: string; name: string; lastLogin: string; status: string }
+type ManagedUser = { uid?: string; email: string; role: string; plan: string; name: string; lastLogin: string; status: string; provider?: string; verified?: boolean }
 const INITIAL_USERS: ManagedUser[] = []
 
 interface AuditEntry { ts: string; actor: string; action: string; detail: string }
@@ -44,6 +44,7 @@ export default function AdminDashboard() {
   const [usersLoading, setUsersLoading] = useState(false)
   const [usersLoaded, setUsersLoaded] = useState(false)
   const [usersError, setUsersError] = useState<string | null>(null)
+  const [nextUsersPage, setNextUsersPage] = useState<string | null>(null)
   const [newUser, setNewUser] = useState({ name: '', email: '', role: 'PUBLIC', plan: 'FREE' })
   const [accessRequests, setAccessRequests] = useState<AccessRequest[]>([])
   const [feedback, setFeedback] = useState<FeedbackEntry[]>([])
@@ -255,6 +256,9 @@ export default function AdminDashboard() {
             name: entry.name,
             lastLogin: entry.lastLogin || entry.last_login || 'Not recorded',
             status: entry.status || (entry.is_active === false ? 'INACTIVE' : 'ACTIVE'),
+            uid: entry.uid,
+            provider: Array.isArray(entry.providers) ? entry.providers.join(', ') : undefined,
+            verified: entry.email_verified,
             }))
           : []
 
@@ -265,6 +269,7 @@ export default function AdminDashboard() {
           setManagedUsers(uniqueUsers)
         }
         if (remoteUsers.length === 0 && result?.note) setUsersError(String(result.note))
+        setNextUsersPage(result?.next_page_token || null)
         setUsersLoaded(true)
       } catch (error) {
         setUsersError(error instanceof Error ? error.message : 'The authenticated user directory could not be loaded.')
@@ -275,6 +280,24 @@ export default function AdminDashboard() {
     }
     void loadUsers()
   }, [token, usersLoaded, tab])
+
+  async function loadNextUsersPage() {
+    if (!token || !nextUsersPage) return
+    setUsersLoading(true)
+    try {
+      const result = await apiAdminUsers(token, nextUsersPage)
+      const more = (result.users || []).filter((entry: any) => entry?.email).map((entry: any) => ({
+        uid: entry.uid, email: entry.email, role: entry.role, plan: entry.plan, name: entry.name,
+        lastLogin: entry.lastLogin || entry.last_login || 'Not recorded',
+        status: entry.status || (entry.is_active === false ? 'INACTIVE' : 'ACTIVE'),
+        provider: Array.isArray(entry.providers) ? entry.providers.join(', ') : undefined,
+        verified: entry.email_verified,
+      }))
+      setManagedUsers(prev => [...prev, ...more])
+      setNextUsersPage(result.next_page_token || null)
+    } catch (error) { setUsersError(error instanceof Error ? error.message : 'Could not load more users.') }
+    finally { setUsersLoading(false) }
+  }
 
   useEffect(() => {
     async function loadAudit() {
@@ -545,8 +568,8 @@ export default function AdminDashboard() {
               {usersLoading && managedUsers.length === 0 ? <tr><td colSpan={5}><div className="admin-empty-state"><RefreshCw size={18} className="spin" /><strong>Loading verified Firebase users…</strong><span>The directory is being loaded from the authenticated backend.</span></div></td></tr> : managedUsers.length === 0 ? <tr><td colSpan={5}><div className="admin-empty-state"><strong>No users returned</strong><span>{usersError || 'The backend returned no authenticated users.'}</span></div></td></tr> : managedUsers.map(u => (
                 <tr key={u.email}>
                   <td>
-                    <div style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>{u.name}</div>
-                    <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>{u.email}</div>
+                      <div style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>{u.name}</div>
+                    <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>{u.email}{u.verified ? ' · verified' : ''}</div>
                   </td>
                   <td>
                     <span className="ap-badge" style={{ background: ROLE_BADGE[u.role as keyof typeof ROLE_BADGE]?.bg, color: ROLE_BADGE[u.role as keyof typeof ROLE_BADGE]?.color }}>
@@ -569,6 +592,7 @@ export default function AdminDashboard() {
               ))}
             </tbody>
           </table>
+          {nextUsersPage && <div style={{ padding: 14, textAlign: 'center' }}><Button size="xs" variant="subtle" onClick={loadNextUsersPage} disabled={usersLoading}>{usersLoading ? 'Loading…' : 'Load more Firebase users'}</Button></div>}
           </div>
         </div>
       )}

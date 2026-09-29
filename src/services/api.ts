@@ -579,8 +579,9 @@ export async function apiSourceHealth(token?: string) {
 
 // ── Admin ──────────────────────────────────────────────────────────────────
 
-export async function apiAdminUsers(token?: string): Promise<{ users: Array<Record<string, any>>; note?: string; source?: string }> {
-  return apiFetch('/api/admin/users', token)
+export async function apiAdminUsers(token?: string, pageToken?: string): Promise<{ users: Array<Record<string, any>>; note?: string; source?: string; next_page_token?: string | null }> {
+  const query = pageToken ? `?page_token=${encodeURIComponent(pageToken)}` : ''
+  return apiFetch(`/api/admin/users${query}`, token)
 }
 
 export async function apiSubmitFeedback(message: string, token?: string) {
