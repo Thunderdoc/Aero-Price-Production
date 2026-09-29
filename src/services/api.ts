@@ -31,6 +31,32 @@ export const AUTH_EXPIRED_EVENT = 'aeroprice:auth-expired'
 const readCache = new Map<string, { expires: number; value: unknown }>()
 const readInflight = new Map<string, Promise<unknown>>()
 const READ_CACHE_TTL_MS = 20_000
+// Keep the instant fallback short-lived so it masks cold-start latency without
+// making a page look current when its verified snapshot is old.
+const READ_SNAPSHOT_MAX_AGE_MS = 30_000
+const READ_SNAPSHOT_PREFIX = 'aeroprice:api-snapshot:'
+
+function readPersistedSnapshot<T>(cacheKey: string): T | undefined {
+  if (typeof window === 'undefined') return undefined
+  try {
+    const raw = window.localStorage.getItem(`${READ_SNAPSHOT_PREFIX}${cacheKey}`)
+    if (!raw) return undefined
+    const parsed = JSON.parse(raw) as { savedAt?: number; value?: T }
+    if (!parsed.savedAt || Date.now() - parsed.savedAt > READ_SNAPSHOT_MAX_AGE_MS) return undefined
+    return parsed.value
+  } catch {
+    return undefined
+  }
+}
+
+function persistSnapshot(cacheKey: string, value: unknown): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(`${READ_SNAPSHOT_PREFIX}${cacheKey}`, JSON.stringify({ savedAt: Date.now(), value }))
+  } catch {
+    // Storage may be disabled or full; the in-memory cache still works.
+  }
+}
 
 function isFirebaseIdToken(token?: string): boolean {
   if (!token) return false
@@ -106,6 +132,15 @@ async function apiFetch<T>(path: string, token?: string, init?: RequestInit): Pr
   if (method === 'GET') {
     const cached = readCache.get(cacheKey)
     if (cached && cached.expires > Date.now()) return cached.value as T
+    // A recent public snapshot prevents the empty-state flash on a cold
+    // serverless wake-up. The next explicit refresh still fetches truth.
+    if (!token) {
+      const snapshot = readPersistedSnapshot<T>(cacheKey)
+      if (snapshot !== undefined) {
+        readCache.set(cacheKey, { expires: Date.now() + READ_CACHE_TTL_MS, value: snapshot })
+        return snapshot
+      }
+    }
     const pending = readInflight.get(cacheKey)
     if (pending) return pending as Promise<T>
   }
@@ -122,7 +157,10 @@ async function apiFetch<T>(path: string, token?: string, init?: RequestInit): Pr
     throw new Error(`API ${path}: ${resp.status} ${text}`)
   }
   const value = await resp.json() as T
-  if (method === 'GET') readCache.set(cacheKey, { expires: Date.now() + READ_CACHE_TTL_MS, value })
+  if (method === 'GET') {
+    readCache.set(cacheKey, { expires: Date.now() + READ_CACHE_TTL_MS, value })
+    if (!token) persistSnapshot(cacheKey, value)
+  }
   return value
   })
   if (method === 'GET') {
