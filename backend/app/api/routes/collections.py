@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, BackgroundTasks
+from fastapi import APIRouter, Depends, BackgroundTasks, Header, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 from app.core.database import get_db
@@ -7,8 +7,18 @@ from app.core.auth import require_admin, require_analyst
 from app.models.collection import CollectionRun, SourceHealth
 from app.services.collector import run_collection
 from app.services.source_health import effective_status
+from app.core.config import settings
 
 router = APIRouter(prefix="/collections", tags=["collections"])
+
+
+@router.get("/cron")
+async def cron_collection(background_tasks: BackgroundTasks, authorization: str | None = Header(default=None)):
+    """Vercel Cron entrypoint; requires the server-side CRON_SECRET."""
+    if not settings.CRON_SECRET or authorization != f"Bearer {settings.CRON_SECRET}":
+        raise HTTPException(status_code=401, detail="Invalid cron authorization")
+    background_tasks.add_task(_run_triggered_collection, "vercel-cron")
+    return {"status": "TRIGGERED", "message": "Verified collection refresh queued."}
 
 
 async def _run_triggered_collection(triggered_by: str) -> None:

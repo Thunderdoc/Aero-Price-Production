@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     # Collection
     COLLECTION_INTERVAL_MINUTES: int = 60
     COLLECTION_ENABLED: bool = True
+    CRON_SECRET: str = ""
 
     # Airline API keys (blank = CHALLENGE_DETECTED)
     INDIGO_API_KEY: str = ""
