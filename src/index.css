@@ -284,6 +284,27 @@ html.dark .user-dashboard .trend-card button[aria-pressed="false"] {
   border-color: var(--color-border-secondary);
 }
 
+/* Live-data surfaces retain motion without inventing data. */
+.index-spotlight {
+  isolation: isolate;
+}
+.index-spotlight::before {
+  content: '';
+  position: absolute;
+  inset: -35%;
+  z-index: 0;
+  pointer-events: none;
+  background: radial-gradient(circle at 18% 45%, rgba(37, 156, 255, .18), transparent 30%), radial-gradient(circle at 82% 55%, rgba(42, 206, 168, .12), transparent 28%);
+  animation: live-glow 8s ease-in-out infinite alternate;
+}
+.index-spotlight > * { position: relative; z-index: 1; }
+.live-data-dot { animation: pulse-dot 1.8s ease-in-out infinite; }
+
+@keyframes live-glow {
+  from { transform: translate3d(-2%, 0, 0) scale(.98); opacity: .65; }
+  to { transform: translate3d(2%, 1%, 0) scale(1.04); opacity: 1; }
+}
+
 /* ── Public dashboard dark theme ────────────────────────── */
 /* Overview uses a deliberately illustrated, inline-styled light layout. These
    scoped overrides retain the hierarchy while allowing the shared top-bar

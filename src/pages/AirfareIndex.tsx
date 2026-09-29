@@ -76,8 +76,8 @@ export default function AirfareIndex() {
     <div className="flex flex-col page-enter" style={{ gap: 'var(--space-xl)', maxWidth: 1040 }}>
       {/* ── Top Header ── */}
       <div
-        className="ap-card"
-        style={{
+          className="ap-card page-enter"
+          style={{
           padding: 'var(--space-2xl) var(--space-3xl)',
           display: 'flex',
           justifyContent: 'space-between',
@@ -150,6 +150,7 @@ export default function AirfareIndex() {
 
       {/* ── Main Index Spotlight Card ── */}
       <div
+        className="index-spotlight"
         style={{
           borderRadius: 20,
           background: 'linear-gradient(135deg, #060d1f 0%, #0e1e3e 50%, #1e3a5f 100%)',
@@ -164,7 +165,7 @@ export default function AirfareIndex() {
         <div style={{ position: 'relative', zIndex: 1, display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 48, alignItems: 'center' }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-              <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#38bdf8', boxShadow: '0 0 10px #38bdf8' }} />
+              <div className="live-data-dot" style={{ width: 8, height: 8, borderRadius: '50%', background: '#38bdf8', boxShadow: '0 0 10px #38bdf8' }} />
               <span style={{ fontSize: 11, letterSpacing: '0.14em', color: '#93c5fd', fontWeight: 800, fontFamily: 'var(--font-mono)' }}>
                 OBSERVED ROUTE-BASKET COMPOSITE
               </span>
