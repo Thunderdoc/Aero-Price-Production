@@ -85,6 +85,12 @@ def _firebase_users_page(page_token: str | None, limit: int):
         return None
 
 
+def _firebase_users():
+    """Backward-compatible diagnostic helper for callers/tests."""
+    page = _firebase_users_page(None, 1000)
+    return page[0] if page is not None else None
+
+
 @router.get("/admin/users")
 async def list_users(
     page_token: str | None = Query(default=None),
