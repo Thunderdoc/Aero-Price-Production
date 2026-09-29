@@ -91,13 +91,36 @@ def _firebase_users():
     return page[0] if page is not None else None
 
 
+def _firebase_user_lookup(uid: str | None, email: str | None):
+    """Look up one Firebase account without scanning the directory."""
+    try:
+        from app.core.firebase_admin import firebase_app
+        if not firebase_app():
+            return None
+        from firebase_admin import auth
+        admin_emails = {e.strip().lower() for e in settings.FIREBASE_ADMIN_EMAILS.split(",") if e.strip()}
+        analyst_emails = {e.strip().lower() for e in settings.FIREBASE_ANALYST_EMAILS.split(",") if e.strip()}
+        record = auth.get_user(uid) if uid else auth.get_user_by_email(email.strip().lower())
+        return _firebase_user_dict(record, admin_emails, analyst_emails)
+    except Exception as exc:
+        logger.exception("Firebase Admin user lookup failed: %s", type(exc).__name__)
+        return None
+
+
 @router.get("/admin/users")
 async def list_users(
+    uid: str | None = Query(default=None),
+    email: str | None = Query(default=None),
     page_token: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=1000),
     current_user=Depends(require_admin_or_local),
     db: AsyncSession = Depends(get_db),
 ):
+    if uid or email:
+        found = _firebase_user_lookup(uid, email)
+        if found is None:
+            raise HTTPException(status_code=404, detail="Firebase user not found")
+        return {"users": [found], "total": 1, "source": "firebase", "next_page_token": None}
     firebase_page = _firebase_users_page(page_token, limit)
     if firebase_page is not None:
         firebase_users, next_page_token = firebase_page
