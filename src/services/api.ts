@@ -126,22 +126,25 @@ function authHeaders(token?: string): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
-async function apiFetch<T>(path: string, token?: string, init?: RequestInit): Promise<T> {
+async function apiFetch<T>(path: string, token?: string, init?: RequestInit, forceNetwork = false): Promise<T> {
   const method = (init?.method || 'GET').toUpperCase()
   const cacheKey = `${method}:${path}:${token || 'public'}`
   if (method === 'GET') {
     const cached = readCache.get(cacheKey)
-    if (cached && cached.expires > Date.now()) return cached.value as T
+    if (!forceNetwork && cached && cached.expires > Date.now()) return cached.value as T
     // A recent public snapshot prevents the empty-state flash on a cold
     // serverless wake-up. The next explicit refresh still fetches truth.
-    if (!token) {
+    if (!forceNetwork && !token) {
       const snapshot = readPersistedSnapshot<T>(cacheKey)
       if (snapshot !== undefined) {
         readCache.set(cacheKey, { expires: Date.now() + READ_CACHE_TTL_MS, value: snapshot })
+        // Render verified data immediately, then refresh silently so the next
+        // render/navigation uses the newest backend response.
+        void apiFetch<T>(path, token, init, true).catch(() => undefined)
         return snapshot
       }
     }
-    const pending = readInflight.get(cacheKey)
+    const pending = !forceNetwork ? readInflight.get(cacheKey) : undefined
     if (pending) return pending as Promise<T>
   }
   const request = fetch(`${BASE_URL}${path}`, {
