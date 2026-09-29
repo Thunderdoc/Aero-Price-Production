@@ -4,6 +4,7 @@ The response intentionally distinguishes position telemetry from schedules and
 fares. ADS-B data does not reliably contain origin/destination airport data.
 """
 from datetime import datetime, timezone
+import asyncio
 import time
 from typing import Any
 
@@ -205,7 +206,7 @@ async def live_aircraft(limit: int = Query(default=150, ge=1, le=300)):
                 "aircraft": _live_cache["aircraft"][:limit], "note": "Recent live provider response (15-second refresh cache)."}
 
     errors = []
-    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
         if settings.AVIATION_EDGE_API_KEY:
             try:
                 aircraft = await _aviation_edge_aircraft(client, limit)
@@ -214,23 +215,30 @@ async def live_aircraft(limit: int = Query(default=150, ge=1, le=300)):
             except (httpx.HTTPError, ValueError) as exc:
                 errors.append(exc)
 
-        for provider_url, provider_name in ((ADSB_LOL_URL, "ADSB.lol"), (AVIOADSB_URL, "AvioADSB")):
-            try:
-                aircraft = await _adsb_compatible_aircraft(client, provider_url, limit)
-            except (httpx.HTTPError, ValueError, AttributeError) as exc:
-                errors.append(exc)
-                continue
-            if aircraft:
-                return _live_payload(provider_name, "LIVE_ADSB", aircraft, "Live transponder positions; routes and fares are not inferred.")
+        # Public feeds are independent and sometimes rate-limit or sleep. Run
+        # them together so one unavailable source cannot make the map wait for
+        # every provider timeout in sequence.
+        async def fetch_adsb(url: str):
+            return await _adsb_compatible_aircraft(client, url, limit)
 
-        try:
+        async def fetch_opensky():
             response = await client.get(OPENSKY_URL, params={"lamin": 6, "lomin": 67, "lamax": 37.8, "lomax": 98})
             response.raise_for_status()
-            aircraft = _normalize_opensky_states(response.json().get("states", []), limit)
-            if aircraft:
-                return _live_payload("OpenSky", "LIVE_OPENSKY", aircraft, "Live OpenSky positions used as the ADSB.lol fallback.")
-        except (httpx.HTTPError, ValueError, AttributeError) as exc:
-            errors.append(exc)
+            return _normalize_opensky_states(response.json().get("states", []), limit)
+
+        results = await asyncio.gather(
+            fetch_adsb(ADSB_LOL_URL), fetch_adsb(AVIOADSB_URL), fetch_opensky(),
+            return_exceptions=True,
+        )
+        for result, provider_name, data_origin, note in (
+            (results[0], "ADSB.lol", "LIVE_ADSB", "Live transponder positions; routes and fares are not inferred."),
+            (results[1], "AvioADSB", "LIVE_ADSB", "Live transponder positions; routes and fares are not inferred."),
+            (results[2], "OpenSky", "LIVE_OPENSKY", "Live OpenSky positions used as a public ADS-B fallback."),
+        ):
+            if isinstance(result, Exception):
+                errors.append(result)
+            elif result:
+                return _live_payload(provider_name, data_origin, result, note)
 
     cache_age = time.monotonic() - float(_live_cache.get("fetched_at") or 0)
     if _live_cache["aircraft"] and cache_age <= STALE_RETENTION_SECONDS:
