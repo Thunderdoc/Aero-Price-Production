@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     PPAC_ATF_URL: str = "https://ppac.gov.in/prices/excise-duty-on-export-of-petrol-diesel-atf-and-special-additional-excise-duty-saed-on-domestic-crude-oil-production"
 
     # CORS
-    ALLOWED_ORIGINS: str = "http://localhost:5173,http://localhost:8443,http://127.0.0.1:5173,http://127.0.0.1:8443"
+    ALLOWED_ORIGINS: str = "http://localhost:5173,http://localhost:8443,http://127.0.0.1:5173,http://127.0.0.1:8443,https://aero-price-production.vercel.app"
 
     # Duffel Air — authorized REST API aggregator
     # Register at https://app.duffel.com/join
