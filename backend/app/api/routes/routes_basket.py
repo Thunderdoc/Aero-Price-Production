@@ -4,6 +4,7 @@ Routes basket API — the monitored route list and per-route coverage.
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
+from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from app.core.database import get_db
 from app.core.auth import get_current_user
@@ -11,6 +12,7 @@ from app.models.fare import FareObservation
 from app.services.collector import ROUTE_BASKET
 
 router = APIRouter()
+LIVE_ORIGINS = ("REAL", "OFFICIAL")
 
 AIRPORTS = {
     "DEL": {"name": "Indira Gandhi International", "city": "New Delhi"},
@@ -30,17 +32,15 @@ async def list_routes(
     """Return the monitored route basket with per-route observation counts."""
     since_7d = datetime.now(timezone.utc) - timedelta(days=7)
 
+    counts = dict((row[0], row[1]) for row in (await db.execute(
+        select(FareObservation.route, func.count()).where(
+            and_(FareObservation.data_origin.in_(LIVE_ORIGINS), FareObservation.collected_at >= since_7d)
+        ).group_by(FareObservation.route)
+    )).all())
     routes = []
     for route in ROUTE_BASKET:
         origin_code, dest_code = route.split("-")
-        count = await db.scalar(
-            select(func.count()).select_from(FareObservation)
-            .where(and_(
-                FareObservation.route == route,
-                FareObservation.data_origin.in_(["REAL", "OFFICIAL"]),
-                FareObservation.collected_at >= since_7d,
-            ))
-        )
+        count = counts.get(route, 0)
         routes.append({
             "route": route,
             "origin": origin_code,
@@ -59,6 +59,28 @@ async def list_routes(
         "basket_version": "v1.0",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@router.get("/routes/summary")
+async def route_summaries(db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    """Return verified route medians in one request for fast map rendering."""
+    rows = (await db.execute(select(FareObservation).where(
+        FareObservation.data_origin.in_(LIVE_ORIGINS), FareObservation.is_valid.is_(True),
+        FareObservation.currency == "INR", FareObservation.cabin == "ECONOMY",
+    ))).scalars().all()
+    grouped = defaultdict(list)
+    for row in rows: grouped[row.route].append(row)
+    summaries = {}
+    for route, values in grouped.items():
+        latest = max((row.travel_date for row in values if row.travel_date), default=None)
+        latest_rows = [row for row in values if row.travel_date == latest]
+        fares = sorted(float(row.total_fare) for row in latest_rows if row.total_fare is not None)
+        if not fares: continue
+        middle = len(fares) // 2
+        median = fares[middle] if len(fares) % 2 else (fares[middle - 1] + fares[middle]) / 2
+        summaries[route] = {"median": median, "min": min(fares), "max": max(fares), "count": len(fares),
+                            "sample_period": latest, "last_collected_at": max((row.collected_at for row in latest_rows if row.collected_at), default=None).isoformat() if latest_rows else None}
+    return {"summaries": summaries, "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
 @router.get("/context")

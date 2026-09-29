@@ -317,6 +317,10 @@ export async function apiRouteBasket(token?: string): Promise<RouteBasketRespons
   return apiFetch('/api/routes', token)
 }
 
+export async function apiRouteSummaries(token?: string): Promise<{ summaries: Record<string, { median: number; min: number; max: number; count: number; sample_period: string; last_collected_at: string | null }> }> {
+  return apiFetch('/api/routes/summary', token)
+}
+
 export interface ForecastResponse {
   status: 'FORECAST' | 'INSUFFICIENT_DATA' | 'NO_DATA'
   route: string

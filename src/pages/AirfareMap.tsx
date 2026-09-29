@@ -8,7 +8,7 @@ import { Activity, Radio, Filter } from 'lucide-react'
 import { AIRPORTS } from '../data/airports'
 import { useLiveData } from '../hooks/useLiveData'
 import { useAuth } from '../contexts/AuthContext'
-import { apiFareMovement, apiFareSummary, apiRouteBasket } from '../services/api'
+import { apiFareMovement, apiRouteBasket, apiRouteSummaries } from '../services/api'
 import TrendIndicator from '../components/TrendIndicator'
 import { useAviationRadar } from '../services/aviationRadar'
 
@@ -651,17 +651,14 @@ export default function AirfareMap() {
 
     setRoutesLoading(true)
     setRouteError(null)
-    Promise.all([apiRouteBasket(token), apiFareMovement(token).catch(() => null)])
-      .then(async ([basket, movement]) => {
-        const results = await Promise.all(basket.routes.filter(item => item.has_data).map(async (item): Promise<MapCorridor | null> => {
+    Promise.all([apiRouteBasket(token), apiFareMovement(token).catch(() => null), apiRouteSummaries(token)])
+      .then(([basket, movement, summaryResponse]) => {
+        const results = basket.routes.filter(item => item.has_data).map((item): MapCorridor | null => {
           const [from, to] = item.route.split('-')
           const fromAirport = AIRPORTS[from]
           const toAirport = AIRPORTS[to]
           if (!fromAirport || !toAirport) return null
-          const summary = await apiFareSummary(item.route, token) as {
-            overall?: { median: number | null; min: number | null; max: number | null; count: number; sample_period: string | null; last_collected_at: string | null }
-          }
-          const fare = summary.overall
+          const fare = summaryResponse.summaries[item.route]
           if (!fare || fare.median == null || fare.min == null || fare.max == null || !fare.sample_period) return null
           const compared = movement?.routes.find(row => row.route === item.route)
           const trend = compared
@@ -686,7 +683,7 @@ export default function AirfareMap() {
             observedAt: fare.last_collected_at,
             movementAvailable: Boolean(compared),
           } satisfies MapCorridor
-        }))
+        })
         if (active) setCorridors(results.filter((corridor): corridor is MapCorridor => corridor != null))
       })
       .catch(() => { if (active) { setCorridors([]); setRouteError('Verified route summaries are unavailable.') } })
