@@ -12,7 +12,13 @@ def service_account_info():
         return None
     if raw:
         try:
-            return json.loads(raw)
+            info = json.loads(raw.strip())
+            # Render may preserve escaped line breaks one level deeper when a
+            # JSON object is pasted into an environment variable. Normalize
+            # them before google-auth parses the PEM key.
+            if isinstance(info, dict) and isinstance(info.get("private_key"), str):
+                info["private_key"] = info["private_key"].replace("\\n", "\n")
+            return info
         except json.JSONDecodeError:
             pass
     env_path = Path(__file__).resolve().parents[2] / ".env"
