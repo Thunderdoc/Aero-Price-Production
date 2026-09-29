@@ -43,6 +43,7 @@ export default function AdminDashboard() {
   const [managedUsers, setManagedUsers] = useState<ManagedUser[]>(INITIAL_USERS)
   const [usersLoading, setUsersLoading] = useState(false)
   const [usersLoaded, setUsersLoaded] = useState(false)
+  const [usersError, setUsersError] = useState<string | null>(null)
   const [newUser, setNewUser] = useState({ name: '', email: '', role: 'PUBLIC', plan: 'FREE' })
   const [accessRequests, setAccessRequests] = useState<AccessRequest[]>([])
   const [feedback, setFeedback] = useState<FeedbackEntry[]>([])
@@ -241,6 +242,7 @@ export default function AdminDashboard() {
       // 401 toast visible after the authenticated request succeeds.
       if (!token || usersLoaded || !['overview', 'users', 'access'].includes(tab)) return
       setUsersLoading(true)
+      setUsersError(null)
       try {
         const result = await apiAdminUsers(token ?? undefined)
         const remoteUsers = Array.isArray(result?.users)
@@ -262,8 +264,10 @@ export default function AdminDashboard() {
           const uniqueUsers = Array.from(new Map(remoteUsers.map(entry => [entry.email.toLowerCase(), entry])).values())
           setManagedUsers(uniqueUsers)
         }
+        if (remoteUsers.length === 0 && result?.note) setUsersError(String(result.note))
         setUsersLoaded(true)
       } catch (error) {
+        setUsersError(error instanceof Error ? error.message : 'The authenticated user directory could not be loaded.')
         if (tab === 'users' || tab === 'overview') showToast(`Unable to load users: ${error instanceof Error ? error.message : 'Admin API unavailable'}`)
       } finally {
         setUsersLoading(false)
@@ -538,7 +542,7 @@ export default function AdminDashboard() {
               </tr>
             </thead>
             <tbody>
-              {usersLoading && managedUsers.length === 0 ? <tr><td colSpan={5}><div className="admin-empty-state"><RefreshCw size={18} className="spin" /><strong>Loading verified Firebase users…</strong><span>The directory is being loaded from the authenticated backend.</span></div></td></tr> : managedUsers.length === 0 ? <tr><td colSpan={5}><div className="admin-empty-state"><strong>No users returned</strong><span>Refresh the page after confirming the backend is available.</span></div></td></tr> : managedUsers.map(u => (
+              {usersLoading && managedUsers.length === 0 ? <tr><td colSpan={5}><div className="admin-empty-state"><RefreshCw size={18} className="spin" /><strong>Loading verified Firebase users…</strong><span>The directory is being loaded from the authenticated backend.</span></div></td></tr> : managedUsers.length === 0 ? <tr><td colSpan={5}><div className="admin-empty-state"><strong>No users returned</strong><span>{usersError || 'The backend returned no authenticated users.'}</span></div></td></tr> : managedUsers.map(u => (
                 <tr key={u.email}>
                   <td>
                     <div style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>{u.name}</div>

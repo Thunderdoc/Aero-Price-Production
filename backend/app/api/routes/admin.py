@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from datetime import datetime, timezone
+import logging
 from app.core.database import get_db
 from app.core.auth import require_admin, get_current_user, require_admin_or_local, oauth2_optional_scheme
 from app.core.config import settings
@@ -18,6 +19,7 @@ from app.models.access import FeatureAccessRequest, UserFeatureAccess, UserNotif
 from app.services.anomaly_detector import detect_anomalies, get_anomaly_summary
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class FeedbackCreate(BaseModel):
@@ -43,6 +45,7 @@ def _firebase_users():
         from app.core.firebase_admin import firebase_app
         firebase_admin = firebase_app()
         if not firebase_admin:
+            logger.warning("Firebase Admin user directory unavailable: FIREBASE_SERVICE_ACCOUNT_JSON is not configured")
             return None
         from firebase_admin import auth
         users_by_email = {}
@@ -74,7 +77,8 @@ def _firebase_users():
                 }
             page = page.get_next_page() if page.has_next_page else None
         return list(users_by_email.values())
-    except Exception:
+    except Exception as exc:
+        logger.exception("Firebase Admin user directory lookup failed: %s", type(exc).__name__)
         return None
 
 
