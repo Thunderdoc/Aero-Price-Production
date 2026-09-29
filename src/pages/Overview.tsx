@@ -22,6 +22,7 @@ const routeSpecs = [
   { key: 'DEL-MAA', code: 'MAA → DEL', name: 'Chennai to Delhi' },
 ]
 const GEOJSON_URL = '/maps/india-states-2019.geojson'
+const ROUTE_CACHE_KEY = 'aeroprice:verified-route-cards:v1'
 
 const movementColors: Record<FareMovementStatus | 'NO_DATA', string> = {
   SIGNIFICANT_INCREASE: '#d9343e', MODERATE_INCREASE: '#ef7661', STABLE: '#4d8ec4',
@@ -34,6 +35,13 @@ const movementLabels: Record<FareMovementStatus | 'NO_DATA', string> = {
 
 function formatFare(fare: number | null) {
   return fare == null ? 'Data unavailable' : `₹${fare.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`
+}
+
+function readRouteCache(): RouteCard[] | null {
+  try {
+    const value = JSON.parse(sessionStorage.getItem(ROUTE_CACHE_KEY) || 'null')
+    return Array.isArray(value) && value.length === routeSpecs.length ? value : null
+  } catch { return null }
 }
 
 function median(values: number[]) {
@@ -169,7 +177,7 @@ export default function Overview({ onNavigate }: Props) {
   const [latestIndex, setLatestIndex] = useState<number | null>(null)
   const [activeAlerts, setActiveAlerts] = useState<number | null>(null)
   const [fareMovement, setFareMovement] = useState<FareMovementResponse | null>(null)
-  const [routeCards, setRouteCards] = useState<RouteCard[]>(routeSpecs.map(route => ({ ...route, fare: null, minFare: null, maxFare: null, sampleCount: 0 })))
+  const [routeCards, setRouteCards] = useState<RouteCard[]>(() => readRouteCache() ?? routeSpecs.map(route => ({ ...route, fare: null, minFare: null, maxFare: null, sampleCount: 0 })))
   const [showAccess, setShowAccess] = useState(false)
   const [liveAircraft, setLiveAircraft] = useState<number | null>(null)
   const [compactDashboard, setCompactDashboard] = useState(() => localStorage.getItem('aeroprice_compact_mode') === 'true')
@@ -221,7 +229,15 @@ export default function Overview({ onNavigate }: Props) {
         const fares = response.observations.filter(observation => observation.data_origin === 'REAL' || observation.data_origin === 'OFFICIAL').map(observation => Number(observation.total_fare)).filter(Number.isFinite)
         return { ...spec, fare: median(fares), minFare: fares.length ? Math.min(...fares) : null, maxFare: fares.length ? Math.max(...fares) : null, sampleCount: fares.length }
       } catch { return { ...spec, fare: null, minFare: null, maxFare: null, sampleCount: 0 } }
-    })).then(next => { if (active) setRouteCards(next) })
+    })).then(next => {
+      if (!active) return
+      // Cache only a successful response containing verified rows. A failed
+      // refresh must never overwrite the last real snapshot with nulls.
+      if (next.some(route => route.fare != null)) {
+        setRouteCards(next)
+        try { sessionStorage.setItem(ROUTE_CACHE_KEY, JSON.stringify(next)) } catch { /* storage is optional */ }
+      }
+    })
     return () => { active = false }
   }, [token])
 
