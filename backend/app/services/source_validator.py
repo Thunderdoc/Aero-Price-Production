@@ -8,7 +8,6 @@ async def update_source_health_on_startup(db: AsyncSession) -> None:
     current = Settings()
     sources = [
         ("amadeus", "Amadeus", "AGGREGATOR", current.amadeus_configured),
-        ("duffel", "Duffel", "AGGREGATOR", current.duffel_configured),
         ("aviationstack", "AviationStack", "AVIATION", current.aviationstack_configured),
     ]
     now = datetime.now(timezone.utc)

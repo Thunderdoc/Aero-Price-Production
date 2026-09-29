@@ -31,7 +31,6 @@ from app.collectors.challenge import (
     SpiceJetAdapter, AirIndiaExpressAdapter,
 )
 from app.collectors.aggregators.amadeus import AmadeusAdapter
-from app.collectors.duffel import DuffelAdapter, SOURCE_ID as DUFFEL_SOURCE_ID
 from app.collectors.aggregators.googleflights_worker import GoogleFlightsWorkerAdapter
 from app.collectors.aggregators.fast_flights import FastFlightsAdapter
 from app.collectors.aggregators.scrapling_google_flights import ScraplingGoogleFlightsAdapter
@@ -183,24 +182,6 @@ AMADEUS_SOURCE = {
 
 AIRFARE_SOURCE_REGISTRY.append(AMADEUS_SOURCE)
 
-DUFFEL_SOURCE = {
-    "id": DUFFEL_SOURCE_ID,
-    "name": "Duffel Air (duffel.com)",
-    "type": "AGGREGATOR",
-    "status": "CONFIGURED" if settings.DUFFEL_API_TOKEN else "NOT_CONFIGURED",
-    "robots_txt": "ALLOWED",
-    "captcha_detected": False,
-    "api_available": True,
-    "note": (
-        "Authorized Duffel REST API. live_mode=true → data_origin=REAL. "
-        "live_mode=false (test token) → data_origin=SANDBOX_TEST. "
-        "Set DUFFEL_API_TOKEN in .env. Register at https://duffel.com/"
-    ),
-    "registration_url": "https://app.duffel.com/join",
-    "credential_vars": ["DUFFEL_API_TOKEN"],
-}
-AIRFARE_SOURCE_REGISTRY.append(DUFFEL_SOURCE)
-
 # These connectors may already have persisted observations from an earlier
 # collection run. Keep them in the directory so the admin UI can explain the
 # provenance of stored data instead of presenting an incomplete source list.
@@ -265,14 +246,12 @@ def _make_adapters() -> list[FareSourceAdapter]:
         "AMADEUS_API_SECRET": settings.AMADEUS_API_SECRET,
         "AMADEUS_BASE_URL": settings.AMADEUS_BASE_URL,
     }
-    duffel_cfg = {"DUFFEL_API_TOKEN": settings.DUFFEL_API_TOKEN}
 
     adapters: list[FareSourceAdapter] = [
         FastFlightsAdapter(),             # no-key public-interface collector
         ScraplingGoogleFlightsAdapter(),  # no fake rows; probes for stable real payloads
         GoogleFlightsWorkerAdapter(),  # explicit external worker; disabled by default
         SerpApiGoogleFlightsAdapter(),  # authorized provider; disabled without key
-        DuffelAdapter(duffel_cfg),     # authorized Duffel REST API — REAL or SANDBOX_TEST
         IndiGoAdapter(airline_cfg),    # CHALLENGE_DETECTED until NDC credentials provided
         AirIndiaAdapter(airline_cfg),
         AirIndiaExpressAdapter(airline_cfg),
