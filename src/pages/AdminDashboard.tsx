@@ -55,11 +55,16 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     async function loadPipelineData() {
-      if ((tab !== 'pipeline' && tab !== 'overview') || !token) return
+      if (tab !== 'pipeline' && tab !== 'overview') return
       try {
-        const [directoryResult, dashboardResult, healthResult] = await Promise.allSettled([apiSources(token), apiDashboard(token), apiHealth()])
+        // Health is intentionally public so the admin shell can still explain
+        // backend state when Firebase has expired the admin session.
+        const healthResult = await Promise.allSettled([apiHealth()])
+        if (healthResult[0].status === 'fulfilled') setHealthData(healthResult[0].value)
+        if (!token) return
+
+        const [directoryResult, dashboardResult] = await Promise.allSettled([apiSources(token), apiDashboard(token)])
         if (dashboardResult.status === 'fulfilled') setDashboardData(dashboardResult.value)
-        if (healthResult.status === 'fulfilled') setHealthData(healthResult.value)
         if (directoryResult.status === 'fulfilled') {
           const directory = directoryResult.value
           const airfare = directory.airfare || directory.airfare_sources || []
@@ -73,7 +78,7 @@ export default function AdminDashboard() {
             obs: `${Number(source.records_total || 0).toLocaleString()} records`,
           })))
         }
-        if (dashboardResult.status === 'rejected' && healthResult.status === 'rejected' && directoryResult.status === 'rejected') {
+        if (dashboardResult.status === 'rejected' && directoryResult.status === 'rejected') {
           throw new Error('No admin data services responded')
         }
         // Loading the pipeline is silent; status is visible in the page itself.
