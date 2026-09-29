@@ -39,8 +39,28 @@ class AccessDecision(BaseModel):
     rejection_reason: str | None = Field(default=None, max_length=2000)
 
 
-def _firebase_users():
-    """Read Firebase Auth users when the Admin SDK is configured server-side."""
+def _firebase_user_dict(record, admin_emails, analyst_emails):
+    email = (record.email or "").strip().lower()
+    last_login = record.user_metadata.last_sign_in_timestamp
+    created = record.user_metadata.creation_timestamp
+    role = "ADMIN" if email in admin_emails else "ANALYST" if email in analyst_emails else "PUBLIC"
+    providers = [provider.provider_id for provider in (record.provider_data or [])]
+    return {
+        "uid": record.uid,
+        "email": email,
+        "role": role,
+        "plan": "ADMIN" if role == "ADMIN" else "GOVERNMENT" if role == "ANALYST" else "FREE",
+        "name": record.display_name or email or "Firebase User",
+        "is_active": not record.disabled,
+        "email_verified": bool(record.email_verified),
+        "providers": providers,
+        "created_at": datetime.fromtimestamp(created / 1000, timezone.utc).isoformat() if created else None,
+        "last_login": datetime.fromtimestamp(last_login / 1000, timezone.utc).isoformat() if last_login else None,
+    }
+
+
+def _firebase_users_page(page_token: str | None, limit: int):
+    """Read one bounded Firebase Auth page; never scan the whole directory."""
     try:
         from app.core.firebase_admin import firebase_app
         firebase_admin = firebase_app()
@@ -48,7 +68,6 @@ def _firebase_users():
             logger.warning("Firebase Admin user directory unavailable: FIREBASE_SERVICE_ACCOUNT_JSON is not configured")
             return None
         from firebase_admin import auth
-        users_by_email = {}
         admin_emails = {
             email.strip().lower()
             for email in settings.FIREBASE_ADMIN_EMAILS.split(",")
@@ -59,24 +78,8 @@ def _firebase_users():
             for email in settings.FIREBASE_ANALYST_EMAILS.split(",")
             if email.strip()
         }
-        page = auth.list_users()
-        while page:
-            for record in page.users:
-                email = (record.email or "").strip().lower()
-                if not email:
-                    continue
-                last_login = record.user_metadata.last_sign_in_timestamp
-                role = "ADMIN" if email in admin_emails else "ANALYST" if email in analyst_emails else "PUBLIC"
-                users_by_email[email] = {
-                    "email": email,
-                    "role": role,
-                    "plan": "ADMIN" if role == "ADMIN" else "GOVERNMENT" if role == "ANALYST" else "FREE",
-                    "name": record.display_name or email or "Firebase User",
-                    "is_active": not record.disabled,
-                    "last_login": datetime.fromtimestamp(last_login / 1000, timezone.utc).isoformat() if last_login else None,
-                }
-            page = page.get_next_page() if page.has_next_page else None
-        return list(users_by_email.values())
+        page = auth.list_users(page_token=page_token, max_results=limit)
+        return [_firebase_user_dict(record, admin_emails, analyst_emails) for record in page.users], page.get_next_page_token() if page.has_next_page else None
     except Exception as exc:
         logger.exception("Firebase Admin user directory lookup failed: %s", type(exc).__name__)
         return None
@@ -84,12 +87,15 @@ def _firebase_users():
 
 @router.get("/admin/users")
 async def list_users(
+    page_token: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=1000),
     current_user=Depends(require_admin_or_local),
     db: AsyncSession = Depends(get_db),
 ):
-    firebase_users = _firebase_users()
-    if firebase_users is not None:
-        return {"users": firebase_users, "total": len(firebase_users), "source": "firebase"}
+    firebase_page = _firebase_users_page(page_token, limit)
+    if firebase_page is not None:
+        firebase_users, next_page_token = firebase_page
+        return {"users": firebase_users, "total": len(firebase_users), "source": "firebase", "next_page_token": next_page_token}
     try:
         rows = (await db.execute(select(User).order_by(User.created_at.desc()))).scalars().all()
     except Exception:
@@ -97,11 +103,12 @@ async def list_users(
         # migration. Return the safe demo fallback instead of a 500.
         rows = []
     if rows:
-        return {"users": [{"email": row.email, "role": row.role, "plan": row.plan, "name": row.name, "is_active": row.is_active, "last_login": row.last_login.isoformat() if row.last_login else None} for row in rows], "total": len(rows), "source": "local_database"}
+        return {"users": [{"email": row.email, "role": row.role, "plan": row.plan, "name": row.name, "is_active": row.is_active, "last_login": row.last_login.isoformat() if row.last_login else None} for row in rows[:limit]], "total": len(rows), "source": "local_database", "next_page_token": None}
     return {
         "users": [],
         "total": 0,
         "source": "local_database",
+        "next_page_token": None,
         "note": "No Firebase or local database users are available. Demo accounts are not included in admin user management.",
     }
 
