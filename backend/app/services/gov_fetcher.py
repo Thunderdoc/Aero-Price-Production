@@ -687,6 +687,7 @@ async def fetch_datagov_aviation(db: AsyncSession) -> dict:
     api_key = settings.DATAGOV_API_KEY.strip()
     if not resource_id or not api_key:
         await _upsert_dataset_status(db, "data-gov-in", "NOT_CONFIGURED",
+            record_count=0,
             failure_reason="Set DATAGOV_AVIATION_DATASET_ID and DATAGOV_API_KEY to enable the official resource API.")
         return {"status": "NOT_CONFIGURED", "records": 0}
     source_url = f"https://api.data.gov.in/resource/{resource_id}"

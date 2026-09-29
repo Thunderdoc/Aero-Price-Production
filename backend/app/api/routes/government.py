@@ -162,6 +162,12 @@ async def ppac_atf(
 async def data_gov_aviation(
     db: AsyncSession = Depends(get_db),
 ):
+    # Do not expose previously imported historical rows as current data when
+    # the official resource is no longer configured or verified.
+    registry = await db.scalar(select(GovDataset).where(GovDataset.dataset_id == "data-gov-in"))
+    if registry and registry.status in {"NOT_CONFIGURED", "FAILED"}:
+        return {"count": 0, "source": "data.gov.in", "data_origin": "NO_DATA", "records": [],
+                "note": "No current data.gov.in resource is configured and verified."}
     rows = await db.execute(select(DataGovAviationRecord).order_by(DataGovAviationRecord.retrieved_at.desc()).limit(1000))
     records = rows.scalars().all()
     return {
