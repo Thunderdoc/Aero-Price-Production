@@ -25,6 +25,13 @@ export const BASE_URL = import.meta.env.DEV
 // correctly rejects that token.
 export const AUTH_EXPIRED_EVENT = 'aeroprice:auth-expired'
 
+// Keep a short-lived in-memory snapshot for page-to-page navigation. The API
+// remains the source of truth, but remounting a page must not briefly replace
+// verified values with "unavailable" while the same request is in flight.
+const readCache = new Map<string, { expires: number; value: unknown }>()
+const readInflight = new Map<string, Promise<unknown>>()
+const READ_CACHE_TTL_MS = 20_000
+
 function isFirebaseIdToken(token?: string): boolean {
   if (!token) return false
   try {
@@ -94,11 +101,19 @@ function authHeaders(token?: string): Record<string, string> {
 }
 
 async function apiFetch<T>(path: string, token?: string, init?: RequestInit): Promise<T> {
-  const resp = await fetch(`${BASE_URL}${path}`, {
+  const method = (init?.method || 'GET').toUpperCase()
+  const cacheKey = `${method}:${path}:${token || 'public'}`
+  if (method === 'GET') {
+    const cached = readCache.get(cacheKey)
+    if (cached && cached.expires > Date.now()) return cached.value as T
+    const pending = readInflight.get(cacheKey)
+    if (pending) return pending as Promise<T>
+  }
+  const request = fetch(`${BASE_URL}${path}`, {
     ...init,
     cache: 'no-store',
     headers: { ...authHeaders(token), ...(init?.headers ?? {}) },
-  })
+  }).then(async resp => {
   if (resp.status === 401 && typeof window !== 'undefined' && !isFirebaseIdToken(token)) {
     window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { token } }))
   }
@@ -106,7 +121,15 @@ async function apiFetch<T>(path: string, token?: string, init?: RequestInit): Pr
     const text = await resp.text().catch(() => resp.statusText)
     throw new Error(`API ${path}: ${resp.status} ${text}`)
   }
-  return resp.json()
+  const value = await resp.json() as T
+  if (method === 'GET') readCache.set(cacheKey, { expires: Date.now() + READ_CACHE_TTL_MS, value })
+  return value
+  })
+  if (method === 'GET') {
+    readInflight.set(cacheKey, request)
+    request.finally(() => readInflight.delete(cacheKey)).catch(() => undefined)
+  }
+  return request
 }
 
 // ── Health ─────────────────────────────────────────────────────────────────
