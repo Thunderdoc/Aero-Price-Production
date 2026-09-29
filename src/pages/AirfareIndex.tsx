@@ -14,7 +14,8 @@ export default function AirfareIndex() {
   const [current, setCurrent] = useState<IndexResponse>(DEFAULT_INDEX_CURRENT)
   const [history, setHistory] = useState<IndexHistoryResponse['observations']>([])
   const [basket, setBasket] = useState<IndexBasketRoute[]>([])
-  const [loading, setLoading] = useState(false)
+  // Start in a loading state so a cold backend never flashes "no data".
+  const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [lastRefreshed, setLastRefreshed] = useState<string>(
     new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST'

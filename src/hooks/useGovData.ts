@@ -28,7 +28,7 @@ export function useGovData(): GovDataState {
   const [mospiCpi, setMospiCpi] = useState<MospiCpiRecord[]>([])
   const [ppacAtf, setPpacAtf] = useState<Array<{ effective_date: string; atf_export_duty_per_litre: number }>>([])
   const [dataGovAviationCount, setDataGovAviationCount] = useState(0)
-  const [isLoading, setIsLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
   const [lastFetch, setLastFetch] = useState<string | null>(null)
   const [hasLiveResponse, setHasLiveResponse] = useState(false)
 

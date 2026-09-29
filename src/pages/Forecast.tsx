@@ -24,7 +24,9 @@ export default function Forecast() {
   const [forecasts, setForecasts] = useState<HorizonForecast[]>([])
   const [metrics, setMetrics] = useState<ForecastResponse['metrics']>(null)
   const [message, setMessage] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  // The first request starts on mount; avoid rendering an unavailable state
+  // during the serverless/authentication cold start.
+  const [loading, setLoading] = useState(true)
   const [lastUpdated, setLastUpdated] = useState<string | null>(null)
   const requestSeq = useRef(0)
 
