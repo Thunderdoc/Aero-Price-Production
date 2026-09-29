@@ -27,6 +27,7 @@ CITY_CODES = {
 WORKBOOK = Path(__file__).resolve().parents[4] / "src" / "imports" / "Data_Train.xlsx"
 SOURCE = "kaggle-flight-fare-prediction-mh"
 ORIGIN = "HISTORICAL_PUBLIC"
+LIVE_ORIGINS = ("REAL", "OFFICIAL")
 
 
 def _date(value) -> str:
@@ -48,18 +49,30 @@ async def historical_summary(
 ):
     q = select(FareObservation).where(FareObservation.data_origin == ORIGIN)
     total = await db.scalar(select(func.count()).select_from(q.subquery())) or 0
+    source = SOURCE
+    origin_filter = (FareObservation.data_origin == ORIGIN)
+    note = "Historical reference only; excluded from live index and live fares."
+    if not total:
+        # Real collection runs already form the authoritative history. Do not
+        # hide them behind the optional checked-in workbook import.
+        origin_filter = FareObservation.data_origin.in_(LIVE_ORIGINS)
+        total = await db.scalar(select(func.count()).where(origin_filter)) or 0
+        if total:
+            source = "backend-verified fare observations"
+            note = "Collected backend observations; retained as historical reference and excluded from live index calculations."
     if not total:
         return {"status": "NOT_IMPORTED", "records": 0, "source": SOURCE, "data_origin": ORIGIN}
     stats = (await db.execute(select(
         func.min(FareObservation.travel_date), func.max(FareObservation.travel_date),
         func.avg(FareObservation.total_fare), func.min(FareObservation.total_fare),
         func.max(FareObservation.total_fare),
-    ).where(FareObservation.data_origin == ORIGIN))).one()
+    ).where(origin_filter))).one()
     return {
-        "status": "READY", "records": total, "source": SOURCE, "data_origin": ORIGIN,
+        "status": "READY", "records": total, "source": source,
+        "data_origin": "REAL/OFFICIAL" if source != SOURCE else ORIGIN,
         "period_start": stats[0], "period_end": stats[1],
         "average_fare": round(float(stats[2]), 2), "min_fare": float(stats[3]), "max_fare": float(stats[4]),
-        "note": "Historical reference only; excluded from live index and live fares.",
+        "note": note,
     }
 
 
