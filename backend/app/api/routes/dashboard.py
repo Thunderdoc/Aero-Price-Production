@@ -3,7 +3,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from datetime import datetime, timezone, timedelta
 from app.core.database import get_db
-from app.core.auth import get_current_user
 from app.models.fare import FareObservation
 from app.models.collection import CollectionRun, SourceHealth
 from app.services.source_health import is_live_now
@@ -156,7 +155,6 @@ async def calculate_fare_movement(db: AsyncSession) -> dict:
 @router.get("")
 async def dashboard_summary(
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
 ):
     """Single endpoint for the Overview page. No hardcoded values."""
     now = datetime.now(timezone.utc)
@@ -275,7 +273,7 @@ async def dashboard_summary(
 @router.get("/fare-movement")
 async def fare_movement(
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    # Public read endpoint.
 ):
     """Verified route/state fare movement from the latest two collection dates."""
     return await calculate_fare_movement(db)

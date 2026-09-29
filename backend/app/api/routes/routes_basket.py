@@ -7,7 +7,6 @@ from sqlalchemy import select, func, and_
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from app.core.database import get_db
-from app.core.auth import get_current_user
 from app.models.fare import FareObservation
 from app.services.collector import ROUTE_BASKET
 
@@ -27,7 +26,6 @@ AIRPORTS = {
 @router.get("/routes")
 async def list_routes(
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
 ):
     """Return the monitored route basket with per-route observation counts."""
     since_7d = datetime.now(timezone.utc) - timedelta(days=7)
@@ -62,7 +60,7 @@ async def list_routes(
 
 
 @router.get("/routes/summary")
-async def route_summaries(db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+async def route_summaries(db: AsyncSession = Depends(get_db)):
     """Return verified route medians in one request for fast map rendering."""
     rows = (await db.execute(select(FareObservation).where(
         FareObservation.data_origin.in_(LIVE_ORIGINS), FareObservation.is_valid.is_(True),
@@ -86,7 +84,6 @@ async def route_summaries(db: AsyncSession = Depends(get_db), current_user: dict
 @router.get("/context")
 async def system_context(
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
 ):
     """Overall system context: coverage, freshness, data-origin breakdown."""
     total = await db.scalar(

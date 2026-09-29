@@ -5,7 +5,6 @@ from typing import Optional
 from datetime import datetime, timezone, date, timedelta
 import uuid
 from app.core.database import get_db
-from app.core.auth import get_current_user
 from app.core.config import settings
 from app.models.fare import FareObservation
 from app.collectors.aggregators.fast_flights import FastFlightsAdapter
@@ -69,7 +68,7 @@ async def list_fares(
     limit: int = Query(100, le=1000),
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict | None = None,
 ):
     """
     List fare observations.
@@ -136,7 +135,7 @@ async def list_fares(
 @router.get("/airlines/summary")
 async def airline_fare_summary(
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict | None = None,
 ):
     """Observed airline fares, not airline market share or flight frequency.
 
@@ -217,7 +216,7 @@ async def airline_fare_summary(
 async def get_fare_by_id(
     observation_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict | None = None,
 ):
     """Return a single fare observation by ID. Includes full provenance."""
     from fastapi import HTTPException
@@ -237,7 +236,7 @@ async def live_fares(
     route: str,
     travel_date: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict | None = None,
 ):
     """Query the no-key public fare interface on demand.
 
@@ -274,7 +273,7 @@ async def live_fares(
 async def route_fare_summary(
     route: str,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict | None = None,
 ):
     """
     Booking-window fare summary for a route.
