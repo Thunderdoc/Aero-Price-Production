@@ -13,18 +13,22 @@ router = APIRouter(prefix="/collections", tags=["collections"])
 
 
 @router.get("/cron")
-async def cron_collection(background_tasks: BackgroundTasks, authorization: str | None = Header(default=None)):
+async def cron_collection(authorization: str | None = Header(default=None)):
     """Vercel Cron entrypoint; requires the server-side CRON_SECRET."""
     if not settings.CRON_SECRET or authorization != f"Bearer {settings.CRON_SECRET}":
         raise HTTPException(status_code=401, detail="Invalid cron authorization")
-    background_tasks.add_task(_run_triggered_collection, "vercel-cron")
-    return {"status": "TRIGGERED", "message": "Verified collection refresh queued."}
+    # Vercel can terminate a serverless worker immediately after the response
+    # is returned. Await the refresh so the cron invocation cannot report
+    # success while silently dropping the collection task.
+    result = await _run_triggered_collection("vercel-cron")
+    return {"status": "COMPLETED", "message": "Verified collection refresh completed.", "result": result}
 
 
-async def _run_triggered_collection(triggered_by: str) -> None:
-    """Background tasks must create their own session after the request ends."""
+async def _run_triggered_collection(triggered_by: str) -> dict:
+    """Run a collection with a fresh session and return its persisted result."""
     async with AsyncSessionLocal() as collection_db:
-        await run_collection(collection_db, triggered_by=triggered_by)
+        run_id = await run_collection(collection_db, triggered_by=triggered_by)
+        return {"run_id": run_id}
 
 
 @router.get("")
