@@ -23,6 +23,7 @@ const routeSpecs = [
 ]
 const GEOJSON_URL = '/maps/india-states-2019.geojson'
 const ROUTE_CACHE_KEY = 'aeroprice:verified-route-cards:v1'
+const DASHBOARD_CACHE_KEY = 'aeroprice:verified-dashboard:v1'
 
 const movementColors: Record<FareMovementStatus | 'NO_DATA', string> = {
   SIGNIFICANT_INCREASE: '#d9343e', MODERATE_INCREASE: '#ef7661', STABLE: '#4d8ec4',
@@ -41,6 +42,13 @@ function readRouteCache(): RouteCard[] | null {
   try {
     const value = JSON.parse(sessionStorage.getItem(ROUTE_CACHE_KEY) || 'null')
     return Array.isArray(value) && value.length === routeSpecs.length ? value : null
+  } catch { return null }
+}
+
+function readDashboardCache(): { routes_tracked?: number; real_observations?: number; price_drops?: number; index_value?: number | null } | null {
+  try {
+    const value = JSON.parse(localStorage.getItem(DASHBOARD_CACHE_KEY) || 'null')
+    return value && typeof value === 'object' ? value : null
   } catch { return null }
 }
 
@@ -170,11 +178,12 @@ function IndexTrend({ routes, range }: { routes: RouteCard[]; range: string }) {
 }
 
 export default function Overview({ onNavigate }: Props) {
+  const dashboardCache = readDashboardCache()
   const { user, token } = useAuth()
-  const [routesTracked, setRoutesTracked] = useState<number | null>(null)
-  const [verifiedObservations, setVerifiedObservations] = useState<number | null>(null)
-  const [priceDrops, setPriceDrops] = useState<number | null>(null)
-  const [latestIndex, setLatestIndex] = useState<number | null>(null)
+  const [routesTracked, setRoutesTracked] = useState<number | null>(dashboardCache?.routes_tracked ?? null)
+  const [verifiedObservations, setVerifiedObservations] = useState<number | null>(dashboardCache?.real_observations ?? null)
+  const [priceDrops, setPriceDrops] = useState<number | null>(dashboardCache?.price_drops ?? null)
+  const [latestIndex, setLatestIndex] = useState<number | null>(dashboardCache?.index_value ?? null)
   const [activeAlerts, setActiveAlerts] = useState<number | null>(null)
   const [fareMovement, setFareMovement] = useState<FareMovementResponse | null>(null)
   const [routeCards, setRouteCards] = useState<RouteCard[]>(() => readRouteCache() ?? routeSpecs.map(route => ({ ...route, fare: null, minFare: null, maxFare: null, sampleCount: 0 })))
@@ -212,6 +221,7 @@ export default function Overview({ onNavigate }: Props) {
       setVerifiedObservations(data.real_observations ?? null)
       setPriceDrops(data.price_drops ?? null)
       setLatestIndex(data.index_value ?? null)
+      try { localStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(data)) } catch { /* storage is optional */ }
     }).catch(() => {})
     apiFareMovement(token ?? undefined).then(data => {
       if (!active) return
