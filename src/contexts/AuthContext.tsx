@@ -298,7 +298,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function loginWithGoogle(workspace?: AuthWorkspace, passwordToLink?: string): Promise<{ success: boolean; error?: string }> {
     try {
-      const { signInWithGooglePopup, linkPasswordToCurrentFirebaseUser } = await import('../services/firebase')
+      const { signInWithGooglePopup, signInWithGoogleRedirect, linkPasswordToCurrentFirebaseUser } = await import('../services/firebase')
       const credential = await signInWithGooglePopup()
       const firebaseUser = credential.user
       const email = firebaseUser.email || ''
@@ -353,7 +353,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       const code = typeof err === 'object' && err && 'code' in err ? String((err as { code?: string }).code) : ''
       if (code.includes('popup-closed-by-user') || code.includes('cancelled-popup-request') || code.includes('popup-blocked')) {
-        return { success: false, error: 'Google sign-in popup was blocked or closed. Allow pop-ups for localhost:8443, then try again.' }
+        // Mobile browsers often block popups. Redirect is same-origin and
+        // returns to the login page through Firebase's redirect handler.
+        try {
+          await signInWithGoogleRedirect()
+          return { success: true }
+        } catch {
+          const host = typeof window !== 'undefined' ? window.location.host : 'this site'
+          return { success: false, error: `Google sign-in was blocked. Allow pop-ups for ${host}, or try again to use redirect sign-in.` }
+        }
       }
       if (code.includes('unauthorized-domain')) {
         return { success: false, error: 'This deployment domain is not authorized in Firebase Authentication.' }
