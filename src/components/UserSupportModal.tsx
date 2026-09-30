@@ -53,7 +53,9 @@ export default function UserSupportModal({ mode, onClose, onChangeMode }: { mode
       setSubmitted(true)
       setFeedback('')
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : 'Feedback could not be saved. Please retry.')
+      setSubmitError(error instanceof Error && error.message.includes('session has expired')
+        ? 'Your session has expired. Please sign in again, then resend your feedback.'
+        : 'Feedback could not be saved. Please retry.')
     }
   }
 

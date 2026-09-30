@@ -32,7 +32,9 @@ export default function UpgradeModal({ onClose, feature = 'Price Alerts', featur
       setStatus(nextStatus)
       setMessage(nextStatus === 'APPROVED' ? 'Access is already approved.' : 'Request submitted. The administrator will review it and notify you after a decision.')
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'The request could not be saved. Please retry.')
+      setMessage(error instanceof Error && error.message.includes('session has expired')
+        ? 'Your session has expired. Please sign in again, then request access again.'
+        : 'The access request could not be saved. Please retry.')
     }
   }
 

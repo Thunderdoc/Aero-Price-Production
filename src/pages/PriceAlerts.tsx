@@ -167,9 +167,9 @@ export default function PriceAlerts({ onNavigate }: { onNavigate?: (page: Page) 
       <div style={{ background: SUPABASE_CONFIGURED ? 'var(--color-success-bg)' : 'var(--color-warning-bg)', border: `1px solid ${SUPABASE_CONFIGURED ? 'rgba(22,163,74,0.25)' : 'rgba(217,119,6,0.28)'}`, borderRadius: 10, padding: '12px 16px', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
         <CheckCircle size={14} style={{ color: 'var(--color-success)', flexShrink: 0, marginTop: 1 }} />
         <span style={{ fontSize: 12, color: 'var(--color-text-primary)' }}>
-          <strong style={{ color: SUPABASE_CONFIGURED ? 'var(--color-success)' : '#b45309' }}>{SUPABASE_CONFIGURED ? 'PERSISTENT ALERT STORAGE ACTIVE' : 'LOCAL ALERT STORAGE ONLY'}</strong> — {SUPABASE_CONFIGURED
+          <strong style={{ color: SUPABASE_CONFIGURED ? 'var(--color-success)' : '#b45309' }}>{SUPABASE_CONFIGURED ? 'PERSISTENT ALERT STORAGE ACTIVE' : 'BROWSER ALERT STORAGE ACTIVE'}</strong> — {SUPABASE_CONFIGURED
             ? 'Alerts are saved persistently and can trigger when matching verified fare observations are available.'
-            : 'No alert database is configured. Alerts remain in this browser and automatic email delivery is unavailable.'}
+            : 'Alerts are saved on this device. Connect the production alert database to enable cross-device storage and automatic email delivery.'}
         </span>
       </div>
 

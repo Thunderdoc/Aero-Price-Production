@@ -274,8 +274,16 @@ export default function Forecast() {
           </div>
 
           {!loading && message && (
-            <div style={{ padding: '32px 16px', color: 'var(--color-text-secondary)', fontSize: 13, textAlign: 'center' }}>
-              {message}
+            <div style={{ padding: '28px 16px 24px', color: 'var(--color-text-secondary)', fontSize: 13, textAlign: 'center' }}>
+              <div style={{ width: 42, height: 42, margin: '0 auto 12px', display: 'grid', placeItems: 'center', borderRadius: 12, background: 'var(--color-info-bg)', color: 'var(--color-brand-primary)' }}><Activity size={20} /></div>
+              <strong style={{ display: 'block', color: 'var(--color-text-primary)', fontSize: 14, marginBottom: 7 }}>Forecast is building verified history</strong>
+              <span>{message}</span>
+              {(() => {
+                const match = message.match(/Requires [≥>]?(\d+).*?Have (\d+)/i)
+                if (!match) return null
+                const required = Number(match[1]); const have = Number(match[2]); const progress = Math.min(100, Math.round((have / required) * 100))
+                return <div style={{ maxWidth: 390, margin: '18px auto 0', textAlign: 'left' }}><div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, fontWeight: 700, color: 'var(--color-text-secondary)', marginBottom: 6 }}><span>Verified history coverage</span><span>{have}/{required} days</span></div><div style={{ height: 8, borderRadius: 99, background: 'var(--color-border-secondary)', overflow: 'hidden' }}><div style={{ width: `${progress}%`, height: '100%', borderRadius: 99, background: 'var(--color-brand-primary)' }} /></div><div style={{ marginTop: 8, fontSize: 11, color: 'var(--color-text-tertiary)' }}>The model will unlock automatically when enough daily observations are available.</div></div>
+              })()}
             </div>
           )}
 

@@ -18,9 +18,10 @@ export const BASE_URL = import.meta.env.DEV
   ? ((import.meta.env.VITE_API_URL as string | undefined)
       ?.replace(/\/$/, '')
       .replace(/\/api$/, '') || 'http://localhost:8000')
-  : ((import.meta.env.VITE_API_URL as string | undefined)
-      ?.replace(/\/$/, '')
-      .replace(/\/api$/, '') || 'https://aero-price-production-6osm.onrender.com')
+  // Vercel serves the frontend and FastAPI function from the same origin.
+  // Never let a stale VITE_API_URL send browser auth tokens to another
+  // deployment, where the signing secret may differ.
+  : ''
 
 // Protected API calls can outlive the browser auth token. Keep the UI from
 // presenting a stale authenticated shell with empty data when the backend
@@ -159,6 +160,9 @@ async function apiFetch<T>(path: string, token?: string, init?: RequestInit, for
   }
   if (!resp.ok) {
     const text = await resp.text().catch(() => resp.statusText)
+    if (resp.status === 401) {
+      throw new Error('Your session has expired. Please sign in again.')
+    }
     throw new Error(`API ${path}: ${resp.status} ${text}`)
   }
   const value = await resp.json() as T

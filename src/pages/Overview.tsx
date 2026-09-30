@@ -171,9 +171,22 @@ function ChangeLabel({ change }: { change?: number }) {
 }
 
 function IndexTrend({ routes, range }: { routes: RouteCard[]; range: string }) {
-  const values = routes.map(route => route.fare).filter((value): value is number => value != null)
-  return <div style={{ minHeight: 128, display: 'grid', placeItems: 'center', color: '#7388a6', fontSize: 12, textAlign: 'center' }}>
-    {values.length ? `Verified ${range} history is not available yet. The current index and latest collection movement are shown above.` : 'Waiting for verified fare observations.'}
+  const available = routes.filter(route => route.fare != null).slice(0, 6)
+  if (!available.length) return <div style={{ minHeight: 128, display: 'grid', placeItems: 'center', color: '#7388a6', fontSize: 12, textAlign: 'center' }}>Waiting for verified fare observations.</div>
+
+  const maxFare = Math.max(...available.map(route => route.fare as number), 1)
+  return <div style={{ minHeight: 128, padding: '22px 4px 0' }}>
+    <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10, height: 92, borderBottom: '1px solid #dbe7f2' }}>
+      {available.map(route => {
+        const height = Math.max(12, ((route.fare as number) / maxFare) * 76)
+        return <div key={route.key} title={`${route.code}: ${formatFare(route.fare)}`} style={{ flex: 1, minWidth: 28, height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 9, color: '#526987', whiteSpace: 'nowrap' }}>{formatFare(route.fare)}</span>
+          <div style={{ width: 'min(28px, 70%)', height, borderRadius: '6px 6px 0 0', background: 'linear-gradient(180deg, #4b8df8, #1769e8)' }} />
+          <span style={{ position: 'relative', top: 20, fontSize: 9, color: '#7185a2', fontWeight: 700 }}>{route.code}</span>
+        </div>
+      })}
+    </div>
+    <div style={{ marginTop: 28, color: '#7388a6', fontSize: 11, textAlign: 'center' }}>Latest verified fare collection · {range} history will appear after additional published periods.</div>
   </div>
 }
 
