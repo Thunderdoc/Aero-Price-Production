@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
-import { apiFirebaseLogin, apiLogin, apiRegister, AUTH_EXPIRED_EVENT } from '../services/api'
+import { apiFirebaseLogin, apiLogin, apiRegister } from '../services/api'
+import { signInWithGooglePopup } from '../services/firebase'
 
 export type UserRole = 'PUBLIC' | 'ANALYST' | 'ADMIN'
 export type UserPlan = 'FREE' | 'SUBSCRIBER' | 'GOVERNMENT' | 'ADMIN'
@@ -17,7 +18,7 @@ export interface AuthUser {
 interface AuthContextValue {
   user: AuthUser | null
   token: string | null
-  login: (email: string, password: string, remember?: boolean) => Promise<{ success: boolean; error?: string; user?: AuthUser }>
+  login: (email: string, password: string, remember?: boolean, workspace?: AuthWorkspace) => Promise<{ success: boolean; error?: string; user?: AuthUser }>
   loginWithGoogle: (workspace?: AuthWorkspace, passwordToLink?: string) => Promise<{ success: boolean; error?: string }>
   createAccount: (name: string, email: string, password: string, workspace?: AuthWorkspace) => Promise<{ success: boolean; error?: string }>
   resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>
@@ -120,67 +121,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!token && user) setUser(null)
   }, [token, user])
 
-  useEffect(() => {
-    // A backend 401 means the stored API token cannot be used by this
-    // deployment (commonly after a secret rotation or an old cross-deployment
-    // token). Remove only the backend session so the user can sign in again.
-    const handleAuthExpired = () => {
-      clearStoredSession()
-      setToken(null)
-      setUser(null)
-    }
-    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired)
-    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired)
-  }, [])
+  // A 401 from one background request is not proof that the signed-in user
+  // logged out. In particular, an older request can finish after a new login.
+  // The API still rejects invalid credentials; only an explicit logout may
+  // discard the browser session.
 
   useEffect(() => {
     const hasFirebaseSession = localStorage.getItem(FIREBASE_SESSION_KEY) === '1' || sessionStorage.getItem(FIREBASE_SESSION_KEY) === '1'
     if (USE_BACKEND_AUTH && !hasFirebaseSession) return
     let active = true
-    import('../services/firebase').then(async ({ getFirebaseIdToken, getGoogleRedirectResult }) => {
+    import('../services/firebase').then(async ({ getFirebaseAuth, getFirebaseIdToken, getGoogleRedirectResult }) => {
       const redirectCredential = await getGoogleRedirectResult().catch(() => null)
+      const firebaseUser = redirectCredential?.user ?? getFirebaseAuth()?.currentUser
       if (redirectCredential?.user) {
-        const firebaseUser = redirectCredential.user
-        const email = firebaseUser.email || ''
-        const access = roleForFirebaseEmail(email)
-        const name = firebaseUser.displayName || email
-        const restoredUser: AuthUser = { name, email, role: access.role, plan: access.plan, initials: name.slice(0, 2).toUpperCase() }
-        const firebaseToken = await firebaseUser.getIdToken()
         const pendingPassword = sessionStorage.getItem('aeroprice_pending_google_password')
         if (pendingPassword) {
           const { linkPasswordToCurrentFirebaseUser } = await import('../services/firebase')
           await linkPasswordToCurrentFirebaseUser(pendingPassword).catch(() => undefined)
           sessionStorage.removeItem('aeroprice_pending_google_password')
         }
-        setUser(restoredUser)
-        localStorage.setItem(FIREBASE_SESSION_KEY, '1')
-        try {
-          const apiSession = await apiFirebaseLogin(firebaseToken)
-          setToken(apiSession.access_token)
-          saveStoredSession(restoredUser, apiSession.access_token, true)
-        } catch {
-          // The backend also accepts a verified Firebase ID token as a safe
-          // fallback when the session exchange is temporarily unavailable.
-          setToken(firebaseToken)
-          saveStoredSession(restoredUser, firebaseToken, true)
-        }
-        return
       }
-      const idToken = await getFirebaseIdToken()
+      const idToken = firebaseUser ? await firebaseUser.getIdToken() : await getFirebaseIdToken()
       if (!active || !idToken) return
+      const remember = localStorage.getItem(FIREBASE_SESSION_KEY) === '1' || Boolean(redirectCredential?.user)
       try {
         const apiSession = await apiFirebaseLogin(idToken)
         if (!active) return
+        const name = apiSession.user.name || apiSession.user.email
+        const restoredUser: AuthUser = {
+          name, email: apiSession.user.email, role: apiSession.user.role,
+          plan: apiSession.user.plan, initials: name.slice(0, 2).toUpperCase(),
+        }
+        setUser(restoredUser)
         setToken(apiSession.access_token)
-        const store = localStorage.getItem(FIREBASE_SESSION_KEY) === '1' ? localStorage : sessionStorage
-        store.setItem(store === localStorage ? TOKEN_KEY : SESSION_TOKEN_KEY, apiSession.access_token)
+        ;(remember ? localStorage : sessionStorage).setItem(FIREBASE_SESSION_KEY, '1')
+        saveStoredSession(restoredUser, apiSession.access_token, remember)
       } catch {
-        // Keep the verified Firebase token usable while the API session
-        // exchange is retried on the next refresh.
-        if (!active) return
+        // Keep the Firebase identity and its token while the backend recovers.
+        if (!active || !firebaseUser?.email) return
+        const email = firebaseUser.email
+        const name = firebaseUser.displayName || email
+        const access = roleForFirebaseEmail(email)
+        const restoredUser: AuthUser = { name, email, role: access.role, plan: access.plan, initials: name.slice(0, 2).toUpperCase() }
+        setUser(restoredUser)
         setToken(idToken)
-        const store = localStorage.getItem(FIREBASE_SESSION_KEY) === '1' ? localStorage : sessionStorage
-        store.setItem(store === localStorage ? TOKEN_KEY : SESSION_TOKEN_KEY, idToken)
+        ;(remember ? localStorage : sessionStorage).setItem(FIREBASE_SESSION_KEY, '1')
+        saveStoredSession(restoredUser, idToken, remember)
       }
     }).catch(() => {
       // Keep the restored session; Firebase may be unavailable temporarily.
@@ -188,8 +174,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => { active = false }
   }, [])
 
-  async function login(email: string, password: string, remember = true): Promise<{ success: boolean; error?: string; user?: AuthUser }> {
+  async function login(email: string, password: string, remember = true, workspace?: AuthWorkspace): Promise<{ success: boolean; error?: string; user?: AuthUser }> {
     const emailLower = email.trim().toLowerCase()
+    const expectedRole = workspace === 'ADMIN' ? 'ADMIN' : workspace === 'DGCA' ? 'ANALYST' : workspace === 'USER' ? 'PUBLIC' : null
 
     try {
       const { FIREBASE_CONFIGURED, signInFirebaseEmailUser } = await import('../services/firebase')
@@ -208,20 +195,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (!firebaseUser.emailVerified) {
             return { success: false, error: 'Email is not verified. Please verify your email before signing in.' }
           }
-          const mappedAccess = roleForFirebaseEmail(firebaseUser.email || emailLower)
-          const displayName = firebaseUser.displayName || firebaseUser.email || emailLower
+          const idToken = await firebaseUser.getIdToken()
+          let apiSession = await apiFirebaseLogin(idToken)
+          let backendCredential = false
+          if (workspace === 'DGCA' && apiSession.user.role !== 'ANALYST') {
+            // A DGCA account may have been registered in the backend before
+            // this email also acquired a Firebase identity.
+            try {
+              apiSession = await apiLogin(emailLower, password)
+              backendCredential = true
+            } catch { /* Keep the Firebase result for the role check below. */ }
+          }
+          if (expectedRole && apiSession.user.role !== expectedRole) {
+            return { success: false, error: `This account is not authorized for the ${workspace} workspace.` }
+          }
+          const displayName = apiSession.user.name || firebaseUser.displayName || firebaseUser.email || emailLower
           const authedUser: AuthUser = {
             name: displayName,
-            email: firebaseUser.email || emailLower,
-            role: mappedAccess.role,
-            plan: mappedAccess.plan,
+            email: apiSession.user.email,
+            role: apiSession.user.role,
+            plan: apiSession.user.plan,
             initials: displayName.slice(0, 2).toUpperCase(),
           }
-          const idToken = await firebaseUser.getIdToken()
-          const apiSession = await apiFirebaseLogin(idToken)
           setUser(authedUser)
           setToken(apiSession.access_token)
-          ;(remember ? localStorage : sessionStorage).setItem(FIREBASE_SESSION_KEY, '1')
+          if (backendCredential) {
+            localStorage.removeItem(FIREBASE_SESSION_KEY)
+            sessionStorage.removeItem(FIREBASE_SESSION_KEY)
+          } else {
+            ;(remember ? localStorage : sessionStorage).setItem(FIREBASE_SESSION_KEY, '1')
+          }
           localStorage.removeItem('aeroprice_pending_workspace')
           saveStoredSession(authedUser, apiSession.access_token, remember)
           return { success: true, user: authedUser }
@@ -245,6 +248,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (!FIREBASE_CONFIGURED || USE_BACKEND_AUTH) {
         const response = await apiLogin(emailLower, password)
+        if (expectedRole && response.user.role !== expectedRole) {
+          return { success: false, error: `This account is not authorized for the ${workspace} workspace.` }
+        }
         const displayName = response.user.name || response.user.email
         const authedUser: AuthUser = {
           name: displayName,
@@ -255,6 +261,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         setUser(authedUser)
         setToken(response.access_token)
+        localStorage.removeItem(FIREBASE_SESSION_KEY)
+        sessionStorage.removeItem(FIREBASE_SESSION_KEY)
         saveStoredSession(authedUser, response.access_token, remember)
         return { success: true, user: authedUser }
       }
@@ -267,6 +275,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // data and Firebase remains the primary production path.
       try {
         const response = await apiLogin(emailLower, password)
+        if (expectedRole && response.user.role !== expectedRole) {
+          return { success: false, error: `This account is not authorized for the ${workspace} workspace.` }
+        }
         const displayName = response.user.name || response.user.email
         const authedUser: AuthUser = {
           name: displayName,
@@ -277,6 +288,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         setUser(authedUser)
         setToken(response.access_token)
+        localStorage.removeItem(FIREBASE_SESSION_KEY)
+        sessionStorage.removeItem(FIREBASE_SESSION_KEY)
         saveStoredSession(authedUser, response.access_token, remember)
         return { success: true, user: authedUser }
       } catch {
@@ -298,8 +311,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function loginWithGoogle(workspace?: AuthWorkspace, passwordToLink?: string): Promise<{ success: boolean; error?: string }> {
     try {
-      const { signInWithGooglePopup, signInWithGoogleRedirect, linkPasswordToCurrentFirebaseUser } = await import('../services/firebase')
       const credential = await signInWithGooglePopup()
+      const { linkPasswordToCurrentFirebaseUser } = await import('../services/firebase')
       const firebaseUser = credential.user
       const email = firebaseUser.email || ''
       const access = roleForWorkspace(email, workspace)
@@ -329,7 +342,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       const idToken = await firebaseUser.getIdToken()
-      localStorage.setItem(FIREBASE_SESSION_KEY, '1')
       try {
         const apiSession = await apiFirebaseLogin(idToken)
         const serverUser: AuthUser = {
@@ -339,14 +351,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           plan: apiSession.user.plan,
           initials: (apiSession.user.name || authedUser.name).slice(0, 2).toUpperCase(),
         }
+        if (workspace && serverUser.role !== (workspace === 'DGCA' ? 'ANALYST' : workspace === 'ADMIN' ? 'ADMIN' : 'PUBLIC')) {
+          return { success: false, error: `This Google account is not authorized for the ${workspace} workspace.` }
+        }
         setUser(serverUser)
         setToken(apiSession.access_token)
+        localStorage.setItem(FIREBASE_SESSION_KEY, '1')
         saveStoredSession(serverUser, apiSession.access_token, true)
       } catch {
         // Firebase identity remains valid and the backend verifies this token
         // directly when the optional exchange is unavailable.
+        if (workspace && authedUser.role !== (workspace === 'DGCA' ? 'ANALYST' : workspace === 'ADMIN' ? 'ADMIN' : 'PUBLIC')) {
+          return { success: false, error: `This Google account is not authorized for the ${workspace} workspace.` }
+        }
         setUser(authedUser)
         setToken(idToken)
+        localStorage.setItem(FIREBASE_SESSION_KEY, '1')
         saveStoredSession(authedUser, idToken, true)
       }
       return { success: true }
@@ -356,6 +376,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Mobile browsers often block popups. Redirect is same-origin and
         // returns to the login page through Firebase's redirect handler.
         try {
+          const { signInWithGoogleRedirect } = await import('../services/firebase')
           await signInWithGoogleRedirect()
           return { success: true }
         } catch {

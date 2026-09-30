@@ -123,7 +123,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
     }
 
     setLoading(true)
-    const result = await login(trimmedEmail, pass, rememberMe)
+    const result = await login(trimmedEmail, pass, rememberMe, workspace)
     setLoading(false)
 
     if (!result.success) {
