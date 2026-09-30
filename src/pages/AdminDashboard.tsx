@@ -84,10 +84,10 @@ export default function AdminDashboard() {
           throw new Error('No admin data services responded')
         }
         // Loading the pipeline is silent; status is visible in the page itself.
-    } catch (error) {
-        showToast(error instanceof Error && error.message.includes('session has expired')
-          ? 'Your admin session has expired. Please sign in again.'
-          : 'Unable to load live pipeline data. The backend may still be starting.')
+      } catch {
+        // Keep the admin workspace usable while optional pipeline services
+        // recover. The page cards show their own unavailable state; do not
+        // cover the user-management screen with a misleading toast.
       }
     }
     void loadPipelineData()
@@ -275,7 +275,16 @@ export default function AdminDashboard() {
         setUsersLoaded(true)
       } catch (error) {
         setUsersError(error instanceof Error ? error.message : 'The authenticated user directory could not be loaded.')
-        if (tab === 'users' || tab === 'overview') showToast(`Unable to load users: ${error instanceof Error ? error.message : 'Admin API unavailable'}`)
+        if (user?.email) {
+          setManagedUsers([{
+            email: user.email,
+            name: user.name || user.email,
+            role: user.role,
+            plan: user.plan,
+            lastLogin: 'Current session',
+            status: 'ACTIVE',
+          }])
+        }
       } finally {
         setUsersLoading(false)
       }
