@@ -35,6 +35,28 @@ class AccessRequestCreate(BaseModel):
     feature_name: str = Field(min_length=1, max_length=255)
 
 
+async def _ensure_user_record(current_user: dict, db: AsyncSession) -> None:
+    """Persist verified identities for admin, feedback, and access workflows."""
+    email = (current_user.get("email") or "").strip().lower()
+    if not email:
+        return
+    row = await db.scalar(select(User).where(User.email == email))
+    if row:
+        row.name = current_user.get("name") or row.name
+        row.role = current_user.get("role") or row.role
+        row.plan = current_user.get("plan") or row.plan
+        row.last_login = datetime.now(timezone.utc)
+        return
+    db.add(User(
+        email=email,
+        name=current_user.get("name") or email,
+        role=current_user.get("role", "PUBLIC"),
+        plan=current_user.get("plan", "FREE"),
+        is_active=True,
+        last_login=datetime.now(timezone.utc),
+    ))
+
+
 class AccessDecision(BaseModel):
     rejection_reason: str | None = Field(default=None, max_length=2000)
 
@@ -116,6 +138,8 @@ async def list_users(
     current_user=Depends(require_admin_or_local),
     db: AsyncSession = Depends(get_db),
 ):
+    await _ensure_user_record(current_user, db)
+    await db.flush()
     if uid or email:
         found = _firebase_user_lookup(uid, email)
         if found is None:
@@ -166,6 +190,7 @@ async def create_feedback(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    await _ensure_user_record(current_user, db)
     entry = UserFeedback(
         user_email=current_user["email"],
         user_name=current_user.get("name") or current_user["email"],
@@ -240,6 +265,7 @@ async def create_access_request(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    await _ensure_user_record(current_user, db)
     email = current_user["email"].lower()
     granted = await db.scalar(select(UserFeatureAccess).where(UserFeatureAccess.user_email == email, UserFeatureAccess.feature_key == payload.feature_key))
     if granted:
