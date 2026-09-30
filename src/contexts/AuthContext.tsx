@@ -134,15 +134,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    const hasFirebaseSession = localStorage.getItem(FIREBASE_SESSION_KEY) === '1' || sessionStorage.getItem(FIREBASE_SESSION_KEY) === '1'
-    if (USE_BACKEND_AUTH && !hasFirebaseSession) return
     let active = true
     import('../services/firebase').then(async ({ getFirebaseIdToken, getGoogleRedirectResult }) => {
       const redirectCredential = await getGoogleRedirectResult().catch(() => null)
       if (redirectCredential?.user) {
         const firebaseUser = redirectCredential.user
         const email = firebaseUser.email || ''
-        const access = roleForFirebaseEmail(email)
+        let pendingWorkspace: AuthWorkspace | undefined
+        try {
+          const pending = JSON.parse(localStorage.getItem('aeroprice_pending_workspace') || 'null') as { email?: string; workspace?: AuthWorkspace } | null
+          if (pending?.workspace && (!pending.email || pending.email === email.toLowerCase())) pendingWorkspace = pending.workspace
+        } catch {
+          // Ignore malformed redirect metadata and use the Firebase role map.
+        }
+        const access = roleForWorkspace(email, pendingWorkspace)
         const name = firebaseUser.displayName || email
         const restoredUser: AuthUser = { name, email, role: access.role, plan: access.plan, initials: name.slice(0, 2).toUpperCase() }
         const firebaseToken = await firebaseUser.getIdToken()
@@ -164,6 +169,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setToken(firebaseToken)
           saveStoredSession(restoredUser, firebaseToken, true)
         }
+        localStorage.removeItem('aeroprice_pending_workspace')
         return
       }
       const idToken = await getFirebaseIdToken()
@@ -305,6 +311,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const hostname = typeof window !== 'undefined' ? window.location.hostname : ''
       const isMobile = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
       if (hostname.endsWith('.vercel.app') || isMobile) {
+        if (workspace) {
+          localStorage.setItem('aeroprice_pending_workspace', JSON.stringify({ workspace }))
+        }
         await signInWithGoogleRedirect()
         return { success: true }
       }
