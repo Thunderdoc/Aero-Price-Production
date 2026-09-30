@@ -71,6 +71,13 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
         plan: str = payload.get("plan", "FREE")
         name: str = payload.get("name", "User")
     except JWTError:
+        # Firebase sign-in is the primary deployed identity provider. If the
+        # short-lived backend JWT exchange is unavailable, accept the already
+        # verified Firebase ID token directly instead of leaving the signed-in
+        # user unable to submit feedback or request feature access.
+        if token.count(".") == 2:
+            from app.core.firebase_tokens import verify_firebase_identity
+            return await verify_firebase_identity(token)
         raise credentials_exception
     return {"email": email, "role": role, "plan": plan, "name": name}
 

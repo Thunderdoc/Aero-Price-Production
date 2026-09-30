@@ -149,10 +149,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setToken(apiSession.access_token)
           saveStoredSession(restoredUser, apiSession.access_token, true)
         } catch {
-          // A Firebase ID token is not an API JWT. Keep the identity session
-          // out of protected API calls until the backend exchange succeeds.
-          clearStoredSession()
-          setToken(null)
+          // The backend also accepts a verified Firebase ID token as a safe
+          // fallback when the session exchange is temporarily unavailable.
+          setToken(firebaseToken)
+          saveStoredSession(restoredUser, firebaseToken, true)
         }
         return
       }
@@ -165,11 +165,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const store = localStorage.getItem(FIREBASE_SESSION_KEY) === '1' ? localStorage : sessionStorage
         store.setItem(store === localStorage ? TOKEN_KEY : SESSION_TOKEN_KEY, apiSession.access_token)
       } catch {
-        // Firebase ID tokens are not accepted by protected backend routes.
-        // Do not persist one as if it were the backend access token.
+        // Keep the verified Firebase token usable while the API session
+        // exchange is retried on the next refresh.
         if (!active) return
-        clearStoredSession()
-        setToken(null)
+        setToken(idToken)
+        const store = localStorage.getItem(FIREBASE_SESSION_KEY) === '1' ? localStorage : sessionStorage
+        store.setItem(store === localStorage ? TOKEN_KEY : SESSION_TOKEN_KEY, idToken)
       }
     }).catch(() => {
       // Keep the restored session; Firebase may be unavailable temporarily.
@@ -332,12 +333,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setToken(apiSession.access_token)
         saveStoredSession(serverUser, apiSession.access_token, true)
       } catch {
-        // Firebase identity remains valid, but it must not be used as the
-        // backend bearer token. Protected API actions will ask the user to
-        // sign in again instead of generating a guaranteed 401.
+        // Firebase identity remains valid and the backend verifies this token
+        // directly when the optional exchange is unavailable.
         setUser(authedUser)
-        clearStoredSession()
-        setToken(null)
+        setToken(idToken)
+        saveStoredSession(authedUser, idToken, true)
       }
       return { success: true }
     } catch (err) {
