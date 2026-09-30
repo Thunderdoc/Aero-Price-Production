@@ -303,11 +303,11 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     async function loadAudit() {
-      if (tab !== 'audit') return
+      if (tab !== 'audit' || !token) return
       setAuditLoading(true)
       try {
         if (await isBackendAvailable()) {
-          const logs = await apiAuditLog(token ?? '')
+          const logs = await apiAuditLog(token)
           if (Array.isArray(logs) && logs.length > 0) {
             setAudit(logs)
           }
@@ -324,8 +324,9 @@ export default function AdminDashboard() {
   useEffect(() => {
     if (tab !== 'users' && tab !== 'access') return
     async function loadAccessRequests() {
+      if (!token) return
       try {
-        const result = await apiAdminAccessRequests(token ?? undefined)
+        const result = await apiAdminAccessRequests(token)
         if (Array.isArray(result?.requests)) {
           const requests = result.requests.map((entry: any) => ({ id: entry.id, email: entry.email, name: entry.name, feature: entry.feature, featureKey: entry.feature_key, status: entry.status, createdAt: entry.created_at, reviewedAt: entry.reviewed_at, rejectionReason: entry.rejection_reason }))
           setAccessRequests(requests)
@@ -339,8 +340,9 @@ export default function AdminDashboard() {
   useEffect(() => {
     if (tab !== 'feedback') return
     async function loadFeedback() {
+      if (!token) return
       try {
-        const result = await apiAdminFeedback(token ?? undefined)
+        const result = await apiAdminFeedback(token)
         if (Array.isArray(result?.feedback)) {
           setFeedback(result.feedback.map((entry: any) => ({ id: entry.id, email: entry.email, name: entry.name, message: entry.message, status: entry.status === 'REVIEWED' ? 'REVIEWED' : 'NEW', createdAt: entry.created_at || new Date().toISOString() })))
           return
