@@ -84,8 +84,10 @@ export default function AdminDashboard() {
           throw new Error('No admin data services responded')
         }
         // Loading the pipeline is silent; status is visible in the page itself.
-      } catch {
-        showToast('Unable to load live pipeline data. The backend is still starting or the session expired.')
+    } catch (error) {
+        showToast(error instanceof Error && error.message.includes('session has expired')
+          ? 'Your admin session has expired. Please sign in again.'
+          : 'Unable to load live pipeline data. The backend may still be starting.')
       }
     }
     void loadPipelineData()
