@@ -155,7 +155,7 @@ async function apiFetch<T>(path: string, token?: string, init?: RequestInit, for
     cache: 'no-store',
     headers: { ...authHeaders(token), ...(init?.headers ?? {}) },
   }).then(async resp => {
-  if (resp.status === 401 && typeof window !== 'undefined' && !isFirebaseIdToken(token)) {
+  if (resp.status === 401 && typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { token } }))
   }
   if (!resp.ok) {
@@ -201,7 +201,7 @@ export async function apiDownload(path: string, token?: string): Promise<Blob> {
     cache: 'no-store',
     headers: authHeaders(token),
   })
-  if (resp.status === 401 && typeof window !== 'undefined' && !isFirebaseIdToken(token)) {
+  if (resp.status === 401 && typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { token } }))
   }
   if (!resp.ok) {
