@@ -109,11 +109,11 @@ export async function apiFirebaseLogin(idToken: string): Promise<TokenResponse> 
   return resp.json()
 }
 
-export async function apiRegister(name: string, email: string, password: string): Promise<{ status: string; user: ApiUser }> {
+export async function apiRegister(name: string, email: string, password: string, workspace: 'USER' | 'DGCA' = 'USER'): Promise<{ status: string; user: ApiUser }> {
   const resp = await fetch(`${BASE_URL}/api/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, email, password }),
+    body: JSON.stringify({ name, email, password, workspace }),
   })
   if (!resp.ok) {
     const body = await resp.json().catch(() => null) as { detail?: string } | null

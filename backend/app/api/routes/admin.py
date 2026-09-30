@@ -40,7 +40,14 @@ async def _ensure_user_record(current_user: dict, db: AsyncSession) -> None:
     email = (current_user.get("email") or "").strip().lower()
     if not email:
         return
-    row = await db.scalar(select(User).where(User.email == email))
+    try:
+        row = await db.scalar(select(User).where(User.email == email))
+    except Exception:
+        # User-directory persistence is supplemental. Older local databases
+        # may not have the users table yet; never block feedback or access
+        # requests because that optional table is unavailable.
+        await db.rollback()
+        return
     if row:
         row.name = current_user.get("name") or row.name
         row.role = current_user.get("role") or row.role

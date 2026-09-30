@@ -26,6 +26,7 @@ class RegistrationRequest(BaseModel):
     name: str
     email: str
     password: str
+    workspace: str = "USER"
 
 class FirebaseLoginRequest(BaseModel):
     id_token: str
@@ -95,7 +96,11 @@ async def login(
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register_account(payload: RegistrationRequest, db: AsyncSession = Depends(get_db)):
-    """Create a normal user account for the backend-auth deployment."""
+    """Create a self-registered user or DGCA analyst account.
+
+    Admin accounts remain invite/credential-only; DGCA registration is
+    permitted but receives the non-admin analyst role.
+    """
     email = payload.email.strip().lower()
     name = payload.name.strip()
     if "@" not in email or len(email) > 255:
@@ -111,12 +116,18 @@ async def register_account(payload: RegistrationRequest, db: AsyncSession = Depe
     if existing:
         raise HTTPException(status_code=409, detail="An account already exists for this email.")
 
+    workspace = payload.workspace.strip().upper()
+    if workspace not in {"USER", "DGCA"}:
+        raise HTTPException(status_code=403, detail="Only User and DGCA self-registration is allowed.")
+    role = "ANALYST" if workspace == "DGCA" else "PUBLIC"
+    plan = "GOVERNMENT" if workspace == "DGCA" else "FREE"
+
     db.add(AuthAccount(
         email=email,
         name=name,
         password_hash=get_password_hash(payload.password),
-        role="PUBLIC",
-        plan="FREE",
+        role=role,
+        plan=plan,
     ))
     try:
         await db.commit()
@@ -125,5 +136,5 @@ async def register_account(payload: RegistrationRequest, db: AsyncSession = Depe
         raise HTTPException(status_code=409, detail="An account already exists for this email.")
     return {
         "status": "CREATED",
-        "user": {"email": email, "name": name, "role": "PUBLIC", "plan": "FREE"},
+        "user": {"email": email, "name": name, "role": role, "plan": plan},
     }

@@ -70,3 +70,16 @@ async def test_user_registration_persists_a_backend_auth_account(db):
     assert token_response.user["email"] == "new.user@example.com"
     assert token_response.user["role"] == "PUBLIC"
     assert token_response.access_token
+
+
+async def test_dgca_registration_creates_non_admin_analyst_account(db):
+    response = await register_account(
+        RegistrationRequest(name="DGCA Analyst", email="dgca.new@example.com", password="secret123", workspace="DGCA"),
+        db,
+    )
+
+    assert response["user"]["role"] == "ANALYST"
+    assert response["user"]["plan"] == "GOVERNMENT"
+    account = await db.scalar(select(AuthAccount).where(AuthAccount.email == "dgca.new@example.com"))
+    assert account is not None
+    assert account.role == "ANALYST"

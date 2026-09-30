@@ -372,11 +372,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function createAccount(name: string, email: string, password: string, workspace?: AuthWorkspace): Promise<{ success: boolean; error?: string }> {
     if (USE_BACKEND_AUTH) {
-      if (workspace && workspace !== 'USER') {
-        return { success: false, error: 'DGCA and Admin accounts require approved credentials. Only User accounts can self-register.' }
+      if (workspace === 'ADMIN') {
+        return { success: false, error: 'Admin accounts require approved credentials.' }
       }
       try {
-        await apiRegister(name.trim(), email.trim().toLowerCase(), password)
+        await apiRegister(name.trim(), email.trim().toLowerCase(), password, workspace === 'DGCA' ? 'DGCA' : 'USER')
         return { success: true }
       } catch (err) {
         return { success: false, error: err instanceof Error ? err.message : 'Unable to create account.' }
