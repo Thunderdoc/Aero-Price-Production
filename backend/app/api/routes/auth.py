@@ -32,13 +32,23 @@ class FirebaseLoginRequest(BaseModel):
     id_token: str
 
 @router.post("/firebase", response_model=TokenResponse)
-async def firebase_login(payload: FirebaseLoginRequest):
+async def firebase_login(payload: FirebaseLoginRequest, db: AsyncSession = Depends(get_db)):
     """Exchange a verified Firebase ID token for an API token.
 
     API endpoints use the app's own JWT so Firebase sign-in and backend
     authorization share one stable session.
     """
     identity = await verify_firebase_identity(payload.id_token)
+    # A self-registered DGCA account is stored in AuthAccount. Firebase's
+    # verified email proves ownership, but the static Firebase allowlist alone
+    # would otherwise label that same person PUBLIC on Google sign-in.
+    if identity["role"] == "PUBLIC":
+        account = await db.scalar(select(AuthAccount).where(
+            AuthAccount.email == identity["email"],
+            AuthAccount.is_active == True,
+        ))
+        if account and account.role == "ANALYST":
+            identity = {**identity, "role": account.role, "plan": account.plan}
     token = create_access_token(data={"sub": identity["email"], **identity})
     return TokenResponse(access_token=token, user=identity)
 

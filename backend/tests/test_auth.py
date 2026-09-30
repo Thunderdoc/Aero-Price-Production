@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from sqlalchemy import select
 from starlette.requests import Request
 
-from app.api.routes.auth import RegistrationRequest, login, register_account
+from app.api.routes.auth import FirebaseLoginRequest, RegistrationRequest, firebase_login, login, register_account
 from app.core.auth import DEMO_USERS, create_access_token, decode_token, verify_password
 from app.models.auth_account import AuthAccount
 
@@ -83,3 +83,19 @@ async def test_dgca_registration_creates_non_admin_analyst_account(db):
     account = await db.scalar(select(AuthAccount).where(AuthAccount.email == "dgca.new@example.com"))
     assert account is not None
     assert account.role == "ANALYST"
+
+
+async def test_verified_google_login_uses_registered_dgca_role(db, monkeypatch):
+    await register_account(
+        RegistrationRequest(name="DGCA Analyst", email="dgca.new@example.com", password="secret123", workspace="DGCA"),
+        db,
+    )
+
+    async def verified_identity(_token):
+        return {"email": "dgca.new@example.com", "name": "DGCA Analyst", "role": "PUBLIC", "plan": "FREE"}
+
+    monkeypatch.setattr("app.api.routes.auth.verify_firebase_identity", verified_identity)
+    response = await firebase_login(FirebaseLoginRequest(id_token="verified-firebase-token"), db)
+    assert response.user["role"] == "ANALYST"
+    assert response.user["plan"] == "GOVERNMENT"
+    assert decode_token(response.access_token)["role"] == "ANALYST"
