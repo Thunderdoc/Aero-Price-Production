@@ -299,6 +299,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function loginWithGoogle(workspace?: AuthWorkspace, passwordToLink?: string): Promise<{ success: boolean; error?: string }> {
     try {
       const { signInWithGooglePopup, signInWithGoogleRedirect, linkPasswordToCurrentFirebaseUser } = await import('../services/firebase')
+      // Vercel/mobile browsers commonly block the auxiliary popup window.
+      // Start with same-tab redirect there; desktop localhost keeps the
+      // faster popup flow.
+      const hostname = typeof window !== 'undefined' ? window.location.hostname : ''
+      const isMobile = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+      if (hostname.endsWith('.vercel.app') || isMobile) {
+        await signInWithGoogleRedirect()
+        return { success: true }
+      }
       const credential = await signInWithGooglePopup()
       const firebaseUser = credential.user
       const email = firebaseUser.email || ''
