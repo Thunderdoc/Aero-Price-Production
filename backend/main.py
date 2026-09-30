@@ -167,14 +167,11 @@ app.add_middleware(
     allow_origins=list(dict.fromkeys(settings.allowed_origins_list + [
         "https://aero-price-production.vercel.app",
     ])),
-    # Render deployments can use a generated *.vercel.app hostname. Keep the
-    # explicit ALLOWED_ORIGINS list, but accept that controlled Vercel origin
-    # pattern so a missing/stale Render variable cannot break the live radar.
-    allow_origin_regex=(
-        r"https://[a-z0-9-]+\.vercel\.app"
-        if settings.is_production
-        else r"(?:https?://(?:localhost|127\.0\.0\.1|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})(?::[0-9]+)?|https://[a-z0-9-]+\.vercel\.app)"
-    ),
+    # Render deployments can use a generated *.vercel.app hostname. Local
+    # Vite development must also reach this backend, including when the
+    # backend runs with ENVIRONMENT=production; otherwise browsers report the
+    # misleading generic "Failed to fetch" for every live-data endpoint.
+    allow_origin_regex=r"(?:https?://(?:localhost|127\.0\.0\.1|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})(?::[0-9]+)?|https://[a-z0-9-]+\.vercel\.app)",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
