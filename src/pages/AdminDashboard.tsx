@@ -275,16 +275,6 @@ export default function AdminDashboard() {
         setUsersLoaded(true)
       } catch (error) {
         setUsersError(error instanceof Error ? error.message : 'The authenticated user directory could not be loaded.')
-        if (user?.email) {
-          setManagedUsers([{
-            email: user.email,
-            name: user.name || user.email,
-            role: user.role,
-            plan: user.plan,
-            lastLogin: 'Current session',
-            status: 'ACTIVE',
-          }])
-        }
       } finally {
         setUsersLoading(false)
       }
