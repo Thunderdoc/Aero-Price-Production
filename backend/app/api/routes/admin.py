@@ -133,6 +133,24 @@ async def list_users(
         rows = []
     if rows:
         return {"users": [{"email": row.email, "role": row.role, "plan": row.plan, "name": row.name, "is_active": row.is_active, "last_login": row.last_login.isoformat() if row.last_login else None} for row in rows[:limit]], "total": len(rows), "source": "local_database", "next_page_token": None}
+    # Keep the admin workspace useful even when the deployment has not yet
+    # configured Firebase Admin directory access or populated local accounts.
+    # This is the verified caller, not a fabricated demo user.
+    if current_user.get("email"):
+        return {
+            "users": [{
+                "email": current_user["email"],
+                "role": current_user.get("role", "ADMIN"),
+                "plan": current_user.get("plan", "ADMIN"),
+                "name": current_user.get("name") or current_user["email"],
+                "is_active": True,
+                "last_login": None,
+            }],
+            "total": 1,
+            "source": "authenticated_caller",
+            "next_page_token": None,
+            "note": "Showing the authenticated admin account. Configure Firebase Admin credentials to load the full user directory.",
+        }
     return {
         "users": [],
         "total": 0,
