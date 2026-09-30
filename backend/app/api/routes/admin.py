@@ -101,7 +101,7 @@ def _firebase_users_page(page_token: str | None, limit: int):
             if email.strip()
         }
         page = auth.list_users(page_token=page_token, max_results=limit)
-        return [_firebase_user_dict(record, admin_emails, analyst_emails) for record in page.users], page.get_next_page_token() if page.has_next_page else None
+        return [_firebase_user_dict(record, admin_emails, analyst_emails) for record in page.users], page.next_page_token if page.has_next_page else None
     except Exception as exc:
         logger.exception("Firebase Admin user directory lookup failed: %s", type(exc).__name__)
         return None
