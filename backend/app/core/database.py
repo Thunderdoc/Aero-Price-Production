@@ -3,8 +3,12 @@ from sqlalchemy import text
 from sqlalchemy.orm import DeclarativeBase
 from app.core.config import settings
 
+_database_url = settings.sqlalchemy_database_url
+_connect_args = {"timeout": 30} if _database_url.startswith("sqlite") else {}
+
 engine = create_async_engine(
-    settings.sqlalchemy_database_url,
+    _database_url,
+    connect_args=_connect_args,
     echo=settings.LOG_LEVEL == "DEBUG",
     future=True,
 )
@@ -44,6 +48,13 @@ async def create_all_tables():
         return
 
     async with engine.begin() as conn:
+        if conn.dialect.name == "sqlite":
+            # Local development runs the scheduler and request handlers in
+            # the same SQLite file. WAL plus a busy timeout prevents a brief
+            # collector write from turning registration/access requests into
+            # generic 500 responses.
+            await conn.execute(text("PRAGMA journal_mode=WAL"))
+            await conn.execute(text("PRAGMA busy_timeout=30000"))
         if conn.dialect.name == "postgresql":
             # Transaction-scoped advisory locking prevents concurrent Vercel
             # cold starts from deadlocking while create_all/ALTER TABLE runs.
