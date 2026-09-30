@@ -138,8 +138,14 @@ async def list_users(
     current_user=Depends(require_admin_or_local),
     db: AsyncSession = Depends(get_db),
 ):
-    await _ensure_user_record(current_user, db)
-    await db.flush()
+    try:
+        await _ensure_user_record(current_user, db)
+        await db.flush()
+    except Exception as exc:
+        # Directory visibility must not fail just because a first deployment
+        # is still waiting for the users-table migration.
+        logger.warning("Could not persist authenticated admin in users table: %s", type(exc).__name__)
+        await db.rollback()
     if uid or email:
         found = _firebase_user_lookup(uid, email)
         if found is None:
