@@ -107,8 +107,18 @@ function clearStoredSession() {
 const AuthContext = createContext<AuthContextValue | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(loadStoredUser)
   const [token, setToken] = useState<string | null>(loadStoredToken)
+  // Never restore a signed-in shell without the matching API credential. The
+  // old behavior left a cached user visible after a 401, which made protected
+  // dialogs show “Request Access” even though no request could be authorized.
+  const [user, setUser] = useState<AuthUser | null>(() => {
+    const storedToken = loadStoredToken()
+    return storedToken ? loadStoredUser() : null
+  })
+
+  useEffect(() => {
+    if (!token && user) setUser(null)
+  }, [token, user])
 
   useEffect(() => {
     // A backend 401 means the stored API token cannot be used by this
