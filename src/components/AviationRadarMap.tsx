@@ -68,6 +68,7 @@ export default function AviationRadarMap({ state, selected, onSelect, layer, ful
       {layer === 'Weather' && radarAirports.map(a => <CircleMarker key={`wx-${a.code}`} center={[a.lat, a.lng]} radius={18} pathOptions={{ color: '#f8c147', weight: 1, fillColor: '#fbbf24', fillOpacity: .22 }}><Tooltip permanent direction="top" className="av-airport-label">WX {a.code}</Tooltip></CircleMarker>)}
       {(trails || layer === 'Routes') && paths.map(([id, positions]) => <Polyline key={id} positions={positions} pathOptions={{ color: '#20adc3', weight: 1, dashArray: '4 6', opacity: .65 }}/>) }
       {radarAirports.map(a => <CircleMarker key={a.code} center={[a.lat, a.lng]} radius={5} pathOptions={{ color: '#acd5ff', weight: 2, fillColor: '#1662ff', fillOpacity: 1 }}><Tooltip permanent direction={a.code === 'BOM' || a.code === 'BLR' ? 'left' : 'right'} className="av-airport-label">{a.code}</Tooltip><Popup><strong>{a.name} · {a.code}</strong><br/>Airport reference location</Popup></CircleMarker>)}
+      {state.aircraft.map(a => <AircraftMarker key={aircraftId(a)} aircraft={a} selected={selected === aircraftId(a)} onSelect={onSelect}/>)}
       <MapControls trails={trails} setTrails={setTrails} boundaries={boundaries} setBoundaries={setBoundaries}/>
     </MapContainer>
     {layerNotice[layer] && <div className="av-map-notice" role="status">{layerNotice[layer]}</div>}
