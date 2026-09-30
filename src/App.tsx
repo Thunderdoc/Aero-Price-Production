@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Analytics } from '@vercel/analytics/react'
 import { AuthProvider, useAuth, canAccess } from './contexts/AuthContext'
 import AppShell from './components/AppShell'
 import type { Page } from './components/AppShell'
@@ -125,6 +126,7 @@ export default function App() {
   return (
     <AuthProvider>
       <AppContent />
+      <Analytics />
     </AuthProvider>
   )
 }
