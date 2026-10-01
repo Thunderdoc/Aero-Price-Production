@@ -3,11 +3,17 @@ from sqlalchemy import text
 from sqlalchemy.orm import DeclarativeBase
 from app.core.config import settings
 
-engine = create_async_engine(
-    settings.sqlalchemy_database_url,
-    echo=settings.LOG_LEVEL == "DEBUG",
-    future=True,
-)
+_engine_options = {
+    "echo": settings.LOG_LEVEL == "DEBUG",
+    "future": True,
+}
+if settings.sqlalchemy_database_url.startswith("sqlite"):
+    # Collection and government refresh jobs can overlap briefly on the
+    # local development database. Let SQLite wait for the writer instead of
+    # failing immediately with a database-locked error.
+    _engine_options["connect_args"] = {"timeout": 30}
+
+engine = create_async_engine(settings.sqlalchemy_database_url, **_engine_options)
 
 AsyncSessionLocal = async_sessionmaker(
     engine,

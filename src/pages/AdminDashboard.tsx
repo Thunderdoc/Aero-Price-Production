@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
+import { Modal } from '../components/ui/Modal'
 import { useAuth } from '../contexts/AuthContext'
-import { apiAdminAccessRequests, apiAdminFeedback, apiAdminUsers, apiApproveAccessRequest, apiAuditLog, apiDeleteAccessRequest, apiDeleteFeedback, apiRejectAccessRequest, apiUpdateFeedback, apiSources, apiDashboard, apiHealth, apiSystemParameters, isBackendAvailable, type SystemParametersResponse } from '../services/api'
-import { CheckCircle, ShieldCheck, Activity, RefreshCw, Download, Plus, Trash2, XCircle, MailCheck, MessageSquare, Check } from 'lucide-react'
+import { apiAdminAccessRequests, apiAdminFeedback, apiAdminUsers, apiApproveAccessRequest, apiAuditLog, apiDeleteAccessRequest, apiDeleteFeedback, apiDeleteAdminUser, apiRejectAccessRequest, apiUpdateFeedback, apiSources, apiDashboard, apiHealth, apiSystemParameters, apiCreateAdminUser, apiUpdateAdminUserRole, isBackendAvailable, type SystemParametersResponse } from '../services/api'
+import { CheckCircle, ShieldCheck, Activity, RefreshCw, Download, Plus, Trash2, XCircle, MailCheck, MessageSquare, Check, ArrowRight, ArrowLeft, SlidersHorizontal, Search, AlertTriangle } from 'lucide-react'
 import indiaMap from '../assets/india_map_clean.png'
 
 const AIRFARE_SOURCES_ADMIN: Array<{ id: string; name: string; status: string; enabled: boolean; obs: string }> = []
@@ -16,44 +17,199 @@ const ROLE_BADGE = {
   PUBLIC:  { color: 'var(--color-brand-primary)', bg: 'var(--color-brand-muted)' },
 }
 
+const ROLE_LABEL: Record<string, string> = { ADMIN: 'ADMIN', ANALYST: 'DGCA / ANALYST', PUBLIC: 'USER' }
+const ROLE_DETAILS: Record<string, { access: string; entitlement: string; description: string }> = {
+  PUBLIC: { access: 'User access', entitlement: 'Subscription selected below', description: 'Route exploration, fare snapshots, and subscription-based alerts.' },
+  ANALYST: { access: 'DGCA access', entitlement: 'Government plan', description: 'Government intelligence, aviation analysis, and DGCA tools.' },
+  ADMIN: { access: 'Administrator access', entitlement: 'Admin plan', description: 'User management, approvals, audit trail, and system controls.' },
+}
+
 const ACTION_COLOR: Record<string, string> = {
   INDEX_PUB: 'var(--color-brand-primary)',
   GOV_FETCH: 'var(--color-info)',
   SOURCE_CHECK: 'var(--color-success)',
   LOGIN: 'var(--color-success)',
   ROLE_CHANGE: 'var(--color-danger)',
+  USER_CREATE: 'var(--color-success)',
+  USER_DELETE: 'var(--color-danger)',
+  ACCESS_APPROVED: 'var(--color-success)',
+  ACCESS_REJECTED: 'var(--color-danger)',
+  ACCESS_REQUEST_DELETE: 'var(--color-warning)',
+  FEEDBACK_STATUS: 'var(--color-info)',
+  FEEDBACK_DELETE: 'var(--color-danger)',
+}
+
+const ACTION_LABEL: Record<string, string> = {
+  ROLE_CHANGE: 'Role changed',
+  USER_CREATE: 'User created',
+  USER_DELETE: 'User deleted',
+  ACCESS_APPROVED: 'Access approved',
+  ACCESS_REJECTED: 'Access rejected',
+  ACCESS_REQUEST_DELETE: 'Request cleared',
+  FEEDBACK_STATUS: 'Feedback reviewed',
+  FEEDBACK_DELETE: 'Feedback removed',
 }
 
 type Tab = 'overview' | 'users' | 'pipeline' | 'health' | 'access' | 'audit' | 'config' | 'feedback'
 
 type ManagedUser = { uid?: string; email: string; role: string; plan: string; name: string; lastLogin: string; status: string; provider?: string; verified?: boolean }
+type AccessRole = 'PUBLIC' | 'ANALYST' | 'ADMIN'
+type AccessPlan = 'FREE' | 'SUBSCRIBER' | 'GOVERNMENT' | 'ADMIN'
+type AccessEditorState = { email: string; role: AccessRole; plan: AccessPlan; originalRole: string; originalPlan: string }
 const INITIAL_USERS: ManagedUser[] = []
+const DIRECTORY_SNAPSHOT_MAX_AGE = 10 * 60 * 1000
+const DIRECTORY_SNAPSHOT_KEY = 'aeroprice_admin_directory_snapshot'
+
+function readDirectorySnapshot(email?: string): ManagedUser[] | null {
+  if (!email) return null
+  try {
+    const raw = localStorage.getItem(`${DIRECTORY_SNAPSHOT_KEY}:${email.toLowerCase()}`)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as { savedAt?: number; users?: ManagedUser[] }
+    if (!parsed.savedAt || Date.now() - parsed.savedAt > DIRECTORY_SNAPSHOT_MAX_AGE || !Array.isArray(parsed.users)) return null
+    return parsed.users
+  } catch {
+    return null
+  }
+}
+
+function writeDirectorySnapshot(email: string | undefined, users: ManagedUser[]) {
+  if (!email) return
+  try {
+    localStorage.setItem(`${DIRECTORY_SNAPSHOT_KEY}:${email.toLowerCase()}`, JSON.stringify({ savedAt: Date.now(), users }))
+  } catch {
+    // Storage is only an instant-render enhancement; the backend remains authoritative.
+  }
+}
+
+function subscriptionLabel(user: Pick<ManagedUser, 'role' | 'plan'>) {
+  if (user.role === 'ADMIN') return 'Administrator entitlement'
+  if (user.role === 'ANALYST') return 'DGCA / Government entitlement'
+  return user.plan === 'SUBSCRIBER' ? 'Premium subscription' : 'Standard subscription'
+}
+
+function formatAuditDetails(detail: string) {
+  if (!detail) return 'No additional details'
+  try {
+    const parsed = JSON.parse(detail) as Record<string, unknown>
+    const labels: Record<string, string> = {
+      target_email: 'User', feature_key: 'Feature', firebase_deleted: 'Firebase identity deleted',
+      role: 'Role', plan: 'Plan', from: 'From', to: 'To', reason: 'Reason',
+    }
+    return Object.entries(parsed)
+      .filter(([, value]) => value !== null && value !== undefined && value !== '')
+      .map(([key, value]) => `${labels[key] || key.replace(/_/g, ' ')}: ${String(value)}`)
+      .join(' · ') || 'No additional details'
+  } catch {
+    return detail
+  }
+}
 
 interface AuditEntry { ts: string; actor: string; action: string; detail: string }
 interface AccessRequest { id: string; email: string; name?: string; feature?: string; featureKey?: string; status: string; createdAt: string; reviewedAt?: string; rejectionReason?: string }
 interface FeedbackEntry { id: string; email: string; name: string; message: string; createdAt: string; status: 'NEW' | 'REVIEWED' }
+interface QueueRemoval { kind: 'access' | 'feedback'; id: string; label: string }
 
 export default function AdminDashboard() {
   const { user, token } = useAuth()
   const [tab, setTab] = useState<Tab>('overview')
   const [audit, setAudit] = useState<AuditEntry[]>(INITIAL_AUDIT)
+  const [auditTotal, setAuditTotal] = useState(0)
   const [auditLoading, setAuditLoading] = useState(false)
+  const [auditLoaded, setAuditLoaded] = useState(false)
+  const [auditError, setAuditError] = useState<string | null>(null)
+  const [auditRefreshKey, setAuditRefreshKey] = useState(0)
+  const [auditQuery, setAuditQuery] = useState('')
+  const [auditAction, setAuditAction] = useState('ALL')
+  const [auditPage, setAuditPage] = useState(1)
   const [sources, setSources] = useState(AIRFARE_SOURCES_ADMIN)
   const [systemParameters, setSystemParameters] = useState<SystemParametersResponse | null>(null)
-  const [managedUsers, setManagedUsers] = useState<ManagedUser[]>(INITIAL_USERS)
+  const [managedUsers, setManagedUsers] = useState<ManagedUser[]>(() => readDirectorySnapshot(user?.email) || (user ? [{
+    email: user.email,
+    role: user.role,
+    plan: user.plan,
+    name: user.name || user.email,
+    lastLogin: 'Current session',
+    status: 'ACTIVE',
+  }] : INITIAL_USERS))
   const [usersLoading, setUsersLoading] = useState(false)
   const [usersLoaded, setUsersLoaded] = useState(false)
   const [usersError, setUsersError] = useState<string | null>(null)
   const [nextUsersPage, setNextUsersPage] = useState<string | null>(null)
+  const [userQuery, setUserQuery] = useState('')
+  const [userRoleFilter, setUserRoleFilter] = useState<'ALL' | 'PUBLIC' | 'ANALYST' | 'ADMIN'>('ALL')
+  const [userPlanFilter, setUserPlanFilter] = useState<'ALL' | 'FREE' | 'SUBSCRIBER'>('ALL')
+  const [userToDelete, setUserToDelete] = useState<ManagedUser | null>(null)
+  const [deletingUserEmail, setDeletingUserEmail] = useState<string | null>(null)
   const [newUser, setNewUser] = useState({ name: '', email: '', role: 'PUBLIC', plan: 'FREE' })
   const [accessRequests, setAccessRequests] = useState<AccessRequest[]>([])
+  const [accessLoading, setAccessLoading] = useState(false)
+  const [accessLoaded, setAccessLoaded] = useState(false)
+  const [accessError, setAccessError] = useState<string | null>(null)
+  const [accessRefreshKey, setAccessRefreshKey] = useState(0)
+  const [accessQuery, setAccessQuery] = useState('')
+  const [accessStatusFilter, setAccessStatusFilter] = useState<'ALL' | 'PENDING' | 'APPROVED' | 'REJECTED'>('ALL')
+  const [accessBusyId, setAccessBusyId] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<FeedbackEntry[]>([])
+  const [feedbackLoading, setFeedbackLoading] = useState(false)
+  const [feedbackLoaded, setFeedbackLoaded] = useState(false)
+  const [feedbackError, setFeedbackError] = useState<string | null>(null)
+  const [feedbackRefreshKey, setFeedbackRefreshKey] = useState(0)
+  const [feedbackQuery, setFeedbackQuery] = useState('')
+  const [feedbackStatusFilter, setFeedbackStatusFilter] = useState<'ALL' | 'NEW' | 'REVIEWED'>('ALL')
+  const [feedbackBusyId, setFeedbackBusyId] = useState<string | null>(null)
+  const [pendingRemoval, setPendingRemoval] = useState<QueueRemoval | null>(null)
+  const [removingQueueItem, setRemovingQueueItem] = useState<string | null>(null)
   const [dashboardData, setDashboardData] = useState<any>(null)
   const [healthData, setHealthData] = useState<any>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [resettingEmail, setResettingEmail] = useState<string | null>(null)
+  const [savingUser, setSavingUser] = useState(false)
+  const [updatingRole, setUpdatingRole] = useState<string | null>(null)
+  const [accessEditor, setAccessEditor] = useState<AccessEditorState | null>(null)
+  const [accessEditorStep, setAccessEditorStep] = useState<'edit' | 'review'>('edit')
   const [resetSentEmail, setResetSentEmail] = useState<string | null>(null)
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const appliedSnapshotEmailRef = useRef<string | null>(null)
+  const auditPageSize = 20
+  const filteredAudit = audit.filter(entry => {
+    const matchesAction = auditAction === 'ALL' || entry.action === auditAction
+    const query = auditQuery.trim().toLowerCase()
+    return matchesAction && (!query || `${entry.actor} ${entry.action} ${entry.detail}`.toLowerCase().includes(query))
+  })
+  const auditPageCount = Math.max(1, Math.ceil(filteredAudit.length / auditPageSize))
+  const visibleAudit = filteredAudit.slice((auditPage - 1) * auditPageSize, auditPage * auditPageSize)
+  const auditActorCount = new Set(audit.map(entry => entry.actor).filter(Boolean)).size
+  const auditActionCount = new Set(audit.map(entry => entry.action).filter(Boolean)).size
+  const auditRecentCount = audit.filter(entry => {
+    const age = Date.now() - new Date(entry.ts).getTime()
+    return Number.isFinite(age) && age >= 0 && age < 24 * 60 * 60 * 1000
+  }).length
+  const filteredManagedUsers = managedUsers.filter(entry => {
+    const query = userQuery.trim().toLowerCase()
+    const matchesQuery = !query || `${entry.name} ${entry.email}`.toLowerCase().includes(query)
+    const matchesRole = userRoleFilter === 'ALL' || entry.role === userRoleFilter
+    const matchesPlan = userPlanFilter === 'ALL' || (entry.role === 'PUBLIC' && (entry.plan === 'SUBSCRIBER' ? 'SUBSCRIBER' : 'FREE') === userPlanFilter)
+    return matchesQuery && matchesRole && matchesPlan
+  })
+  const filteredAccessRequests = accessRequests.filter(request => {
+    const query = accessQuery.trim().toLowerCase()
+    const matchesQuery = !query || `${request.name || ''} ${request.email} ${request.feature || ''} ${request.featureKey || ''} ${request.id}`.toLowerCase().includes(query)
+    return matchesQuery && (accessStatusFilter === 'ALL' || request.status === accessStatusFilter)
+  })
+  const filteredFeedback = feedback.filter(item => {
+    const query = feedbackQuery.trim().toLowerCase()
+    const matchesQuery = !query || `${item.name} ${item.email} ${item.message}`.toLowerCase().includes(query)
+    return matchesQuery && (feedbackStatusFilter === 'ALL' || item.status === feedbackStatusFilter)
+  })
+
+  useEffect(() => {
+    const email = user?.email?.trim().toLowerCase()
+    if (!email || appliedSnapshotEmailRef.current === email) return
+    appliedSnapshotEmailRef.current = email
+    const snapshot = readDirectorySnapshot(email)
+    if (snapshot?.length) setManagedUsers(snapshot)
+  }, [user?.email])
 
   useEffect(() => {
     async function loadPipelineData() {
@@ -120,24 +276,61 @@ export default function AdminDashboard() {
   }
 
 
-  function addManagedUser(e: React.FormEvent) {
+  async function addManagedUser(e: React.FormEvent) {
     e.preventDefault()
-    const email = newUser.email.trim().toLowerCase()
     const name = newUser.name.trim()
+    const email = newUser.email.trim().toLowerCase()
     if (!name || !email) {
-      showToast('Enter name and email before adding a user')
+      showToast('Enter a name and email before adding a user.')
       return
     }
-    if (managedUsers.some(u => u.email.toLowerCase() === email)) {
-      showToast('This user already exists')
-      return
+    setSavingUser(true)
+    try {
+      const result = await apiCreateAdminUser({ name, email, role: newUser.role as 'PUBLIC' | 'ANALYST' | 'ADMIN', plan: newUser.plan as 'FREE' | 'SUBSCRIBER' | 'GOVERNMENT' | 'ADMIN' }, token ?? undefined) as { user?: Record<string, any>; message?: string }
+      const entry = result.user
+      if (entry?.email) {
+        setManagedUsers(prev => {
+          const next = [{
+            uid: entry.uid, email: entry.email, role: entry.role, plan: entry.plan, name: entry.name,
+            lastLogin: 'Not recorded', status: 'ACTIVE', verified: false,
+          }, ...prev.filter(userEntry => userEntry.email.toLowerCase() !== email)]
+          writeDirectorySnapshot(user?.email, next)
+          return next
+        })
+      }
+      setNewUser({ name: '', email: '', role: 'PUBLIC', plan: 'FREE' })
+      showToast(result.message || `User account created for ${email}.`, 6000)
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'The user account could not be created.', 6000)
+    } finally {
+      setSavingUser(false)
     }
-    setManagedUsers(prev => [
-      ...prev,
-      { ...newUser, plan: newUser.role === 'ADMIN' ? 'ADMIN' : newUser.role === 'ANALYST' ? 'GOVERNMENT' : 'FREE', email, name, lastLogin: 'Invited now', status: 'INVITED' },
-    ])
-    setNewUser({ name: '', email: '', role: 'PUBLIC', plan: 'FREE' })
-    showToast(`User invited: ${email}`)
+  }
+
+  async function updateManagedUserRole(email: string, role: AccessRole, plan: AccessPlan) {
+    setUpdatingRole(email)
+    try {
+      const result = await apiUpdateAdminUserRole(email, role, plan, token ?? undefined) as { role: string; plan: string }
+      setManagedUsers(prev => {
+        const next = prev.map(entry => entry.email.toLowerCase() === email.toLowerCase() ? { ...entry, role: result.role, plan: result.plan } : entry)
+        writeDirectorySnapshot(user?.email, next)
+        return next
+      })
+      setAccessEditor(null)
+      setAccessEditorStep('edit')
+      showToast(`${email} is now ${ROLE_LABEL[result.role] || result.role}.`)
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'The user role could not be updated.', 6000)
+    } finally {
+      setUpdatingRole(null)
+    }
+  }
+
+  function openAccessEditor(entry: ManagedUser) {
+    const role = (entry.role === 'ANALYST' || entry.role === 'ADMIN' ? entry.role : 'PUBLIC') as AccessRole
+    const plan = (role === 'PUBLIC' && entry.plan === 'SUBSCRIBER' ? 'SUBSCRIBER' : role === 'ANALYST' ? 'GOVERNMENT' : role === 'ADMIN' ? 'ADMIN' : 'FREE') as AccessPlan
+    setAccessEditor({ email: entry.email, role, plan, originalRole: role, originalPlan: plan })
+    setAccessEditorStep('edit')
   }
 
   function resetManagedPassword(email: string) {
@@ -168,74 +361,86 @@ export default function AdminDashboard() {
       .finally(() => setResettingEmail(null))
   }
 
-  function deleteManagedUser(email: string) {
-    if (email === user?.email) {
-      showToast('You cannot delete the active admin session')
+  async function confirmDeleteManagedUser() {
+    if (!userToDelete) return
+    const { email, uid } = userToDelete
+    if (email.toLowerCase() === user?.email?.toLowerCase()) {
+      showToast('You cannot delete the currently signed-in administrator.')
       return
     }
-    setManagedUsers(prev => prev.filter(u => u.email !== email))
-    setAccessRequests(prev => {
-      const next = prev.filter(r => r.email !== email)
-      localStorage.setItem('aeroprice_access_requests', JSON.stringify(next))
-      return next
-    })
-    showToast(`User removed: ${email}`)
-  }
-
-  function notifyFeatureDecision(email: string | undefined, approved: boolean, feature: string) {
-    if (!email) return
+    setDeletingUserEmail(email)
     try {
-      const existing = JSON.parse(localStorage.getItem('aeroprice_notifications') || '[]') as Array<Record<string, unknown>>
-      const notification = {
-        id: `NOTICE-${Date.now().toString(36).toUpperCase()}`,
-        email,
-        title: approved ? 'Access Approved' : 'Access Request Update',
-        message: approved ? `Your access to ${feature} has been approved.` : `Your request for ${feature} was not approved.`,
-        createdAt: new Date().toISOString(),
-        read: false,
-      }
-      localStorage.setItem('aeroprice_notifications', JSON.stringify([notification, ...existing]))
-      window.dispatchEvent(new Event('aeroprice-notifications-changed'))
-    } catch { /* local notifications are best effort */ }
+      const result = await apiDeleteAdminUser(email, uid, token ?? undefined) as { status?: string; firebase_deleted?: boolean }
+      setManagedUsers(previous => {
+        const next = previous.filter(entry => entry.email.toLowerCase() !== email.toLowerCase())
+        writeDirectorySnapshot(user?.email, next)
+        return next
+      })
+      setUserToDelete(null)
+      showToast(result.firebase_deleted ? `${email} and the Firebase sign-in were deleted.` : `${email} was removed from the local directory.` , 6000)
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : `Could not delete ${email}. The account is unchanged.`, 6000)
+    } finally {
+      setDeletingUserEmail(null)
+    }
   }
 
   async function approveFeatureRequest(id: string) {
+    setAccessBusyId(id)
     try {
       const result = await apiApproveAccessRequest(id, token ?? undefined) as { status: string; reviewed_at?: string }
       setAccessRequests(prev => prev.map(r => r.id === id ? { ...r, status: result.status, reviewedAt: result.reviewed_at } : r))
       showToast('Feature access approved. The user will see the update after refresh.')
     } catch (error) { showToast(error instanceof Error ? error.message : 'Could not approve access request.') }
+    finally { setAccessBusyId(null) }
   }
 
   async function rejectFeatureRequest(id: string) {
+    setAccessBusyId(id)
     try {
       const result = await apiRejectAccessRequest(id, 'Not approved by the administrator.', token ?? undefined) as { status: string; reviewed_at?: string; rejection_reason?: string }
       setAccessRequests(prev => prev.map(r => r.id === id ? { ...r, status: result.status, reviewedAt: result.reviewed_at, rejectionReason: result.rejection_reason } : r))
       showToast('Feature access request rejected.')
     } catch (error) { showToast(error instanceof Error ? error.message : 'Could not reject access request.') }
+    finally { setAccessBusyId(null) }
   }
 
   async function removeAccessRequest(id: string) {
+    setRemovingQueueItem(id)
     try {
       await apiDeleteAccessRequest(id, token ?? undefined)
       setAccessRequests(prev => prev.filter(r => r.id !== id))
+      setPendingRemoval(null)
       showToast('Access request cleared; user can request again')
     } catch (error) { showToast(error instanceof Error ? error.message : 'Could not clear access request.') }
+    finally { setRemovingQueueItem(null) }
   }
 
-  function updateFeedback(id: string, status: FeedbackEntry['status']) {
-    void apiUpdateFeedback(id, status, token ?? undefined).then(() => {
+  async function updateFeedback(id: string, status: FeedbackEntry['status']) {
+    setFeedbackBusyId(id)
+    try {
+      await apiUpdateFeedback(id, status, token ?? undefined)
       setFeedback(prev => prev.map(item => item.id === id ? { ...item, status } : item))
       showToast(status === 'REVIEWED' ? 'Feedback marked as reviewed.' : 'Feedback marked as new.')
-    }).catch(error => showToast(error instanceof Error ? error.message : 'Could not update feedback.'))
+    } catch (error) { showToast(error instanceof Error ? error.message : 'Could not update feedback.') }
+    finally { setFeedbackBusyId(null) }
   }
 
   async function removeFeedback(id: string) {
+    setRemovingQueueItem(id)
     try {
       await apiDeleteFeedback(id, token ?? undefined)
       setFeedback(prev => prev.filter(item => item.id !== id))
+      setPendingRemoval(null)
       showToast('Feedback removed from the admin queue.')
     } catch (error) { showToast(error instanceof Error ? error.message : 'Could not remove feedback.') }
+    finally { setRemovingQueueItem(null) }
+  }
+
+  function confirmQueueRemoval() {
+    if (!pendingRemoval) return
+    if (pendingRemoval.kind === 'access') void removeAccessRequest(pendingRemoval.id)
+    else void removeFeedback(pendingRemoval.id)
   }
 
   useEffect(() => {
@@ -269,13 +474,14 @@ export default function AdminDashboard() {
         if (remoteUsers.length > 0) {
           const uniqueUsers = Array.from(new Map(remoteUsers.map(entry => [entry.email.toLowerCase(), entry])).values())
           setManagedUsers(uniqueUsers)
+          writeDirectorySnapshot(user?.email, uniqueUsers)
         }
         if (remoteUsers.length === 0 && result?.note) setUsersError(String(result.note))
         setNextUsersPage(result?.next_page_token || null)
         setUsersLoaded(true)
       } catch (error) {
         setUsersError(error instanceof Error ? error.message : 'The authenticated user directory could not be loaded.')
-        if (user?.email) {
+        if (user?.email && managedUsers.length === 0) {
           setManagedUsers([{
             email: user.email,
             name: user.name || user.email,
@@ -304,69 +510,110 @@ export default function AdminDashboard() {
         provider: Array.isArray(entry.providers) ? entry.providers.join(', ') : undefined,
         verified: entry.email_verified,
       }))
-      setManagedUsers(prev => [...prev, ...more])
+      setManagedUsers(prev => {
+        const next = [...prev, ...more]
+        writeDirectorySnapshot(user?.email, next)
+        return next
+      })
       setNextUsersPage(result.next_page_token || null)
     } catch (error) { setUsersError(error instanceof Error ? error.message : 'Could not load more users.') }
     finally { setUsersLoading(false) }
   }
 
   useEffect(() => {
+    let active = true
     async function loadAudit() {
-      if (tab !== 'audit' || !token) return
+      if (tab !== 'audit') return
       setAuditLoading(true)
+      setAuditError(null)
       try {
-        if (await isBackendAvailable()) {
-          const logs = await apiAuditLog(token)
-          if (Array.isArray(logs) && logs.length > 0) {
-            setAudit(logs)
-          }
-        }
-      } catch {
-        // static audit log remains visible
+        const result = await apiAuditLog(token ?? '', 200) as { entries?: Array<Record<string, any>>; total?: number }
+        if (!Array.isArray(result?.entries)) throw new Error('The audit service returned an invalid response.')
+        if (!active) return
+        setAudit(result.entries.map(entry => ({
+          ts: entry.created_at || entry.timestamp || '',
+          actor: entry.user_email || entry.actor || 'System',
+          action: entry.action || 'UNKNOWN',
+          detail: typeof entry.details === 'string' ? entry.details : JSON.stringify(entry.details || {}),
+        })))
+        setAuditTotal(Number.isFinite(Number(result.total)) ? Number(result.total) : result.entries.length)
+      } catch (error) {
+        if (active) setAuditError(error instanceof Error ? error.message : 'Could not load the audit trail.')
       } finally {
-        setAuditLoading(false)
+        if (active) {
+          setAuditLoading(false)
+          setAuditLoaded(true)
+        }
       }
     }
-    loadAudit()
-  }, [tab])
+    void loadAudit()
+    return () => { active = false }
+  }, [tab, token, auditRefreshKey])
+
+  useEffect(() => {
+    setAuditPage(1)
+  }, [auditQuery, auditAction])
 
   useEffect(() => {
     if (tab !== 'users' && tab !== 'access') return
+    let active = true
     async function loadAccessRequests() {
-      if (!token) return
+      setAccessLoading(true)
+      setAccessError(null)
       try {
-        const result = await apiAdminAccessRequests(token)
+        const result = await apiAdminAccessRequests(token ?? undefined)
         if (Array.isArray(result?.requests)) {
           const requests = result.requests.map((entry: any) => ({ id: entry.id, email: entry.email, name: entry.name, feature: entry.feature, featureKey: entry.feature_key, status: entry.status, createdAt: entry.created_at, reviewedAt: entry.reviewed_at, rejectionReason: entry.rejection_reason }))
-          setAccessRequests(requests)
-          return
+          if (active) setAccessRequests(requests)
+        } else {
+          throw new Error('The access-request service returned an invalid response.')
         }
-      } catch { setAccessRequests([]) }
+      } catch (error) {
+        if (active) setAccessError(error instanceof Error ? error.message : 'Could not load access requests.')
+      } finally {
+        if (active) {
+          setAccessLoading(false)
+          setAccessLoaded(true)
+        }
+      }
     }
     void loadAccessRequests()
-  }, [tab, token])
+    return () => { active = false }
+  }, [tab, token, accessRefreshKey])
 
   useEffect(() => {
     if (tab !== 'feedback') return
+    let active = true
     async function loadFeedback() {
-      if (!token) return
+      setFeedbackLoading(true)
+      setFeedbackError(null)
       try {
-        const result = await apiAdminFeedback(token)
+        const result = await apiAdminFeedback(token ?? undefined)
         if (Array.isArray(result?.feedback)) {
-          setFeedback(result.feedback.map((entry: any) => ({ id: entry.id, email: entry.email, name: entry.name, message: entry.message, status: entry.status === 'REVIEWED' ? 'REVIEWED' : 'NEW', createdAt: entry.created_at || new Date().toISOString() })))
-          return
+          if (active) setFeedback(result.feedback.map((entry: any) => ({ id: entry.id, email: entry.email, name: entry.name, message: entry.message, status: entry.status === 'REVIEWED' ? 'REVIEWED' : 'NEW', createdAt: entry.created_at || '' })))
+        } else {
+          throw new Error('The feedback service returned an invalid response.')
         }
-      } catch { setFeedback([]) }
+      } catch (error) {
+        if (active) setFeedbackError(error instanceof Error ? error.message : 'Could not load feedback.')
+      } finally {
+        if (active) {
+          setFeedbackLoading(false)
+          setFeedbackLoaded(true)
+        }
+      }
     }
     void loadFeedback()
-  }, [tab, token])
+    return () => { active = false }
+  }, [tab, token, feedbackRefreshKey])
 
   function downloadAuditCSV() {
+    const csvCell = (value: string) => `"${value.replace(/"/g, '""')}"`
     const rows = [
       ['Timestamp', 'Actor', 'Action', 'Detail'],
-      ...audit.map(a => [a.ts, a.actor, a.action, `"${a.detail}"`]),
+      ...filteredAudit.map(a => [a.ts, a.actor, a.action, a.detail]),
     ]
-    const csv = rows.map(r => r.join(',')).join('\n')
+    const csv = rows.map(r => r.map(csvCell).join(',')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
     const el = document.createElement('a')
@@ -392,6 +639,79 @@ export default function AdminDashboard() {
           {toast}
         </div>
       )}
+
+      <Modal
+        isOpen={Boolean(accessEditor)}
+        onClose={() => { if (!updatingRole) setAccessEditor(null) }}
+        title={accessEditorStep === 'review' ? 'Review access change' : 'Edit user access'}
+        size="lg"
+        footer={accessEditor ? <div className="admin-access-editor-footer">
+          {accessEditorStep === 'review' ? <Button variant="neutral" onClick={() => setAccessEditorStep('edit')} disabled={Boolean(updatingRole)} iconStart={<ArrowLeft size={14} />}>Back</Button> : <Button variant="neutral" onClick={() => setAccessEditor(null)} disabled={Boolean(updatingRole)}>Cancel</Button>}
+          {accessEditorStep === 'review' ? <Button variant="primary" onClick={() => void updateManagedUserRole(accessEditor.email, accessEditor.role, accessEditor.plan)} loading={Boolean(updatingRole)}>Confirm &amp; save</Button> : <Button variant="primary" onClick={() => setAccessEditorStep('review')} disabled={accessEditor.role === accessEditor.originalRole && accessEditor.plan === accessEditor.originalPlan}>Review changes <ArrowRight size={14} /></Button>}
+        </div> : null}
+      >
+        {accessEditor && (() => {
+          const entry = managedUsers.find(item => item.email.toLowerCase() === accessEditor.email.toLowerCase())
+          const details = ROLE_DETAILS[accessEditor.role] || ROLE_DETAILS.PUBLIC
+          const changed = accessEditor.role !== accessEditor.originalRole || accessEditor.plan !== accessEditor.originalPlan
+          return <div className="admin-access-editor">
+            <div className="admin-access-editor-user">
+              <span className="admin-avatar">{(entry?.name || accessEditor.email).split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase()}</span>
+              <div><strong>{entry?.name || accessEditor.email}</strong><span>{accessEditor.email}</span></div>
+            </div>
+            {accessEditorStep === 'edit' ? <>
+              <p className="admin-access-editor-lead">Choose the workspace access first, then select a subscription only for standard users.</p>
+              <div className="admin-access-editor-fields">
+                <label className="admin-access-field"><span>Workspace role</span><select className="ap-input" value={accessEditor.role} onChange={event => { const role = event.target.value as AccessRole; setAccessEditor(current => current ? { ...current, role, plan: role === 'PUBLIC' ? (current.plan === 'SUBSCRIBER' ? 'SUBSCRIBER' : 'FREE') : role === 'ANALYST' ? 'GOVERNMENT' : 'ADMIN' } : current) }}><option value="PUBLIC">User</option><option value="ANALYST">DGCA / Analyst</option><option value="ADMIN">Admin</option></select></label>
+                <label className="admin-access-field"><span>Subscription</span><select className="ap-input" value={accessEditor.role === 'PUBLIC' ? accessEditor.plan : accessEditor.role === 'ANALYST' ? 'GOVERNMENT' : 'ADMIN'} disabled={accessEditor.role !== 'PUBLIC'} onChange={event => setAccessEditor(current => current ? { ...current, plan: event.target.value as AccessPlan } : current)}><option value="FREE">Standard</option><option value="SUBSCRIBER">Premium</option>{accessEditor.role === 'ANALYST' && <option value="GOVERNMENT">Government</option>}{accessEditor.role === 'ADMIN' && <option value="ADMIN">Administrator</option>}</select></label>
+              </div>
+              <div className="admin-access-editor-preview"><div><span className="admin-access-preview-kicker">NEW ACCESS PREVIEW</span><strong>{details.access}</strong><small>{subscriptionLabel({ role: accessEditor.role, plan: accessEditor.plan })}</small></div><span className="admin-access-preview-badge">{ROLE_LABEL[accessEditor.role]}</span></div>
+              <div className="admin-access-editor-note"><ShieldCheck size={16} /><span>{details.description}</span></div>
+            </> : <>
+              <div className="admin-access-editor-review"><div className="admin-access-review-kicker"><Check size={15} /> Ready to apply</div><p>Review the access change below. It will update Firebase permissions, the local directory, and the audit trail together.</p><div className="admin-access-change-grid"><div><span>Current access</span><strong>{ROLE_LABEL[accessEditor.originalRole] || accessEditor.originalRole}</strong><small>{subscriptionLabel({ role: accessEditor.originalRole, plan: accessEditor.originalPlan })}</small></div><ArrowRight size={18} /><div className="next"><span>New access</span><strong>{ROLE_LABEL[accessEditor.role]}</strong><small>{subscriptionLabel({ role: accessEditor.role, plan: accessEditor.plan })}</small></div></div>{!changed && <small className="admin-access-no-change">No changes were made.</small>}</div>
+              <p className="admin-access-editor-footnote">The user will receive the new access on their next authenticated session.</p>
+            </>}
+          </div>
+        })()}
+      </Modal>
+
+      <Modal
+        isOpen={Boolean(userToDelete)}
+        onClose={() => { if (!deletingUserEmail) setUserToDelete(null) }}
+        title="Delete user account?"
+        size="md"
+        footer={userToDelete ? <div className="admin-access-editor-footer">
+          <Button variant="neutral" onClick={() => setUserToDelete(null)} disabled={Boolean(deletingUserEmail)}>Cancel</Button>
+          <Button variant="danger" onClick={() => void confirmDeleteManagedUser()} disabled={userToDelete.email.toLowerCase() === user?.email?.toLowerCase()} loading={Boolean(deletingUserEmail)} iconStart={<Trash2 size={14} />}>Delete account</Button>
+        </div> : null}
+      >
+        {userToDelete && <div className="admin-delete-user-dialog">
+          <div className="admin-delete-user-warning"><AlertTriangle size={19} /><span>This action cannot be undone.</span></div>
+          <div className="admin-access-editor-user">
+            <span className="admin-avatar">{userToDelete.name.split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase()}</span>
+            <div><strong>{userToDelete.name}</strong><span>{userToDelete.email}</span></div>
+          </div>
+          <p>Delete this user’s Firebase sign-in and local account data, including access requests, grants, and notifications. Feedback and audit history will remain available to admins.</p>
+          {userToDelete.email.toLowerCase() === user?.email?.toLowerCase() && <p className="admin-delete-self-warning">You are signed in with this account, so it cannot be deleted here.</p>}
+        </div>}
+      </Modal>
+
+      <Modal
+        isOpen={Boolean(pendingRemoval)}
+        onClose={() => { if (!removingQueueItem) setPendingRemoval(null) }}
+        title={pendingRemoval?.kind === 'access' ? 'Clear access request?' : 'Remove feedback item?'}
+        size="sm"
+        footer={pendingRemoval ? <div className="admin-access-editor-footer">
+          <Button variant="neutral" onClick={() => setPendingRemoval(null)} disabled={Boolean(removingQueueItem)}>Cancel</Button>
+          <Button variant="danger" onClick={confirmQueueRemoval} loading={removingQueueItem === pendingRemoval.id} iconStart={<Trash2 size={14} />}>Confirm removal</Button>
+        </div> : null}
+      >
+        {pendingRemoval && <div className="admin-delete-user-dialog">
+          <div className="admin-delete-user-warning"><AlertTriangle size={19} /><span>This removes the item from its active queue.</span></div>
+          <p className="admin-access-editor-lead">{pendingRemoval.kind === 'access' ? 'The request history will remain in the audit trail, and the user may submit a new request afterward.' : 'This feedback message will be permanently removed. Its removal will be recorded in the audit trail.'}</p>
+          <div className="admin-access-editor-user"><span className="admin-avatar">{pendingRemoval.kind === 'access' ? 'AR' : 'FB'}</span><div><strong>{pendingRemoval.label}</strong><span>{pendingRemoval.kind === 'access' ? 'Access request' : 'Feedback item'}</span></div></div>
+        </div>}
+      </Modal>
 
       {tab === 'overview' && <>
       {/* Admin Overview hero header */}
@@ -537,7 +857,26 @@ export default function AdminDashboard() {
         <div className="admin-workspace">
           <div className="admin-section-banner"><div><span>ADMIN CONTROL CENTER · ACCESS MANAGEMENT</span><h1>Access Requests</h1><p>Review, approve, reject, and track restricted-feature access from one controlled panel.</p></div><div className="admin-section-count"><strong>{accessRequests.filter(request => request.status === 'PENDING').length}</strong><span>Pending review</span></div></div>
           <div className="admin-user-kpis"><div><span>TOTAL REQUESTS</span><strong>{accessRequests.length}</strong></div><div><span>PENDING</span><strong>{accessRequests.filter(request => request.status === 'PENDING').length}</strong></div><div><span>APPROVED</span><strong>{accessRequests.filter(request => request.status === 'APPROVED').length}</strong></div><div><span>REJECTED</span><strong>{accessRequests.filter(request => request.status === 'REJECTED').length}</strong></div></div>
-          <div className="admin-access-panel">{accessRequests.length === 0 ? <div className="admin-empty-state"><ShieldCheck size={22} /><strong>No access requests pending</strong><span>New requests from users will appear here for administrator review.</span></div> : accessRequests.map(req => <div className="admin-access-row" key={req.id}><div><strong>{req.name || req.email}</strong><small>{req.email} · {req.feature || 'Feature access'}</small><small>{req.id} · {new Date(req.createdAt).toLocaleString('en-IN')}</small></div><span className={`admin-request-status ${req.status.toLowerCase()}`}>{req.status}</span><div>{req.status === 'PENDING' ? <><Button size="xs" variant="primary" onClick={() => approveFeatureRequest(req.id)} iconStart={<Check size={12} />}>Approve</Button><Button size="xs" variant="danger" onClick={() => rejectFeatureRequest(req.id)} iconStart={<XCircle size={12} />}>Reject</Button></> : <Button size="xs" variant="neutral" onClick={() => removeAccessRequest(req.id)}>Clear</Button>}</div></div>)}</div>
+          <div className="admin-queue-toolbar">
+            <label className="admin-users-search"><Search size={16} aria-hidden="true" /><input type="search" value={accessQuery} onChange={event => setAccessQuery(event.target.value)} placeholder="Search user, feature, or request ID" aria-label="Search access requests" /></label>
+            <select className="ap-input admin-users-filter" value={accessStatusFilter} onChange={event => setAccessStatusFilter(event.target.value as typeof accessStatusFilter)} aria-label="Filter access requests by status"><option value="ALL">All statuses</option><option value="PENDING">Pending</option><option value="APPROVED">Approved</option><option value="REJECTED">Rejected</option></select>
+            <span className="admin-users-result-count">{filteredAccessRequests.length} of {accessRequests.length} requests</span>
+            <Button size="xs" variant="neutral" onClick={() => setAccessRefreshKey(value => value + 1)} disabled={accessLoading} loading={accessLoading} iconStart={<RefreshCw size={13} />}>{accessLoading ? 'Refreshing…' : 'Refresh'}</Button>
+          </div>
+          {accessError && <div className="admin-data-error" role="alert"><div><strong>Could not load access requests</strong><span>{accessError}</span></div><Button size="xs" variant="neutral" onClick={() => setAccessRefreshKey(value => value + 1)} disabled={accessLoading}>Try again</Button></div>}
+          {accessLoading && accessRequests.length > 0 && <div className="admin-directory-sync" role="status"><RefreshCw size={13} className="spin" /> Refreshing requests…</div>}
+          <div className="admin-access-panel">
+            {accessLoading && accessRequests.length === 0 ? <div className="admin-empty-state"><RefreshCw size={18} className="spin" /><strong>Loading access requests…</strong><span>Fetching the latest requests from the authenticated backend.</span></div>
+              : !accessLoaded ? <div className="admin-empty-state"><RefreshCw size={18} className="spin" /><strong>Preparing access requests…</strong></div>
+              : accessError && accessRequests.length === 0 ? <div className="admin-empty-state"><AlertTriangle size={22} /><strong>Requests unavailable</strong><span>Use “Try again” above to reload the live request queue.</span></div>
+              : accessRequests.length === 0 && !accessError ? <div className="admin-empty-state"><ShieldCheck size={22} /><strong>No access requests yet</strong><span>New requests from users will appear here for administrator review.</span></div>
+              : filteredAccessRequests.length === 0 && !accessError ? <div className="admin-empty-state"><Search size={20} /><strong>No matching requests</strong><span>Try another search or change the status filter.</span></div>
+              : filteredAccessRequests.map(req => <article className="admin-access-row" key={req.id}>
+                <div className="admin-access-request-main"><strong>{req.name || req.email}</strong><small className="admin-access-request-email">{req.email}</small><div className="admin-access-request-meta"><span>{req.feature || 'Feature access'}</span><span>Requested {req.createdAt && !Number.isNaN(new Date(req.createdAt).getTime()) ? new Date(req.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : 'date unavailable'}</span></div><small className="admin-access-request-id">Reference: {req.id}</small>{req.rejectionReason && <small className="admin-access-request-reason">Reason: {req.rejectionReason}</small>}</div>
+                <span className={`admin-request-status ${req.status.toLowerCase()}`}>{req.status}</span>
+                <div className="admin-access-request-actions">{req.status === 'PENDING' ? <><Button size="xs" variant="primary" onClick={() => void approveFeatureRequest(req.id)} disabled={Boolean(accessBusyId)} loading={accessBusyId === req.id} iconStart={<Check size={12} />}>Approve</Button><Button size="xs" variant="danger" onClick={() => void rejectFeatureRequest(req.id)} disabled={Boolean(accessBusyId)} loading={accessBusyId === req.id} iconStart={<XCircle size={12} />}>Reject</Button></> : <><span className="admin-access-reviewed">Reviewed{req.reviewedAt && !Number.isNaN(new Date(req.reviewedAt).getTime()) ? ` · ${new Date(req.reviewedAt).toLocaleDateString('en-IN')}` : ''}</span><Button size="xs" variant="neutral" onClick={() => setPendingRemoval({ kind: 'access', id: req.id, label: `${req.feature || 'Feature request'} · ${req.email}` })} disabled={Boolean(removingQueueItem)}>Clear</Button></>}</div>
+              </article>)}
+          </div>
         </div>
       )}
 
@@ -547,8 +886,8 @@ export default function AdminDashboard() {
             <div><span className="admin-user-eyebrow">ADMIN CONTROL CENTER · USER MANAGEMENT</span><h1>User Management</h1><p>Manage accounts, roles, access requests, and authentication actions from one focused workspace.</p></div>
             <div className="admin-user-summary"><div><strong>{managedUsers.length}</strong><span>Total Users</span></div><div><strong>{managedUsers.filter(item => item.status === 'ACTIVE').length}</strong><span>Active</span></div><div><strong>{accessRequests.filter(item => item.status === 'PENDING').length}</strong><span>Pending Access</span></div></div>
           </div>
-          <div className="admin-user-kpis"><div><span>PUBLIC USERS</span><strong>{managedUsers.filter(item => item.role === 'PUBLIC').length}</strong></div><div><span>ANALYSTS</span><strong>{managedUsers.filter(item => item.role === 'ANALYST').length}</strong></div><div><span>ADMINS</span><strong>{managedUsers.filter(item => item.role === 'ADMIN').length}</strong></div><div><span>INVITED</span><strong>{managedUsers.filter(item => item.status === 'INVITED').length}</strong></div></div>
-          <form onSubmit={addManagedUser} style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', padding: 18, display: 'grid', gridTemplateColumns: 'minmax(160px,1fr) minmax(220px,1.3fr) 150px auto', gap: 12, alignItems: 'end' }}>
+          <div className="admin-user-kpis"><div><span>STANDARD USERS</span><strong>{managedUsers.filter(item => item.role === 'PUBLIC' && item.plan !== 'SUBSCRIBER').length}</strong><small>PUBLIC · FREE</small></div><div><span>PREMIUM USERS</span><strong>{managedUsers.filter(item => item.role === 'PUBLIC' && item.plan === 'SUBSCRIBER').length}</strong><small>PUBLIC · SUBSCRIBER</small></div><div><span>DGCA / ANALYSTS</span><strong>{managedUsers.filter(item => item.role === 'ANALYST').length}</strong><small>GOVERNMENT access</small></div><div><span>ADMINS</span><strong>{managedUsers.filter(item => item.role === 'ADMIN').length}</strong><small>ADMIN access</small></div></div>
+          <form className="admin-user-create-form" onSubmit={addManagedUser} style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', padding: 18, display: 'grid', gridTemplateColumns: 'minmax(160px,1fr) minmax(220px,1.3fr) 140px 150px auto', gap: 12, alignItems: 'end' }}>
             <div>
               <label style={{ display: 'block', fontSize: 10, fontWeight: 800, color: 'var(--color-text-tertiary)', marginBottom: 6 }}>NAME</label>
               <input className="ap-input" value={newUser.name} onChange={e => setNewUser(v => ({ ...v, name: e.target.value }))} placeholder="Full name" />
@@ -559,46 +898,74 @@ export default function AdminDashboard() {
             </div>
             <div>
               <label style={{ display: 'block', fontSize: 10, fontWeight: 800, color: 'var(--color-text-tertiary)', marginBottom: 6 }}>ROLE</label>
-              <select className="ap-input" value={newUser.role} onChange={e => setNewUser(v => ({ ...v, role: e.target.value }))}>
-                <option value="PUBLIC">PUBLIC</option>
-                <option value="ANALYST">DGCA</option>
+              <select className="ap-input" value={newUser.role} onChange={e => setNewUser(v => ({ ...v, role: e.target.value, plan: e.target.value === 'PUBLIC' ? v.plan === 'SUBSCRIBER' ? 'SUBSCRIBER' : 'FREE' : e.target.value === 'ANALYST' ? 'GOVERNMENT' : 'ADMIN' }))}>
+                <option value="PUBLIC">USER</option>
+                <option value="ANALYST">DGCA / ANALYST</option>
                 <option value="ADMIN">ADMIN</option>
               </select>
             </div>
-            <Button variant="primary" type="submit" iconStart={<Plus size={14} />}>Add User</Button>
+            <div>
+              <label style={{ display: 'block', fontSize: 10, fontWeight: 800, color: 'var(--color-text-tertiary)', marginBottom: 6 }}>SUBSCRIPTION</label>
+              <select className="ap-input" value={newUser.role === 'PUBLIC' ? newUser.plan : newUser.role === 'ANALYST' ? 'GOVERNMENT' : 'ADMIN'} disabled={newUser.role !== 'PUBLIC'} onChange={e => setNewUser(v => ({ ...v, plan: e.target.value }))}>
+                <option value="FREE">STANDARD</option>
+                <option value="SUBSCRIBER">PREMIUM</option>
+                {newUser.role === 'ANALYST' && <option value="GOVERNMENT">GOVERNMENT</option>}
+                {newUser.role === 'ADMIN' && <option value="ADMIN">ADMIN</option>}
+              </select>
+            </div>
+            <Button variant="primary" type="submit" disabled={savingUser} iconStart={<Plus size={14} />}>{savingUser ? 'Creating…' : 'Add User'}</Button>
           </form>
 
-          <div style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', overflow: 'hidden' }}>
+          <div className="admin-users-toolbar">
+            <label className="admin-users-search"><Search size={16} aria-hidden="true" /><input type="search" value={userQuery} onChange={event => setUserQuery(event.target.value)} placeholder="Search users by name or email" aria-label="Search users by name or email" /></label>
+            <select className="ap-input admin-users-filter" aria-label="Filter by role" value={userRoleFilter} onChange={event => setUserRoleFilter(event.target.value as typeof userRoleFilter)}><option value="ALL">All roles</option><option value="PUBLIC">Users</option><option value="ANALYST">DGCA / Analysts</option><option value="ADMIN">Admins</option></select>
+            <select className="ap-input admin-users-filter" aria-label="Filter by subscription" value={userPlanFilter} onChange={event => setUserPlanFilter(event.target.value as typeof userPlanFilter)}><option value="ALL">All subscriptions</option><option value="FREE">Standard</option><option value="SUBSCRIBER">Premium</option></select>
+            <span className="admin-users-result-count">{filteredManagedUsers.length} of {managedUsers.length} users</span>
+            <Button size="xs" variant="neutral" onClick={() => { setUsersError(null); setUsersLoaded(false) }} disabled={usersLoading} iconStart={<RefreshCw size={13} />}>{usersLoading ? 'Syncing…' : 'Refresh'}</Button>
+          </div>
+
+          <div className="admin-users-table-wrap" style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', overflow: 'hidden' }}>
+          {usersLoading && managedUsers.length > 0 && <div className="admin-directory-sync" role="status"><RefreshCw size={13} className="spin" /> Syncing the directory in the background…</div>}
           <table className="ap-table">
             <thead>
               <tr>
-                {['User','Role','Last Active','Status','Actions'].map(h => (
+                {['User','Access & plan','Last Active','Status','Actions'].map(h => (
                   <th key={h}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {usersLoading && managedUsers.length === 0 ? <tr><td colSpan={5}><div className="admin-empty-state"><RefreshCw size={18} className="spin" /><strong>Loading verified Firebase users…</strong><span>The directory is being loaded from the authenticated backend.</span></div></td></tr> : managedUsers.length === 0 ? <tr><td colSpan={5}><div className="admin-empty-state"><strong>No users returned</strong><span>{usersError || 'The backend returned no authenticated users.'}</span></div></td></tr> : managedUsers.map(u => (
+              {usersLoading && managedUsers.length === 0 ? <tr><td colSpan={5}><div className="admin-empty-state"><RefreshCw size={18} className="spin" /><strong>Loading verified Firebase users…</strong><span>The directory is being loaded from the authenticated backend.</span></div></td></tr> : managedUsers.length === 0 ? <tr><td colSpan={5}><div className="admin-empty-state"><strong>No users returned</strong><span>{usersError || 'The backend returned no authenticated users.'}</span></div></td></tr> : filteredManagedUsers.length === 0 ? <tr><td colSpan={5}><div className="admin-empty-state"><Search size={18} /><strong>No matching users</strong><span>Try another name, email, role, or subscription filter.</span></div></td></tr> : filteredManagedUsers.map(u => (
                 <tr key={u.email}>
-                  <td>
+                  <td data-label="User">
                       <div style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>{u.name}</div>
                     <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>{u.email}{u.verified ? ' · verified' : ''}</div>
                   </td>
-                  <td>
-                    <span className="ap-badge" style={{ background: ROLE_BADGE[u.role as keyof typeof ROLE_BADGE]?.bg, color: ROLE_BADGE[u.role as keyof typeof ROLE_BADGE]?.color }}>
-                      {u.role}
-                    </span>
+                  <td data-label="Access & plan">
+                    <div className="admin-role-cell">
+                      <div className="admin-role-line">
+                        <span className="ap-badge" style={{ background: ROLE_BADGE[u.role as keyof typeof ROLE_BADGE]?.bg, color: ROLE_BADGE[u.role as keyof typeof ROLE_BADGE]?.color }}>
+                          {ROLE_LABEL[u.role] || u.role}
+                        </span>
+                        <span className="admin-role-access">{ROLE_DETAILS[u.role]?.access || 'Access configured'}</span>
+                      </div>
+                      <span className="admin-entitlement">{subscriptionLabel(u)}</span>
+                      <button type="button" className="admin-access-edit-button" onClick={() => openAccessEditor(u)} disabled={Boolean(updatingRole)} aria-label={`Edit access for ${u.email}`}>
+                        <SlidersHorizontal size={13} />
+                        <span>Edit access</span>
+                      </button>
+                    </div>
                   </td>
-                  <td style={{ fontSize: 11, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>{formatLastActive(u.lastLogin)}</td>
-                  <td>
+                  <td data-label="Last active" style={{ fontSize: 11, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>{formatLastActive(u.lastLogin)}</td>
+                  <td data-label="Status">
                     <span style={{ fontSize: 9, fontWeight: 700, color: u.status === 'ACTIVE' ? 'var(--color-success)' : 'var(--color-warning)', background: u.status === 'ACTIVE' ? 'var(--color-success-bg)' : 'var(--color-warning-bg)', padding: '2px 8px', borderRadius: 99, border: `1px solid ${u.status === 'ACTIVE' ? 'rgba(22,163,74,0.3)' : 'rgba(217,119,6,0.3)'}` }}>
                       {u.status}
                     </span>
                   </td>
-                  <td>
+                  <td data-label="Actions">
                     <div className="admin-user-actions" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                       <Button size="xs" variant="subtle" disabled={resettingEmail === u.email} onClick={() => resetManagedPassword(u.email)} iconStart={<MailCheck size={12} />}>{resettingEmail === u.email ? 'Sending…' : resetSentEmail === u.email ? 'Resend Reset Link' : 'Send Reset Link'}</Button>
-                      <Button size="xs" variant="danger" onClick={() => deleteManagedUser(u.email)} iconStart={<Trash2 size={12} />}>Delete</Button>
+                      <Button size="xs" variant="danger" disabled={Boolean(deletingUserEmail) || u.email.toLowerCase() === user?.email?.toLowerCase()} onClick={() => setUserToDelete(u)} iconStart={<Trash2 size={12} />}>{deletingUserEmail === u.email ? 'Deleting…' : 'Delete'}</Button>
                     </div>
                   </td>
                 </tr>
@@ -613,41 +980,54 @@ export default function AdminDashboard() {
       {/* Tab: Feedback */}
       {tab === 'feedback' && (
         <div className="admin-tab-surface" style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', overflow: 'hidden' }}>
-          <div className="admin-section-banner compact"><div><span>ADMIN CONTROL CENTER · PRODUCT OPERATIONS</span><h1>User Feedback</h1><p>Review and manage feedback submitted by users.</p></div><div className="admin-section-count"><strong>{feedback.filter(item => item.status === 'NEW').length}</strong><span>New items</span></div></div>
-          <div style={{ padding: '18px 20px', borderBottom: '1px solid var(--color-border-primary)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}><MessageSquare size={17} style={{ color: 'var(--color-brand-primary)' }} /><h2 style={{ margin: 0, fontSize: 16, color: 'var(--color-text-primary)' }}>User Feedback</h2></div>
-            <p style={{ margin: '6px 0 0', fontSize: 12, color: 'var(--color-text-secondary)' }}>Feedback submitted from the user dashboard appears here for product review.</p>
+          <div className="admin-section-banner compact"><div><span>ADMIN CONTROL CENTER · PRODUCT OPERATIONS</span><h1>User Feedback</h1><p>Review user-submitted messages, track what has been handled, and retain an auditable moderation history.</p></div><div className="admin-section-count"><strong>{feedback.filter(item => item.status === 'NEW').length}</strong><span>Needs review</span></div></div>
+          <div className="admin-feedback-summary"><div><span>ALL MESSAGES</span><strong>{feedback.length}</strong></div><div><span>NEEDS REVIEW</span><strong>{feedback.filter(item => item.status === 'NEW').length}</strong></div><div><span>REVIEWED</span><strong>{feedback.filter(item => item.status === 'REVIEWED').length}</strong></div></div>
+          <div className="admin-queue-toolbar">
+            <label className="admin-users-search"><Search size={16} aria-hidden="true" /><input type="search" value={feedbackQuery} onChange={event => setFeedbackQuery(event.target.value)} placeholder="Search message, name, or email" aria-label="Search feedback" /></label>
+            <select className="ap-input admin-users-filter" value={feedbackStatusFilter} onChange={event => setFeedbackStatusFilter(event.target.value as typeof feedbackStatusFilter)} aria-label="Filter feedback by status"><option value="ALL">All statuses</option><option value="NEW">Needs review</option><option value="REVIEWED">Reviewed</option></select>
+            <span className="admin-users-result-count">{filteredFeedback.length} of {feedback.length} messages</span>
+            <Button size="xs" variant="neutral" onClick={() => setFeedbackRefreshKey(value => value + 1)} disabled={feedbackLoading} loading={feedbackLoading} iconStart={<RefreshCw size={13} />}>{feedbackLoading ? 'Refreshing…' : 'Refresh'}</Button>
           </div>
-          {feedback.length === 0 ? (
-            <div style={{ padding: 24, color: 'var(--color-text-secondary)', fontSize: 13 }}>No feedback has been submitted yet.</div>
-          ) : (
-            <div style={{ display: 'grid', gap: 10, padding: 14 }}>
-              {feedback.map(item => (
-                <div key={item.id} style={{ padding: 14, borderRadius: 12, border: '1px solid var(--color-border-primary)', background: item.status === 'NEW' ? '#f8fbff' : 'var(--color-surface-secondary)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
-                    <div><div style={{ fontSize: 13, fontWeight: 800, color: 'var(--color-text-primary)' }}>{item.name}</div><div style={{ marginTop: 3, fontSize: 11, color: 'var(--color-text-tertiary)' }}>{item.email} · {new Date(item.createdAt).toLocaleString('en-IN')}</div></div>
-                    <span style={{ fontSize: 10, fontWeight: 800, color: item.status === 'NEW' ? 'var(--color-brand-primary)' : 'var(--color-success)', background: item.status === 'NEW' ? 'var(--color-brand-muted)' : 'var(--color-success-bg)', padding: '4px 8px', borderRadius: 999 }}>{item.status}</span>
-                  </div>
-                  <p style={{ margin: '12px 0', fontSize: 13, lineHeight: 1.55, color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap' }}>{item.message}</p>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <Button size="xs" variant="subtle" onClick={() => updateFeedback(item.id, item.status === 'NEW' ? 'REVIEWED' : 'NEW')}>{item.status === 'NEW' ? 'Mark reviewed' : 'Mark new'}</Button>
-                    <Button size="xs" variant="danger" onClick={() => removeFeedback(item.id)}>Remove</Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+          {feedbackError && <div className="admin-data-error" role="alert"><div><strong>Could not load feedback</strong><span>{feedbackError}</span></div><Button size="xs" variant="neutral" onClick={() => setFeedbackRefreshKey(value => value + 1)} disabled={feedbackLoading}>Try again</Button></div>}
+          {feedbackLoading && feedback.length > 0 && <div className="admin-directory-sync" role="status"><RefreshCw size={13} className="spin" /> Refreshing feedback…</div>}
+          {feedbackLoading && feedback.length === 0 ? <div className="admin-empty-state"><RefreshCw size={18} className="spin" /><strong>Loading feedback…</strong><span>Fetching messages from the authenticated backend.</span></div>
+            : !feedbackLoaded ? <div className="admin-empty-state"><RefreshCw size={18} className="spin" /><strong>Preparing feedback…</strong></div>
+            : feedbackError && feedback.length === 0 ? <div className="admin-empty-state"><AlertTriangle size={22} /><strong>Feedback unavailable</strong><span>Use “Try again” above to reload messages from the backend.</span></div>
+            : feedback.length === 0 && !feedbackError ? <div className="admin-empty-state"><MessageSquare size={22} /><strong>No feedback yet</strong><span>Messages submitted from the user dashboard will appear here for review.</span></div>
+            : filteredFeedback.length === 0 && !feedbackError ? <div className="admin-empty-state"><Search size={20} /><strong>No matching feedback</strong><span>Try another search or change the status filter.</span></div>
+            : <div className="admin-feedback-list">{filteredFeedback.map(item => <article className={`admin-feedback-card ${item.status === 'NEW' ? 'is-new' : ''}`} key={item.id}>
+              <div className="admin-feedback-card-head"><div className="admin-feedback-identity"><span className="admin-feedback-avatar"><MessageSquare size={16} /></span><div><strong>{item.name || 'AeroPrice user'}</strong><span>{item.email}</span></div></div><span className={`admin-feedback-status ${item.status.toLowerCase()}`}>{item.status === 'NEW' ? 'Needs review' : 'Reviewed'}</span></div>
+              <div className="admin-feedback-date">{item.createdAt && !Number.isNaN(new Date(item.createdAt).getTime()) ? new Date(item.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : 'Date unavailable'}</div>
+              <p className="admin-feedback-message">{item.message}</p>
+              <div className="admin-feedback-actions"><Button size="xs" variant={item.status === 'NEW' ? 'primary' : 'neutral'} onClick={() => void updateFeedback(item.id, item.status === 'NEW' ? 'REVIEWED' : 'NEW')} disabled={Boolean(feedbackBusyId) || Boolean(removingQueueItem)} loading={feedbackBusyId === item.id}>{item.status === 'NEW' ? 'Mark reviewed' : 'Reopen'}</Button><Button size="xs" variant="subtle" onClick={() => setPendingRemoval({ kind: 'feedback', id: item.id, label: item.name || item.email })} disabled={Boolean(feedbackBusyId) || Boolean(removingQueueItem)} iconStart={<Trash2 size={12} />}>Remove</Button></div>
+            </article>)}</div>}
         </div>
       )}
 
       {/* Tab: Audit */}
       {tab === 'audit' && (
         <div className="admin-tab-surface" style={{ background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border-primary)', overflow: 'hidden' }}>
-          <div className="admin-section-banner compact"><div><span>ADMIN CONTROL CENTER · GOVERNANCE</span><h1>Audit Trail</h1><p>Review administrative events and export a traceable activity record.</p></div><div className="admin-section-count"><strong>{audit.length}</strong><span>Recorded events</span></div></div>
-          <div className="admin-tab-toolbar" style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 14px', borderBottom: '1px solid var(--color-border-primary)' }}>
-            <Button variant="neutral" onClick={downloadAuditCSV} iconEnd={<Download size={13} />}>Download Audit Log</Button>
+          <div className="admin-section-banner compact"><div><span>ADMIN CONTROL CENTER · GOVERNANCE</span><h1>Audit Trail</h1><p>Trace administrator changes with clear timestamps, actors, and affected accounts.</p></div><div className="admin-section-count"><strong>{auditTotal}</strong><span>Recorded events</span></div></div>
+          <div className="admin-audit-stats"><div><span>LAST 24 HOURS</span><strong>{auditRecentCount}</strong></div><div><span>UNIQUE ACTORS</span><strong>{auditActorCount}</strong></div><div><span>ACTION TYPES</span><strong>{auditActionCount}</strong></div></div>
+          {audit.length > 0 && auditTotal > audit.length && <div className="admin-audit-retention-note">Showing the latest {audit.length} of {auditTotal} events. Search, filters, and export apply to the events currently loaded.</div>}
+          <div className="admin-tab-toolbar admin-audit-toolbar">
+            <div className="admin-audit-filters">
+              <label className="admin-users-search"><Search size={16} aria-hidden="true" /><input value={auditQuery} onChange={event => setAuditQuery(event.target.value)} placeholder="Search actor, action, or detail" aria-label="Search audit log" /></label>
+              <select className="ap-input admin-users-filter" value={auditAction} onChange={event => setAuditAction(event.target.value)} aria-label="Filter audit action">
+                <option value="ALL">All actions</option>
+                {Array.from(new Set(audit.map(entry => entry.action))).sort().map(action => <option key={action} value={action}>{ACTION_LABEL[action] || action.replace(/_/g, ' ')}</option>)}
+              </select>
+            </div>
+            <div className="admin-audit-actions"><Button size="xs" variant="neutral" onClick={() => setAuditRefreshKey(value => value + 1)} disabled={auditLoading} loading={auditLoading} iconStart={<RefreshCw size={13} />}>{auditLoading ? 'Refreshing…' : 'Refresh'}</Button><Button size="xs" variant="neutral" onClick={downloadAuditCSV} disabled={filteredAudit.length === 0} iconStart={<Download size={13} />}>Export {filteredAudit.length ? `${filteredAudit.length} events` : 'CSV'}</Button></div>
           </div>
-          <div className="admin-table-scroll"><table className="ap-table">
+          {auditError && <div className="admin-data-error" role="alert"><div><strong>Audit trail could not be loaded</strong><span>{auditError}</span></div><Button size="xs" variant="neutral" onClick={() => setAuditRefreshKey(value => value + 1)} disabled={auditLoading}>Try again</Button></div>}
+          {auditLoading && audit.length > 0 && <div className="admin-directory-sync" role="status"><RefreshCw size={13} className="spin" /> Refreshing audit events…</div>}
+          {auditLoading && audit.length === 0 ? <div className="admin-empty-state"><RefreshCw size={18} className="spin" /><strong>Loading audit trail…</strong><span>Retrieving the latest administrator activity.</span></div>
+            : !auditLoaded ? <div className="admin-empty-state"><RefreshCw size={18} className="spin" /><strong>Preparing audit trail…</strong></div>
+            : auditError && audit.length === 0 ? <div className="admin-empty-state"><AlertTriangle size={22} /><strong>Audit events unavailable</strong><span>Use “Try again” above to reload activity from the backend.</span></div>
+            : audit.length === 0 && !auditError ? <div className="admin-empty-state"><ShieldCheck size={22} /><strong>No audit events recorded yet</strong><span>Account, access, and feedback changes will be recorded here when performed.</span></div>
+            : filteredAudit.length === 0 && !auditError ? <div className="admin-empty-state"><Search size={20} /><strong>No matching events</strong><span>Try another search or choose a different action.</span></div>
+            : <div className="admin-table-scroll admin-audit-table-wrap"><table className="ap-table admin-audit-table">
             <thead>
               <tr>
                 {['Timestamp', 'Actor', 'Action', 'Detail'].map(h => (
@@ -656,22 +1036,25 @@ export default function AdminDashboard() {
               </tr>
             </thead>
             <tbody>
-              {audit.map((entry, i) => (
-                <tr key={i}>
-                  <td style={{ color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
-                    {new Date(entry.ts).toLocaleTimeString('en-IN', { hour12: false })}
-                  </td>
-                  <td style={{ color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{entry.actor}</td>
-                  <td>
-                    <span className="ap-badge" style={{ color: ACTION_COLOR[entry.action] ?? 'var(--color-text-tertiary)', background: 'var(--color-surface-secondary)' }}>
-                      {entry.action}
-                    </span>
-                  </td>
-                  <td style={{ color: 'var(--color-text-primary)', fontSize: 11 }}>{entry.detail}</td>
+              {visibleAudit.map(entry => {
+                const timestamp = new Date(entry.ts)
+                const timestampLabel = Number.isFinite(timestamp.getTime()) ? timestamp.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : 'Timestamp unavailable'
+                return <tr key={`${entry.ts}-${entry.actor}-${entry.action}-${entry.detail}`}>
+                  <td data-label="Timestamp" className="admin-audit-timestamp">{timestampLabel}</td>
+                  <td data-label="Actor" className="admin-audit-actor">{entry.actor}</td>
+                  <td data-label="Action"><span className="admin-audit-action" style={{ color: ACTION_COLOR[entry.action] ?? 'var(--color-text-secondary)' }}>{ACTION_LABEL[entry.action] || entry.action.replace(/_/g, ' ')}</span></td>
+                  <td data-label="Detail" className="admin-audit-detail">{formatAuditDetails(entry.detail)}</td>
                 </tr>
-              ))}
+              })}
             </tbody>
-          </table></div>
+          </table></div>}
+          {filteredAudit.length > 0 && <div className="admin-audit-pagination">
+            <span>{filteredAudit.length} matching loaded event{filteredAudit.length === 1 ? '' : 's'} · Page {auditPage} of {auditPageCount}</span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button size="xs" variant="subtle" disabled={auditPage <= 1} onClick={() => setAuditPage(page => Math.max(1, page - 1))}>Previous</Button>
+              <Button size="xs" variant="subtle" disabled={auditPage >= auditPageCount} onClick={() => setAuditPage(page => Math.min(auditPageCount, page + 1))}>Next</Button>
+            </div>
+          </div>}
         </div>
       )}
 

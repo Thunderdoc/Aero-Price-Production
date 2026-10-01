@@ -106,9 +106,11 @@ require_analyst = require_role("ANALYST", "ADMIN")
 require_subscriber = require_role("PUBLIC", "ANALYST", "ADMIN")  # checked at plan level
 
 async def require_admin_or_local(token: str | None = Depends(oauth2_optional_scheme)) -> dict:
-    """Allow the local development admin fallback, but require auth in production."""
-    if not token and not settings.is_production:
-        return {"email": "local-admin", "role": "ADMIN", "plan": "ADMIN", "name": "Local Admin"}
+    """Require a verified admin identity in every environment.
+
+    Keep the existing dependency name for route compatibility, without a local
+    authentication bypass or allowing a non-admin's valid token through.
+    """
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
-    return await get_current_user(token)
+    return await require_admin(await get_current_user(token))

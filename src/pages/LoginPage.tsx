@@ -5,6 +5,12 @@ import type { Page } from '../components/AppShell'
 
 type AuthRole = 'USER' | 'DGCA' | 'ADMIN'
 const airportBg = '/airport-login-bg.jpg'
+const WORKSPACE_STORAGE_KEY = 'aeroprice_last_workspace'
+
+function loadLastWorkspace(): AuthRole {
+  const value = localStorage.getItem(WORKSPACE_STORAGE_KEY)
+  return value === 'USER' || value === 'DGCA' || value === 'ADMIN' ? value : 'USER'
+}
 
 const ROLE_CONFIG: Record<AuthRole, {
   label: string
@@ -50,18 +56,19 @@ function isValidEmail(value: string) {
 
 function safeAuthError(message?: string) {
   if (!message) return 'Incorrect email or password.'
+  if (/not authorized|workspace|Google sign-in|Firebase|too many requests|session verification failed|backend sign-in failed/i.test(message)) return message
   if (/network|fetch|connect/i.test(message)) return 'Unable to connect. Please try again.'
   return 'Incorrect email or password.'
 }
 
 export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void }) {
   const { login, loginWithGoogle, createAccount, resetPassword, logout } = useAuth()
-  const [activeRole, setActiveRole] = useState<AuthRole>('USER')
+  const [activeRole, setActiveRole] = useState<AuthRole>(loadLastWorkspace)
   const [authMode, setAuthMode] = useState<'login' | 'create'>('login')
   const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
   const [pass, setPass] = useState('')
-  const [rememberMe, setRememberMe] = useState(false)
+  const [rememberMe, setRememberMe] = useState(true)
   const [showPass, setShowPass] = useState(false)
   const [loading, setLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
@@ -189,7 +196,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
       className="ap-login"
       aria-label="AeroPrice secure login"
       style={{
-        backgroundImage: `linear-gradient(90deg, rgba(2,8,23,.72), rgba(2,8,23,.38)), url(${airportBg})`,
+        backgroundImage: `linear-gradient(90deg, rgba(2,8,23,.50), rgba(2,8,23,.18)), url(${airportBg})`,
         backgroundSize: 'cover',
         backgroundPosition: 'center bottom',
       }}
@@ -206,7 +213,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           color: #fff;
           font-family: var(--font-sans, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
           background-color: #061225;
-          background-image: linear-gradient(90deg, rgba(2,8,23,.72), rgba(2,8,23,.38)), url(${airportBg});
+          background-image: linear-gradient(90deg, rgba(2,8,23,.50), rgba(2,8,23,.18)), url(${airportBg});
           background-size: cover;
           background-position: center bottom;
         }
@@ -227,7 +234,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           position: absolute;
           inset: 0;
           background:
-            linear-gradient(90deg, rgba(2,8,23,.72) 0%, rgba(2,8,23,.38) 48%, rgba(239,246,255,.16) 100%),
+            linear-gradient(90deg, rgba(2,8,23,.50) 0%, rgba(2,8,23,.18) 48%, rgba(239,246,255,.16) 100%),
             radial-gradient(circle at 26% 30%, rgba(37,99,235,.16), transparent 34%);
         }
         .ap-login::before {
@@ -835,7 +842,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
                 role="tab"
                 aria-selected={activeRole === key}
                 className={`ap-tab${activeRole === key ? ' active' : ''}`}
-                onClick={() => { setActiveRole(key); if (key === 'ADMIN') setAuthMode('login'); resetFeedback() }}
+                onClick={() => { setActiveRole(key); localStorage.setItem(WORKSPACE_STORAGE_KEY, key); if (key === 'ADMIN') setAuthMode('login'); resetFeedback() }}
               >
                 {ROLE_CONFIG[key].label}
               </button>

@@ -36,6 +36,13 @@ export default defineConfig(({ mode }) => {
       watch: {
         ignored: [
           '**/.figma/**',
+          // The frontend and FastAPI server share this workspace, but the
+          // backend database/log/journal files are runtime state. Watching
+          // them makes Vite full-reload the browser during every collection
+          // write, which resets auth and leaves pages flashing indefinitely.
+          '**/backend/**',
+          '**/*.db',
+          '**/*.db-*',
 ],
       },
     },

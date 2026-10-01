@@ -92,7 +92,10 @@ export async function apiLogin(email: string, password: string): Promise<TokenRe
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: form.toString(),
   })
-  if (!resp.ok) throw new Error('Invalid credentials')
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => null) as { detail?: string } | null
+    throw new Error(body?.detail || `Backend sign-in failed (${resp.status})`)
+  }
   return resp.json()
 }
 
@@ -589,6 +592,30 @@ export async function apiAdminUsers(token?: string, pageToken?: string): Promise
   return apiFetch(`/api/admin/users${query}`, token)
 }
 
+export async function apiCreateAdminUser(payload: { name: string; email: string; role: 'PUBLIC' | 'ANALYST' | 'ADMIN'; plan?: 'FREE' | 'SUBSCRIBER' | 'GOVERNMENT' | 'ADMIN' }, token?: string) {
+  return apiFetch('/api/admin/users', token, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function apiUpdateAdminUserRole(email: string, role: 'PUBLIC' | 'ANALYST' | 'ADMIN', plan?: 'FREE' | 'SUBSCRIBER' | 'GOVERNMENT' | 'ADMIN', token?: string) {
+  return apiFetch(`/api/admin/users/${encodeURIComponent(email)}/role`, token, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role, plan }),
+  })
+}
+
+export async function apiDeleteAdminUser(email: string, firebaseUid?: string, token?: string) {
+  return apiFetch(`/api/admin/users/${encodeURIComponent(email)}`, token, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ firebase_uid: firebaseUid || null }),
+  })
+}
+
 export async function apiSubmitFeedback(message: string, token?: string) {
   return apiFetch('/api/admin/feedback', token, {
     method: 'POST',
@@ -649,8 +676,18 @@ export async function apiNotifications(token?: string) {
   return apiFetch('/api/notifications', token)
 }
 
-export async function apiAuditLog(token: string, limit = 50) {
-  return apiFetch(`/api/admin/audit-log?limit=${limit}`, token)
+export async function apiMarkNotificationRead(id: string, token?: string) {
+  return apiFetch(`/api/notifications/${encodeURIComponent(id)}/read`, token, { method: 'POST' })
+}
+
+export async function apiMarkAllNotificationsRead(token?: string) {
+  return apiFetch('/api/notifications/read-all', token, { method: 'POST' })
+}
+
+export async function apiAuditLog(token: string, limit = 200) {
+  // Audit events change after every admin action; never return the short-lived
+  // GET cache for this page or an explicit refresh.
+  return apiFetch(`/api/admin/audit-log?limit=${limit}`, token, undefined, true)
 }
 
 export async function apiSystemMetrics(token: string): Promise<{ hasAnyConfiguredApi?: boolean; [key: string]: any }> {

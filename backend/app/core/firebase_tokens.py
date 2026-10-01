@@ -94,8 +94,15 @@ async def verify_firebase_identity(token: str) -> dict:
     except Exception as exc:
         raise invalid from exc
     email = str(claims["email"]).strip().lower()
+    # Only trust the namespaced claims written by this backend. Generic
+    # `role`/`plan` claims from an unrelated Firebase client are ignored.
+    claim_role = str(claims.get("aeroprice_role", "")).upper()
+    claim_plan = str(claims.get("aeroprice_plan", "")).upper()
     role, plan = "PUBLIC", "FREE"
-    if email in _configured_emails("FIREBASE_ADMIN_EMAILS"):
+    if claim_role in {"PUBLIC", "ANALYST", "ADMIN"}:
+        role = claim_role
+        plan = claim_plan if claim_plan in {"FREE", "SUBSCRIBER", "GOVERNMENT", "ADMIN"} else ("ADMIN" if role == "ADMIN" else "GOVERNMENT" if role == "ANALYST" else "FREE")
+    elif email in _configured_emails("FIREBASE_ADMIN_EMAILS"):
         role, plan = "ADMIN", "ADMIN"
     elif email in _configured_emails("FIREBASE_ANALYST_EMAILS"):
         role, plan = "ANALYST", "GOVERNMENT"

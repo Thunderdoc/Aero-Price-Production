@@ -11,6 +11,7 @@ from app.core.auth import authenticate_user, create_access_token, get_password_h
 from app.core.firebase_tokens import verify_firebase_identity
 from app.core.database import get_db
 from app.models.auth_account import AuthAccount
+from app.models.user import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 _failed_attempts: dict[str, list[float]] = {}
@@ -39,15 +40,22 @@ async def firebase_login(payload: FirebaseLoginRequest, db: AsyncSession = Depen
     authorization share one stable session.
     """
     identity = await verify_firebase_identity(payload.id_token)
-    # A self-registered DGCA account is stored in AuthAccount. Firebase's
-    # verified email proves ownership, but the static Firebase allowlist alone
-    # would otherwise label that same person PUBLIC on Google sign-in.
-    if identity["role"] == "PUBLIC":
+    # Firebase's verified email proves ownership, while persisted backend
+    # metadata carries the admin-selected workspace role and entitlement.
+    # This keeps roles stable even when the Firebase email allowlist is empty.
+    if identity["role"] == "PUBLIC" and hasattr(db, "scalar"):
         account = await db.scalar(select(AuthAccount).where(
             AuthAccount.email == identity["email"],
             AuthAccount.is_active == True,
         ))
-        if account and account.role == "ANALYST":
+        user = await db.scalar(select(User).where(
+            User.email == identity["email"],
+            User.is_active == True,
+        ))
+        persisted = account if account and account.role != "PUBLIC" else user
+        if persisted and (persisted.role != "PUBLIC" or persisted.plan != "FREE"):
+            identity = {**identity, "name": persisted.name or identity.get("name"), "role": persisted.role, "plan": persisted.plan}
+        elif account and account.role == "ANALYST":
             identity = {**identity, "role": account.role, "plan": account.plan}
     token = create_access_token(data={"sub": identity["email"], **identity})
     return TokenResponse(access_token=token, user=identity)

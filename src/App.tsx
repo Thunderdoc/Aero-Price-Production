@@ -118,7 +118,9 @@ export default function App() {
     // Firebase is opt-in for authentication. Do not initialize Analytics on
     // backend-auth deployments, where incomplete Firebase measurement config
     // only creates console errors and can confuse production diagnosis.
-    if (import.meta.env.VITE_AUTH_MODE !== 'firebase') return
+    // Analytics is not needed for local auth QA and its Firebase Installations
+    // call can fail on localhost even when Authentication is configured.
+    if (import.meta.env.VITE_AUTH_MODE !== 'firebase' || import.meta.env.DEV) return
     void import('./services/firebase').then(({ initFirebaseAnalytics }) => initFirebaseAnalytics())
   }, [])
 

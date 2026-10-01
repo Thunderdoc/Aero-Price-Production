@@ -242,6 +242,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               return { success: false, error: 'This account uses Google sign-in. Click “Continue with Google”; it does not have a separate password.' }
             }
           }
+          if (code.includes('too-many-requests')) {
+            return { success: false, error: 'Too many sign-in attempts were made. Wait a moment, then try again or use Forgot password.' }
+          }
+          // Once Firebase accepted the password, this error is from the local
+          // session exchange, not from the password. Do not retry a Firebase
+          // identity against the legacy backend and then report a false
+          // "incorrect email or password" message.
+          const providerMessage = firebaseError instanceof Error ? firebaseError.message : ''
+          if (/session verification failed|too many requests|backend sign-in failed|unable to connect|network/i.test(providerMessage)) {
+            return { success: false, error: providerMessage }
+          }
           // If Firebase does not know this account, continue with backend auth.
         }
       }
@@ -266,7 +277,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         saveStoredSession(authedUser, response.access_token, remember)
         return { success: true, user: authedUser }
       }
-      return { success: false, error: 'Invalid email or password.' }
+      return { success: false, error: FIREBASE_CONFIGURED ? 'Firebase rejected this email/password combination. Check the email spelling and password, then try again.' : 'Invalid email or password.' }
     } catch (firebaseErr) {
       const code = typeof firebaseErr === 'object' && firebaseErr && 'code' in firebaseErr ? String((firebaseErr as { code?: string }).code) : ''
       // Keep the deployed prototype usable when Firebase rejects a local/demo
@@ -387,6 +398,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (code.includes('unauthorized-domain')) {
         return { success: false, error: 'This deployment domain is not authorized in Firebase Authentication.' }
       }
+      if (code.includes('operation-not-allowed')) {
+        return { success: false, error: 'Firebase Google sign-in is not enabled yet. Enable Google under Authentication → Sign-in method.' }
+      }
+      if (code.includes('invalid-api-key') || code.includes('app-not-authorized')) {
+        return { success: false, error: 'Firebase web configuration is invalid for this app. Check the project API key and app settings.' }
+      }
+      if (code.includes('network-request-failed')) {
+        return { success: false, error: 'Firebase could not be reached. Check the network connection and Firebase project configuration.' }
+      }
       return { success: false, error: err instanceof Error ? err.message : 'Unable to connect to Google sign-in. Please try again.' }
     }
   }
@@ -437,6 +457,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // because Google was the first provider used.
       if (code.includes('operation-not-allowed')) return { success: false, error: 'Firebase Email/Password authentication is not enabled yet.' }
       if (code.includes('unauthorized-domain')) return { success: false, error: 'This domain is not authorized in Firebase Authentication.' }
+      if (code.includes('invalid-api-key') || code.includes('app-not-authorized')) return { success: false, error: 'Firebase web configuration is invalid for this app. Check the project API key and app settings.' }
+      if (code.includes('network-request-failed')) return { success: false, error: 'Firebase could not be reached. Check the network connection and Firebase project configuration.' }
+      if (code.includes('too-many-requests')) return { success: false, error: 'Too many reset attempts. Wait a while and try again.' }
       return { success: false, error: 'Unable to send reset email. Check Firebase Auth settings and try again.' }
     }
   }

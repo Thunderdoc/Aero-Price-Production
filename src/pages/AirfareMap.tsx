@@ -305,6 +305,7 @@ interface MapControlsProps {
 }
 
 function MapControls({ filter, onChange }: MapControlsProps) {
+  const [open, setOpen] = useState(false)
   const filters: FilterMode[] = ['ALL', 'RISING', 'FALLING', 'STABLE']
 
   const labelFor = (f: FilterMode) => {
@@ -315,7 +316,12 @@ function MapControls({ filter, onChange }: MapControlsProps) {
   }
 
   return (
+    <>
+    <button className="airfare-map-filter-trigger" onClick={() => setOpen(value => !value)} aria-expanded={open}>
+      <Filter size={14} /> Filter routes
+    </button>
     <div
+      className={`airfare-map-controls airfare-map-filter-panel${open ? ' is-open' : ''}`}
       style={{
         position: 'absolute',
         top: 'var(--space-xl)',
@@ -370,6 +376,7 @@ function MapControls({ filter, onChange }: MapControlsProps) {
         </button>
       ))}
     </div>
+    </>
   )
 }
 
@@ -383,6 +390,7 @@ interface FlightsBadgeProps {
 function FlightsBadge({ count, connectionStatus }: FlightsBadgeProps) {
   return (
     <div
+      className="airfare-flight-status"
       style={{
         position: 'absolute',
         bottom: 'var(--space-2xl)',
@@ -438,6 +446,7 @@ function Legend() {
 
   return (
     <div
+      className="airfare-route-legend"
       style={{
         position: 'absolute',
         bottom: 'var(--space-2xl)',
@@ -497,6 +506,7 @@ interface RouteSidebarProps {
 function RouteSidebar({ corridors, selectedId, onSelect }: RouteSidebarProps) {
   return (
     <div
+      className="airfare-route-sidebar"
       style={{
         width: 280,
         height: '100%',
@@ -709,6 +719,7 @@ export default function AirfareMap() {
 
   return (
     <div
+      className="airfare-map-page"
       style={{
         /* Bust out of AppShell's <main> padding (var(--space-2xl) = 24px on each side) */
         margin: 'calc(-1 * var(--space-2xl))',
@@ -722,7 +733,7 @@ export default function AirfareMap() {
       }}
     >
       {/* ── Premium header bar ── */}
-      <div style={{
+      <div className="airfare-map-header" style={{
         background: 'var(--color-surface-dark)',
         borderBottom: '1px solid rgba(255,255,255,0.08)',
         padding: '0 var(--space-2xl)',
@@ -794,10 +805,10 @@ export default function AirfareMap() {
       </div>
 
       {/* ── Map + sidebar row ── */}
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+      <div className="airfare-map-row" style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
 
       {/* ── Map area ── */}
-      <div style={{ flex: 1, height: '100%', position: 'relative' }}>
+      <div className="airfare-map-canvas" style={{ flex: 1, height: '100%', position: 'relative' }}>
         {(routesLoading || routeError || !corridors.length) && (
           <div style={{ position: 'absolute', zIndex: 500, top: 18, left: 18, maxWidth: 340, padding: '10px 12px', borderRadius: 9, background: 'rgba(255,255,255,0.94)', border: '1px solid var(--color-border-primary)', boxShadow: '0 4px 16px rgba(15,44,90,.12)', fontSize: 11, color: 'var(--color-text-secondary)' }}>
             {routesLoading ? 'Loading verified route summaries…' : routeError ?? 'No verified route observations are available for the map.'}

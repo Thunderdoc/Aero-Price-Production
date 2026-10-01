@@ -2,15 +2,15 @@ import { useState, useEffect, useRef, type ReactNode } from 'react'
 import {
   Home, Map, Plane, Building2, Database,
   Settings, Shield, Bell, BarChart2, BookOpen,
-  Download, Activity, LogOut, ChevronDown, Table2, Search, X, TrendingUp, History,
+  Download, Activity, LogOut, Table2, Search, X, TrendingUp, History,
   LineChart, CalendarDays, AlertCircle, Landmark, Users, Globe, Bookmark, MessageSquare, Moon, Sun,
-  TowerControl, Route, CloudSun, Fuel, Radio
+  TowerControl, Route, CloudSun, Fuel, Radio, Menu
 } from 'lucide-react'
 import DataStatusBanner from './DataStatusBanner'
 import { useAuth, canAccess, type UserRole, type UserPlan } from '../contexts/AuthContext'
 import { useGovData } from '../hooks/useGovData'
 import UserSupportModal from './UserSupportModal'
-import { apiHealth, apiNotifications, apiRouteBasket } from '../services/api'
+import { apiHealth, apiMarkAllNotificationsRead, apiMarkNotificationRead, apiNotifications, apiRouteBasket } from '../services/api'
 import { useAviationRadar } from '../services/aviationRadar'
 import type { AviationPanel } from '../pages/AviationLive'
 
@@ -203,9 +203,11 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
   const [routeSearchCodes, setRouteSearchCodes] = useState<string[]>([])
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('aeroprice_theme') === 'dark')
   const [adminNavKey, setAdminNavKey] = useState(() => sessionStorage.getItem('admin-nav-key') || 'Overview')
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const searchRef = useRef<HTMLDivElement>(null)
   const mobileNavRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLElement>(null)
+  const accountRef = useRef<HTMLDivElement>(null)
 
   // Route changes must never preserve an old horizontal scroll position on the
   // compact navigation strip. Preserving it is what caused clipped labels on
@@ -214,6 +216,23 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
     mobileNavRef.current?.scrollTo({ left: 0, behavior: 'auto' })
     contentRef.current?.scrollTo({ left: 0, top: 0, behavior: 'auto' })
   }, [currentPage])
+
+  useEffect(() => {
+    if (!avatarOpen) return
+    const closeAccountPopover = (event: MouseEvent | KeyboardEvent) => {
+      if (event instanceof KeyboardEvent && event.key === 'Escape') {
+        setAvatarOpen(false)
+        return
+      }
+      if (event instanceof MouseEvent && !accountRef.current?.contains(event.target as Node)) setAvatarOpen(false)
+    }
+    document.addEventListener('mousedown', closeAccountPopover)
+    document.addEventListener('keydown', closeAccountPopover)
+    return () => {
+      document.removeEventListener('mousedown', closeAccountPopover)
+      document.removeEventListener('keydown', closeAccountPopover)
+    }
+  }, [avatarOpen])
 
   useEffect(() => {
     const onAdminNav = (event: Event) => {
@@ -292,12 +311,19 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
     return () => { active = false }
   }, [])
 
-  function markNotificationsRead() {
+  async function markNotificationsRead(ids?: string[]) {
     try {
       const stored = JSON.parse(localStorage.getItem('aeroprice_notifications') || '[]') as LocalNotification[]
-      localStorage.setItem('aeroprice_notifications', JSON.stringify(stored.map(item => item.email === user?.email ? { ...item, read: true } : item)))
-      setNotifications(prev => prev.map(item => ({ ...item, read: true })))
+      const matches = (item: LocalNotification) => (!ids || ids.includes(item.id)) && (!item.email || item.email === user?.email)
+      localStorage.setItem('aeroprice_notifications', JSON.stringify(stored.map(item => matches(item) ? { ...item, read: true } : item)))
+      setNotifications(prev => prev.map(item => matches(item) ? { ...item, read: true } : item))
     } catch { /* keep the notification panel usable if storage is unavailable */ }
+    if (token) {
+      try {
+        if (ids?.length === 1) await apiMarkNotificationRead(ids[0], token)
+        else await apiMarkAllNotificationsRead(token)
+      } catch { /* keep local read state when the server is unavailable */ }
+    }
   }
 
   // Sync portal when page changes externally
@@ -348,6 +374,7 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
     setAvatarOpen(false)
     setNotificationsOpen(false)
     setSupportMode(null)
+    setMobileNavOpen(false)
     if (!canAccess(role, plan, page)) return
     onNavigate(page)
   }
@@ -399,6 +426,7 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
             <div style={{ width: 5, height: 5, borderRadius: '50%', background: roleBadge.color, flexShrink: 0 }} />
             <span style={{ fontSize: 9, fontWeight: 700, color: roleBadge.color, letterSpacing: '0.1em' }}>{roleBadge.label}</span>
           </div>
+          <button className="mobile-menu-toggle" type="button" aria-label={mobileNavOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={mobileNavOpen} onClick={event => { event.stopPropagation(); setMobileNavOpen(value => !value) }}><Menu size={18} /></button>
         </div>
 
         {/* ── Portal tabs ── */}
@@ -427,7 +455,7 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
         </div>}
 
         {/* Nav */}
-        <div ref={mobileNavRef} className="app-sidebar-nav" style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
+        <div ref={mobileNavRef} className={`app-sidebar-nav${mobileNavOpen ? ' is-open' : ''}`} style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
           {!(role === 'PUBLIC' && plan === 'FREE') && (
             <div style={{ padding: '4px 14px 4px', marginTop: 4 }}>
               <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-text-tertiary)', letterSpacing: '0.12em' }}>
@@ -463,70 +491,11 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
           ))}
         </div>
 
-        {/* Footer avatar */}
+        {/* Sidebar account identity; sign out lives in the global top bar. */}
         <div className="app-sidebar-footer" style={{ borderTop: '1px solid var(--color-border-primary)', padding: '10px 12px' }}>
-          <div style={{ position: 'relative' }}>
-            <button
-              onClick={() => setAvatarOpen(v => !v)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 9, width: '100%',
-                background: avatarOpen ? 'var(--color-surface-hover)' : 'none',
-                border: 'none', cursor: 'pointer',
-                padding: '7px 8px', borderRadius: 8, textAlign: 'left',
-                transition: 'background 150ms ease',
-              }}
-              onMouseOver={e => { (e.currentTarget as HTMLElement).style.background = 'var(--color-surface-hover)' }}
-              onMouseOut={e => { if (!avatarOpen) (e.currentTarget as HTMLElement).style.background = 'none' }}
-            >
-              <div style={{
-                width: 30, height: 30, borderRadius: '50%',
-                background: 'var(--gradient-brand)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                boxShadow: '0 2px 6px rgba(37,99,235,0.3)',
-              }}>
-                <span style={{ fontSize: 11, fontWeight: 700, color: 'white' }}>{initials}</span>
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {user?.name ?? 'User'}
-                </div>
-                <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', marginTop: 1 }}>
-                  {user?.plan === 'FREE' ? 'USER' : user?.plan ?? 'USER'}
-                </div>
-              </div>
-              <ChevronDown size={12} style={{ color: 'var(--color-text-tertiary)', flexShrink: 0, transform: avatarOpen ? 'rotate(180deg)' : '', transition: 'transform 150ms ease' }} />
-            </button>
-
-            {avatarOpen && (
-              <div style={{
-                position: 'absolute', bottom: '100%', left: 0, right: 0,
-                background: 'var(--color-surface-bg)',
-                border: '1px solid var(--color-border-primary)',
-                borderRadius: 10, boxShadow: 'var(--shadow-floating)',
-                overflow: 'hidden', marginBottom: 4,
-                animation: 'fade-in 150ms ease',
-              }}>
-                <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--color-border-primary)', background: 'var(--color-surface-secondary)' }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-primary)' }}>{user?.email}</div>
-                  <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', marginTop: 3 }}>
-                    Role: {user?.role === 'PUBLIC' ? 'USER' : user?.role} · Access: {user?.plan === 'FREE' ? 'STANDARD' : user?.plan}
-                  </div>
-                </div>
-                <button
-                  onClick={() => { setAvatarOpen(false); logout() }}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 8, width: '100%',
-                    padding: '10px 14px', background: 'none', border: 'none',
-                    cursor: 'pointer', fontSize: 13, color: 'var(--color-danger)',
-                    transition: 'background 150ms ease',
-                  }}
-                  onMouseOver={e => { (e.currentTarget as HTMLElement).style.background = 'var(--color-danger-bg)' }}
-                  onMouseOut={e => { (e.currentTarget as HTMLElement).style.background = 'none' }}
-                >
-                  <LogOut size={13} /> Sign out
-                </button>
-              </div>
-            )}
+          <div className="app-sidebar-profile">
+            <div className="app-sidebar-profile-avatar">{initials}</div>
+            <div className="app-sidebar-profile-copy"><strong>{user?.name ?? 'User'}</strong><span>{user?.role === 'PUBLIC' ? 'USER' : user?.role ?? 'USER'} · {user?.plan === 'FREE' ? 'STANDARD' : user?.plan ?? 'STANDARD'}</span></div>
           </div>
         </div>
       </div>
@@ -629,8 +598,8 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
             />}
             <button onClick={() => setDarkMode(value => !value)} aria-label={darkMode ? 'Use light mode' : 'Use dark mode'} title={darkMode ? 'Use light mode' : 'Use dark mode'} style={{ width: 32, height: 32, display: 'grid', placeItems: 'center', border: '1px solid var(--color-border-primary)', borderRadius: 9, background: darkMode ? 'var(--color-brand-muted)' : 'var(--color-surface-bg)', color: darkMode ? 'var(--color-brand-primary)' : 'var(--color-text-secondary)', cursor: 'pointer', transition: 'all 150ms ease' }}>{darkMode ? <Sun size={16} /> : <Moon size={16} />}</button>
             <div style={{ position: 'relative' }}>
-              <button onClick={() => { setNotificationsOpen(v => !v); markNotificationsRead() }} aria-label="Notifications" title="Notifications" style={{ position: 'relative', width: 32, height: 32, display: 'grid', placeItems: 'center', border: '1px solid var(--color-border-primary)', background: 'var(--color-surface-bg)', color: 'var(--color-text-secondary)', borderRadius: 9, cursor: 'pointer' }}><Bell size={16} />{notifications.some(item => !item.read) && <span style={{ position: 'absolute', right: -3, top: -5, minWidth: 15, height: 15, padding: '0 3px', borderRadius: 99, background: '#e33c3c', color: '#fff', fontSize: 9, fontWeight: 800, display: 'grid', placeItems: 'center' }}>{notifications.filter(item => !item.read).length}</span>}</button>
-              {notificationsOpen && <div style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, width: 290, padding: 14, background: 'var(--color-surface-bg)', border: '1px solid var(--color-border-primary)', borderRadius: 12, boxShadow: 'var(--shadow-floating)', zIndex: 160 }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><b style={{ fontSize: 13, color: 'var(--color-text-primary)' }}>Notifications</b><button onClick={() => setNotificationsOpen(false)} style={{ border: 0, background: 'none', color: 'var(--color-text-tertiary)', cursor: 'pointer' }}><X size={14} /></button></div>{notifications.length === 0 ? <p style={{ margin: '12px 0 0', fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>No new notifications.</p> : <div style={{ display: 'grid', gap: 9, marginTop: 12 }}>{notifications.map(item => <div key={item.id} style={{ padding: 9, borderRadius: 9, background: item.read ? 'var(--color-surface-secondary)' : 'var(--color-brand-muted)' }}><div style={{ fontSize: 11, fontWeight: 800, color: 'var(--color-text-primary)' }}>{item.title}</div><div style={{ marginTop: 3, fontSize: 11, lineHeight: 1.4, color: 'var(--color-text-secondary)' }}>{item.message}</div></div>)}</div>}</div>}
+              <button onClick={() => setNotificationsOpen(v => !v)} aria-label="Notifications" title="Notifications" style={{ position: 'relative', width: 32, height: 32, display: 'grid', placeItems: 'center', border: '1px solid var(--color-border-primary)', background: 'var(--color-surface-bg)', color: 'var(--color-text-secondary)', borderRadius: 9, cursor: 'pointer' }}><Bell size={16} />{notifications.some(item => !item.read) && <span style={{ position: 'absolute', right: -3, top: -5, minWidth: 15, height: 15, padding: '0 3px', borderRadius: 99, background: '#e33c3c', color: '#fff', fontSize: 9, fontWeight: 800, display: 'grid', placeItems: 'center' }}>{notifications.filter(item => !item.read).length}</span>}</button>
+              {notificationsOpen && <div style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, width: 290, padding: 14, background: 'var(--color-surface-bg)', border: '1px solid var(--color-border-primary)', borderRadius: 12, boxShadow: 'var(--shadow-floating)', zIndex: 160 }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><b style={{ fontSize: 13, color: 'var(--color-text-primary)' }}>Notifications</b><div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><button onClick={() => markNotificationsRead()} style={{ border: 0, background: 'none', color: 'var(--color-brand-primary)', cursor: 'pointer', fontSize: 10, fontWeight: 700 }}>Mark all read</button><button onClick={() => setNotificationsOpen(false)} style={{ border: 0, background: 'none', color: 'var(--color-text-tertiary)', cursor: 'pointer' }}><X size={14} /></button></div></div>{notifications.length === 0 ? <p style={{ margin: '12px 0 0', fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>No new notifications.</p> : <div style={{ display: 'grid', gap: 9, marginTop: 12 }}>{notifications.map(item => <button key={item.id} onClick={() => !item.read && markNotificationsRead([item.id])} style={{ padding: 9, borderRadius: 9, background: item.read ? 'var(--color-surface-secondary)' : 'var(--color-brand-muted)', border: 0, textAlign: 'left', cursor: item.read ? 'default' : 'pointer' }}><div style={{ fontSize: 11, fontWeight: 800, color: 'var(--color-text-primary)' }}>{item.title}</div><div style={{ marginTop: 3, fontSize: 11, lineHeight: 1.4, color: 'var(--color-text-secondary)' }}>{item.message}</div></button>)}</div>}</div>}
             </div>
             <button
               onClick={() => { setNotificationsOpen(false); setAvatarOpen(false); setSupportMode('settings') }}
@@ -640,7 +609,11 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
             >
               <Settings size={16} />
             </button>
-            <button onClick={() => setAvatarOpen(v => !v)} aria-label="Open profile menu" title={user?.name ?? 'Profile'} style={{ width: 32, height: 32, border: 0, borderRadius: '50%', background: 'var(--gradient-brand)', color: '#fff', fontSize: 11, fontWeight: 800, cursor: 'pointer', boxShadow: '0 2px 8px rgba(37,99,235,.25)' }}>{initials}</button>
+            <div className="app-topbar-account" ref={accountRef}>
+              <button onClick={() => setAvatarOpen(value => !value)} aria-label="Account details" aria-expanded={avatarOpen} aria-haspopup="dialog" title={user?.name ?? 'Account details'} className="app-topbar-avatar">{initials}</button>
+              {avatarOpen && <div className="app-account-popover" role="dialog" aria-label="Account details"><strong>{user?.name ?? 'User'}</strong><span>{user?.email}</span><small>{user?.role === 'PUBLIC' ? 'USER' : user?.role ?? 'USER'} · {user?.plan === 'FREE' ? 'STANDARD' : user?.plan ?? 'STANDARD'}</small></div>}
+            </div>
+            <button type="button" className="app-signout-button" onClick={() => { setAvatarOpen(false); setNotificationsOpen(false); logout() }} aria-label="Sign out" title="Sign out"><LogOut size={16} /></button>
           </div>
         </div>
 

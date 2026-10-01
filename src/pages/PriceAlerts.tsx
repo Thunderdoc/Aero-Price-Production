@@ -6,7 +6,6 @@ import { Modal } from '../components/ui/Modal'
 import { useAuth } from '../contexts/AuthContext'
 import UpgradeModal from '../components/UpgradeModal'
 import { supabase, SUPABASE_CONFIGURED, savePriceAlert, getPriceAlerts } from '../services/supabase'
-import { apiMyAccessRequests } from '../services/api'
 import type { Page } from '../components/AppShell'
 
 const CITY_OPTIONS = ['DEL', 'BOM', 'BLR', 'MAA', 'CCU', 'HYD', 'AMD', 'GOI']
@@ -36,9 +35,11 @@ const inputStyle: React.CSSProperties = {
 const selectStyle: React.CSSProperties = { ...inputStyle, appearance: 'none' }
 
 export default function PriceAlerts({ onNavigate }: { onNavigate?: (page: Page) => void }) {
-  const { user, token } = useAuth()
-  const [accessApproved, setAccessApproved] = useState(false)
-  const isFree = !user || (user.plan === 'FREE' && user.role === 'PUBLIC' && !accessApproved)
+  const { user } = useAuth()
+  // Access is determined by the authenticated backend-issued entitlement.
+  // An approved request is not itself authorization; the next authenticated
+  // session must carry the upgraded plan before Premium features unlock.
+  const isFree = !user || user.plan === 'FREE'
   const [upgradeOpen, setUpgradeOpen] = useState(false)
   const storageKey = `aeroprice_price_alerts:${user?.email ?? 'anonymous'}`
   const [alerts, setAlerts] = useState<UserPriceAlert[]>(() => {
@@ -52,13 +53,6 @@ export default function PriceAlerts({ onNavigate }: { onNavigate?: (page: Page) 
   const [form, setForm] = useState<TrackForm>(INITIAL_FORM)
   const [emailEnabled, setEmailEnabled] = useState(true)
   const [savedKey, setSavedKey] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!token || user?.role !== 'PUBLIC' || user.plan !== 'FREE') return
-    apiMyAccessRequests(token)
-      .then(result => setAccessApproved((result.requests ?? []).some((request: any) => request.feature_key === 'PRICE_ALERTS' && request.status === 'APPROVED')))
-      .catch(() => setAccessApproved(false))
-  }, [token, user?.plan, user?.role])
 
   function flashSaved(key: string) {
     setSavedKey(key)
