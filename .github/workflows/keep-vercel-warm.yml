@@ -1,0 +1,27 @@
+name: Keep Vercel Backend Warm
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: keep-vercel-backend-warm
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    name: Ping warm endpoint
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Call lightweight backend warm endpoint
+        run: |
+          curl --fail --silent --show-error --max-time 25 \
+            --retry 2 \
+            --retry-delay 5 \
+            --retry-connrefused \
+            https://aero-price-production.vercel.app/api/warm
