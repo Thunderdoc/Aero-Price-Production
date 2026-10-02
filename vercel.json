@@ -4,6 +4,7 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "crons": [
+    { "path": "/api/warm", "schedule": "*/5 * * * *" },
     { "path": "/api/collections/cron", "schedule": "0 0 * * *" }
   ],
   "functions": {

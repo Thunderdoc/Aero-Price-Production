@@ -11,8 +11,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
 
 from app.core.config import settings
 from app.core.database import create_all_tables, AsyncSessionLocal
@@ -30,6 +28,14 @@ from app.models.feedback import UserFeedback  # noqa: F401 - register table meta
 from app.models.access import FeatureAccessRequest, UserFeatureAccess, UserNotification, PriceAlert  # noqa: F401 - register table metadata
 from app.core.rate_limit import limiter, policy_for
 
+IS_VERCEL = os.getenv("VERCEL") == "1"
+if not IS_VERCEL:
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from apscheduler.triggers.interval import IntervalTrigger
+else:
+    AsyncIOScheduler = None  # type: ignore[assignment]
+    IntervalTrigger = None  # type: ignore[assignment]
+
 logging.basicConfig(
     level=getattr(logging, settings.LOG_LEVEL),
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -40,7 +46,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
-scheduler = AsyncIOScheduler()
+scheduler = AsyncIOScheduler() if AsyncIOScheduler else None
 
 
 async def _scheduled_collection():
@@ -62,12 +68,15 @@ async def lifespan(app: FastAPI):
     # Vercel Functions are short-lived request workers. They must not create
     # tables in the read-only deployment filesystem or start APScheduler;
     # persistent live fare data belongs in the configured hosted database.
-    if os.getenv("VERCEL") == "1":
-        # The Vercel fallback database lives in /tmp and is writable for the
-        # lifetime of the warm function. A hosted DATABASE_URL remains the
-        # preferred persistent store.
-        await create_all_tables()
-        logger.info("Vercel serverless mode: initialized tables without scheduler startup.")
+    if IS_VERCEL:
+        # Keep serverless cold start lean. Production migrations are handled by
+        # deployment-time configuration; running DDL checks on every new worker
+        # makes the first user request wait several seconds.
+        if os.getenv("AEROPRICE_INIT_SCHEMA_ON_STARTUP") == "1":
+            await create_all_tables()
+            logger.info("Vercel serverless mode: schema initialization enabled.")
+        else:
+            logger.info("Vercel serverless mode: skipped startup schema initialization.")
         yield
         return
     await create_all_tables()
@@ -85,6 +94,7 @@ async def lifespan(app: FastAPI):
         logger.info(f"Seeded {seeded_feedback} development feedback records.")
 
     if settings.COLLECTION_ENABLED:
+        assert scheduler is not None and IntervalTrigger is not None
         scheduler.add_job(
             _scheduled_collection,
             trigger=IntervalTrigger(minutes=settings.COLLECTION_INTERVAL_MINUTES),
@@ -132,7 +142,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
-    if scheduler.running:
+    if scheduler and scheduler.running:
         scheduler.shutdown()
     logger.info("AeroPrice India backend stopped.")
 
@@ -216,3 +226,9 @@ async def root():
         "docs": "/docs",
         "health": "/api/health",
     }
+
+
+@app.get("/api/warm")
+async def warm():
+    """Tiny serverless warm-up endpoint with no database dependency."""
+    return {"status": "warm", "timestamp": datetime.now(timezone.utc).isoformat()}
