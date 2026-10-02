@@ -1195,11 +1195,7 @@ export default function AdminDashboard() {
             : item,
         ),
       )
-      setSelectedFeedback((prev) =>
-        prev?.id === id
-          ? { ...prev, status, reply: reply ?? prev.reply, internalNotes: internalNotes ?? prev.internalNotes }
-          : prev,
-      )
+      setSelectedFeedback(null)
       setSelectedFeedbackIds((selected) => selected.filter((selectedId) => selectedId !== id))
       setFeedbackEditStatus(status)
       showToast(
