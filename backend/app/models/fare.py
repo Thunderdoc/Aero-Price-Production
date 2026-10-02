@@ -77,6 +77,8 @@ class FareObservation(Base):
         Index("ix_fare_route_advance", "route", "advance_days"),
         Index("ix_fare_collected", "collected_at"),
         Index("ix_fare_origin_dest", "origin", "destination"),
+        Index("ix_fare_origin_valid_collected", "data_origin", "is_valid", "collected_at"),
+        Index("ix_fare_origin_valid_route_collected", "data_origin", "is_valid", "route", "collected_at"),
     )
 
 

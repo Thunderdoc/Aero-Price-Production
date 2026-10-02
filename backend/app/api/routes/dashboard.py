@@ -50,11 +50,17 @@ def _movement_status(change_pct: float) -> str:
 async def calculate_fare_movement(db: AsyncSession) -> dict:
     """Compare the latest two verified collection dates; never invent a trend."""
     rows = (await db.execute(
-        select(FareObservation).where(
+        select(
+            FareObservation.route,
+            FareObservation.origin,
+            FareObservation.destination,
+            FareObservation.total_fare,
+            FareObservation.collected_at,
+        ).where(
             FareObservation.data_origin.in_(["REAL", "OFFICIAL"]),
             FareObservation.is_valid == True,
         ).order_by(FareObservation.collected_at.asc())
-    )).scalars().all()
+    )).all()
     periods = sorted({row.collected_at.date() for row in rows if row.collected_at})
     if len(periods) < 2:
         return {"available": False, "price_drops": None, "routes": [], "states": {}, "message": "A second verified collection is required before movement can be calculated."}

@@ -562,9 +562,11 @@ export default function AdminDashboard() {
 
         // backend state when Firebase has expired the admin session.
 
-        const healthResult = await Promise.allSettled([apiHealth()])
+        const healthResult = healthData
+          ? null
+          : await Promise.allSettled([apiHealth()])
 
-        if (healthResult[0].status === "fulfilled")
+        if (healthResult?.[0].status === "fulfilled")
           setHealthData(healthResult[0].value)
 
         if (!token) return

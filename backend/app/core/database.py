@@ -30,7 +30,7 @@ class Base(DeclarativeBase):
 # shared by all of them, so DDL must be serialized across PostgreSQL
 # connections rather than run independently from each worker's lifespan.
 _POSTGRES_SCHEMA_LOCK = 260956056
-_POSTGRES_SCHEMA_VERSION = 5
+_POSTGRES_SCHEMA_VERSION = 6
 _tables_initialized = False
 
 
@@ -117,6 +117,18 @@ async def create_all_tables():
                     ALTER COLUMN source TYPE VARCHAR(64),
                     ALTER COLUMN data_origin TYPE VARCHAR(32),
                     ALTER COLUMN collector_version TYPE VARCHAR(16)
+                """))
+                await conn.execute(text("""
+                    CREATE INDEX IF NOT EXISTS ix_fare_origin_valid_collected
+                    ON fare_observations (data_origin, is_valid, collected_at)
+                """))
+                await conn.execute(text("""
+                    CREATE INDEX IF NOT EXISTS ix_fare_origin_valid_route_collected
+                    ON fare_observations (data_origin, is_valid, route, collected_at)
+                """))
+                await conn.execute(text("""
+                    CREATE INDEX IF NOT EXISTS ix_collection_status_started
+                    ON collection_runs (status, started_at DESC)
                 """))
                 await conn.execute(text("""
                     INSERT INTO aeroprice_schema_meta (id, version)
