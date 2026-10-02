@@ -26,6 +26,7 @@ export const BASE_URL = import.meta.env.DEV
 // presenting a stale authenticated shell with empty data when the backend
 // correctly rejects that token.
 export const AUTH_EXPIRED_EVENT = 'aeroprice:auth-expired'
+export const AUTH_REJECTED_EVENT = 'aeroprice:auth-rejected'
 
 // Keep a short-lived in-memory snapshot for page-to-page navigation. The API
 // remains the source of truth, but remounting a page must not briefly replace
@@ -33,6 +34,22 @@ export const AUTH_EXPIRED_EVENT = 'aeroprice:auth-expired'
 const readCache = new Map<string, { expires: number; value: unknown }>()
 const readInflight = new Map<string, Promise<unknown>>()
 const READ_CACHE_TTL_MS = 20_000
+type AuthTokenRefresher = (expiredToken: string) => Promise<string | null>
+let authTokenRefresher: AuthTokenRefresher | null = null
+const authRefreshInFlight = new Map<string, Promise<string | null>>()
+const renewedTokens = new Map<string, string>()
+
+export function setApiAuthTokenRefresher(refresher: AuthTokenRefresher | null) {
+  authTokenRefresher = refresher
+}
+
+export function clearApiAuthSession() {
+  authTokenRefresher = null
+  authRefreshInFlight.clear()
+  renewedTokens.clear()
+  readCache.clear()
+  readInflight.clear()
+}
 // Keep the instant fallback short-lived so it masks cold-start latency without
 // making a page look current when its verified snapshot is old.
 const READ_SNAPSHOT_MAX_AGE_MS = 30_000
@@ -85,31 +102,41 @@ export interface TokenResponse {
   user: ApiUser
 }
 
+async function authRequest(path: string, init: RequestInit, failureLabel: string): Promise<TokenResponse> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 15_000)
+  try {
+    const response = await fetch(`${BASE_URL}${path}`, { ...init, signal: controller.signal })
+    if (!response.ok) {
+      const body = await response.json().catch(() => null) as { detail?: string } | null
+      throw Object.assign(new Error(body?.detail || `${failureLabel} (${response.status})`), { status: response.status })
+    }
+    return await response.json()
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error('Sign-in verification timed out. Check your connection and try again.')
+    }
+    throw error
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
 export async function apiLogin(email: string, password: string): Promise<TokenResponse> {
   const form = new URLSearchParams({ username: email, password })
-  const resp = await fetch(`${BASE_URL}/api/auth/token`, {
+  return authRequest('/api/auth/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: form.toString(),
-  })
-  if (!resp.ok) {
-    const body = await resp.json().catch(() => null) as { detail?: string } | null
-    throw new Error(body?.detail || `Backend sign-in failed (${resp.status})`)
-  }
-  return resp.json()
+  }, 'Backend sign-in failed')
 }
 
 export async function apiFirebaseLogin(idToken: string): Promise<TokenResponse> {
-  const resp = await fetch(`${BASE_URL}/api/auth/firebase`, {
+  return authRequest('/api/auth/firebase', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id_token: idToken }),
-  })
-  if (!resp.ok) {
-    const body = await resp.json().catch(() => null) as { detail?: string } | null
-    throw new Error(body?.detail || `Firebase session verification failed (${resp.status})`)
-  }
-  return resp.json()
+  }, 'Firebase session verification failed')
 }
 
 export async function apiRegister(name: string, email: string, password: string, workspace: 'USER' | 'DGCA' = 'USER'): Promise<{ status: string; user: ApiUser }> {
@@ -129,6 +156,42 @@ export async function apiRegister(name: string, email: string, password: string,
 
 function authHeaders(token?: string): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+export async function apiCurrentUser(token: string): Promise<ApiUser> {
+  return apiFetch('/api/auth/me', token, undefined, true)
+}
+
+async function fetchWithAuthRefresh(url: string, token?: string, init?: RequestInit): Promise<Response> {
+  const requestInit: RequestInit = {
+    ...init,
+    cache: 'no-store',
+    headers: { ...authHeaders(token), ...(init?.headers ?? {}) },
+  }
+  let response = await fetch(url, requestInit)
+  if (response.status === 401 && token && (authTokenRefresher || renewedTokens.has(token))) {
+    let refresh = authRefreshInFlight.get(token)
+    if (!refresh) {
+      refresh = renewedTokens.has(token)
+        ? Promise.resolve(renewedTokens.get(token)!)
+        : authTokenRefresher!(token).catch(() => null)
+      authRefreshInFlight.set(token, refresh)
+      void refresh.finally(() => authRefreshInFlight.delete(token)).catch(() => undefined)
+    }
+    const nextToken = await refresh
+    if (nextToken && nextToken !== token) {
+      renewedTokens.set(token, nextToken)
+      if (renewedTokens.size > 16) renewedTokens.delete(renewedTokens.keys().next().value!)
+      response = await fetch(url, {
+        ...requestInit,
+        headers: { ...authHeaders(nextToken), ...(init?.headers ?? {}) },
+      })
+    }
+  }
+  if (response.status === 401 && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { token } }))
+  }
+  return response
 }
 
 async function apiFetch<T>(path: string, token?: string, init?: RequestInit, forceNetwork = false): Promise<T> {
@@ -152,20 +215,18 @@ async function apiFetch<T>(path: string, token?: string, init?: RequestInit, for
     const pending = !forceNetwork ? readInflight.get(cacheKey) : undefined
     if (pending) return pending as Promise<T>
   }
-  const request = fetch(`${BASE_URL}${path}`, {
-    ...init,
-    cache: 'no-store',
-    headers: { ...authHeaders(token), ...(init?.headers ?? {}) },
-  }).then(async resp => {
-  if (resp.status === 401 && typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { token } }))
-  }
+  const request = fetchWithAuthRefresh(`${BASE_URL}${path}`, token, init).then(async resp => {
   if (!resp.ok) {
     const text = await resp.text().catch(() => resp.statusText)
     if (resp.status === 401) {
       throw new Error('Your session has expired. Please sign in again.')
     }
-    throw new Error(`API ${path}: ${resp.status} ${text}`)
+    let detail = ''
+    try { detail = (JSON.parse(text) as { detail?: string }).detail || '' } catch { /* Keep the original API error. */ }
+    if (resp.status === 403 && /verify your email address|this account is disabled/i.test(detail) && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(AUTH_REJECTED_EVENT, { detail: { token, message: detail } }))
+    }
+    throw Object.assign(new Error(detail || `API ${path}: ${resp.status} ${text}`), { status: resp.status })
   }
   const value = await resp.json() as T
   if (method === 'GET') {
@@ -199,13 +260,7 @@ export async function apiHealth(): Promise<HealthResponse> {
 }
 
 export async function apiDownload(path: string, token?: string): Promise<Blob> {
-  const resp = await fetch(`${BASE_URL}${path}`, {
-    cache: 'no-store',
-    headers: authHeaders(token),
-  })
-  if (resp.status === 401 && typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { token } }))
-  }
+  const resp = await fetchWithAuthRefresh(`${BASE_URL}${path}`, token)
   if (!resp.ok) {
     const text = await resp.text().catch(() => resp.statusText)
     throw new Error(`API ${path}: ${resp.status} ${text}`)
@@ -600,11 +655,19 @@ export async function apiCreateAdminUser(payload: { name: string; email: string;
   })
 }
 
-export async function apiUpdateAdminUserRole(email: string, role: 'PUBLIC' | 'ANALYST' | 'ADMIN', plan?: 'FREE' | 'SUBSCRIBER' | 'GOVERNMENT' | 'ADMIN', token?: string) {
+export async function apiUpdateAdminUserRole(email: string, role: 'PUBLIC' | 'ANALYST' | 'ADMIN', plan?: 'FREE' | 'SUBSCRIBER' | 'GOVERNMENT' | 'ADMIN', token?: string, firebaseUid?: string) {
   return apiFetch(`/api/admin/users/${encodeURIComponent(email)}/role`, token, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ role, plan }),
+    body: JSON.stringify({ role, plan, firebase_uid: firebaseUid || null }),
+  })
+}
+
+export async function apiUpdateAdminUserStatus(email: string, isActive: boolean, token?: string, reason?: string, firebaseUid?: string) {
+  return apiFetch(`/api/admin/users/${encodeURIComponent(email)}/status`, token, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ is_active: isActive, reason: reason?.trim() || null, firebase_uid: firebaseUid || null }),
   })
 }
 
@@ -616,23 +679,47 @@ export async function apiDeleteAdminUser(email: string, firebaseUid?: string, to
   })
 }
 
-export async function apiSubmitFeedback(message: string, token?: string) {
+export type FeedbackStatus = 'NEW' | 'IN_PROGRESS' | 'REVIEWED' | 'RESOLVED'
+export interface FeedbackInput {
+  message: string; title?: string
+  category?: 'PRODUCT' | 'BUG' | 'DATA' | 'DESIGN' | 'SUPPORT' | 'PRAISE'
+  priority?: 'LOW' | 'MEDIUM' | 'HIGH'; source_module?: string
+  screenshot?: { name: string; content_type: 'image/png' | 'image/jpeg'; data_base64: string }
+}
+export interface FeedbackEntry {
+  id: string; title?: string; message: string; status: FeedbackStatus
+  category: string; priority: string; created_at: string; reviewed_at?: string
+  reply?: string; has_screenshot?: boolean; role?: string; plan?: string; source_module?: string
+  internal_notes?: string
+}
+export async function apiSubmitFeedback(message: string | FeedbackInput, token?: string): Promise<{ id: string; status: FeedbackStatus; created_at: string }> {
   return apiFetch('/api/admin/feedback', token, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify(typeof message === 'string' ? { message } : message),
   })
+}
+
+export async function apiMyFeedback(token: string): Promise<{ feedback: FeedbackEntry[]; total: number }> {
+  return apiFetch('/api/feedback/mine', token, undefined, true)
+}
+
+export async function apiFeedbackScreenshot(id: string, token: string): Promise<Blob> {
+  const response = await fetchWithAuthRefresh(`${BASE_URL}/api/feedback/${encodeURIComponent(id)}/screenshot`, token)
+  if (response.status === 401) throw new Error('Your session has expired. Please sign in again.')
+  if (!response.ok) throw new Error('The screenshot could not be loaded. Please retry.')
+  return response.blob()
 }
 
 export async function apiAdminFeedback(token?: string): Promise<{ feedback: Array<Record<string, any>> }> {
   return apiFetch('/api/admin/feedback', token)
 }
 
-export async function apiUpdateFeedback(id: string, status: 'NEW' | 'REVIEWED', token?: string) {
+export async function apiUpdateFeedback(id: string, status: FeedbackStatus, token?: string, reply?: string, internalNotes?: string) {
   return apiFetch(`/api/admin/feedback/${encodeURIComponent(id)}`, token, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status }),
+    body: JSON.stringify({ status, ...(reply !== undefined ? { reply } : {}), ...(internalNotes !== undefined ? { internal_notes: internalNotes } : {}) }),
   })
 }
 
@@ -640,20 +727,39 @@ export async function apiDeleteFeedback(id: string, token?: string) {
   return apiFetch(`/api/admin/feedback/${encodeURIComponent(id)}`, token, { method: 'DELETE' })
 }
 
-export async function apiCreateAccessRequest(featureKey: string, featureName: string, token?: string) {
+export async function apiCreateAccessRequest(featureKey: string, featureName: string, token?: string, requestMessage?: string) {
   return apiFetch('/api/access-requests', token, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ feature_key: featureKey, feature_name: featureName }),
+    body: JSON.stringify({ feature_key: featureKey, feature_name: featureName, request_message: requestMessage?.trim() || null }),
   })
 }
 
 export async function apiMyAccessRequests(token?: string): Promise<{ requests: Array<Record<string, any>> }> {
-  return apiFetch('/api/access-requests', token)
+  return apiFetch('/api/access-requests', token, undefined, true)
 }
 
-export async function apiAdminAccessRequests(token?: string): Promise<{ requests: Array<Record<string, any>> }> {
+export async function apiAdminAccessRequests(token?: string): Promise<{ requests: Array<Record<string, any>>; active_premium_users?: number; total?: number }> {
   return apiFetch('/api/admin/access-requests', token)
+}
+
+export interface PriceAlertEntry {
+  id: string; route: string; target_fare: number; travel_date?: string | null
+  notification_frequency: 'IMMEDIATE' | 'DAILY'; status: string; current_fare: number | null
+  triggered: boolean; created_at: string
+}
+export async function apiPriceAlerts(token?: string): Promise<{ alerts: PriceAlertEntry[] }> {
+  return apiFetch('/api/price-alerts', token, undefined, true)
+}
+export async function apiCreatePriceAlert(payload: { route: string; target_fare: number; travel_date?: string; notification_frequency: 'IMMEDIATE' | 'DAILY' }, token?: string): Promise<PriceAlertEntry> {
+  return apiFetch('/api/price-alerts', token, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+}
+export async function apiDeletePriceAlert(id: string, token?: string) {
+  return apiFetch(`/api/price-alerts/${encodeURIComponent(id)}`, token, { method: 'DELETE' })
+}
+
+export async function apiAdminAccessRequestDetails(id: string, token?: string): Promise<{ request: Record<string, any>; history: Array<Record<string, any>> }> {
+  return apiFetch(`/api/admin/access-requests/${encodeURIComponent(id)}`, token, undefined, true)
 }
 
 export async function apiApproveAccessRequest(id: string, token?: string) {
@@ -672,8 +778,18 @@ export async function apiDeleteAccessRequest(id: string, token?: string) {
   return apiFetch(`/api/admin/access-requests/${encodeURIComponent(id)}`, token, { method: 'DELETE' })
 }
 
-export async function apiNotifications(token?: string) {
-  return apiFetch('/api/notifications', token)
+export interface NotificationEntry { id: string; title: string; message: string; created_at: string; read: boolean }
+export interface NotificationResponse { notifications: NotificationEntry[]; unread_count: number; total: number }
+export async function apiNotifications(token?: string): Promise<NotificationResponse> {
+  return apiFetch('/api/notifications', token, undefined, true)
+}
+
+export async function apiRevokeAccessRequest(id: string, reason?: string, token?: string) {
+  return apiFetch(`/api/admin/access-requests/${encodeURIComponent(id)}/revoke`, token, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rejection_reason: reason || null }),
+  })
 }
 
 export async function apiMarkNotificationRead(id: string, token?: string) {

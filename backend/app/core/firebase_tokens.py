@@ -72,6 +72,7 @@ async def verify_firebase_identity(token: str) -> dict:
         if jwt.get_unverified_header(token).get("alg") != "RS256":
             raise invalid
     except Exception as exc:
+        logger.warning("Firebase ID token verification rejected: invalid_header")
         raise invalid from exc
     # Use Pydantic settings so values from backend/.env are available. Reading
     # os.environ alone silently missed the project's configured Firebase ID.
@@ -84,14 +85,30 @@ async def verify_firebase_identity(token: str) -> dict:
     try:
         claims = google_jwt.decode(token, certs=certificates, audience=project_id)
         subject = claims.get("sub")
-        if (claims.get("iss") != f"https://securetoken.google.com/{project_id}"
-                or not isinstance(subject, str) or not 0 < len(subject) <= 128
-                or not isinstance(claims.get("auth_time"), (int, float))
-                or claims["auth_time"] > time.time()
-                or claims.get("email_verified") is not True
-                or not claims.get("email")):
-            raise ValueError("Invalid Firebase identity claims")
+        if claims.get("iss") != f"https://securetoken.google.com/{project_id}":
+            raise ValueError("issuer_mismatch")
+        if not isinstance(subject, str) or not 0 < len(subject) <= 128:
+            raise ValueError("subject_invalid")
+        if not isinstance(claims.get("auth_time"), (int, float)) or claims["auth_time"] > time.time():
+            raise ValueError("auth_time_invalid")
+        if claims.get("email_verified") is not True:
+            logger.warning("Firebase ID token verification rejected: email_unverified")
+            raise HTTPException(403, "Please verify your email address before signing in. Open the verification email, then sign in again.")
+        if not claims.get("email"):
+            raise ValueError("email_missing")
+    except HTTPException:
+        raise
     except Exception as exc:
+        # Record a bounded reason code, never the bearer token or claims.
+        description = str(exc).lower()
+        claim_errors = {"issuer_mismatch", "subject_invalid", "auth_time_invalid", "email_unverified", "email_missing"}
+        reason = (description if description in claim_errors else
+                  "token_expired" if "expired" in description else
+                  "token_not_yet_valid" if "too early" in description or "future" in description else
+                  "audience_mismatch" if "audience" in description else
+                  "signing_key_missing" if "certificate" in description or "key id" in description else
+                  "signature_or_claims_invalid")
+        logger.warning("Firebase ID token verification rejected: %s (%s)", reason, type(exc).__name__)
         raise invalid from exc
     email = str(claims["email"]).strip().lower()
     # Only trust the namespaced claims written by this backend. Generic

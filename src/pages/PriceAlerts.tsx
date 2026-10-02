@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react'
-import { Bell, Trash2, Plus, Lock, Mail, CheckCircle, BarChart3, FileDown } from 'lucide-react'
+import { Bell, Trash2, Plus, Lock, Mail, AlertCircle } from 'lucide-react'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
 import { Modal } from '../components/ui/Modal'
 import { useAuth } from '../contexts/AuthContext'
 import UpgradeModal from '../components/UpgradeModal'
-import { supabase, SUPABASE_CONFIGURED, savePriceAlert, getPriceAlerts } from '../services/supabase'
+import { apiCreatePriceAlert, apiDeletePriceAlert, apiPriceAlerts, type PriceAlertEntry } from '../services/api'
 import type { Page } from '../components/AppShell'
 
 const CITY_OPTIONS = ['DEL', 'BOM', 'BLR', 'MAA', 'CCU', 'HYD', 'AMD', 'GOI']
@@ -35,19 +35,13 @@ const inputStyle: React.CSSProperties = {
 const selectStyle: React.CSSProperties = { ...inputStyle, appearance: 'none' }
 
 export default function PriceAlerts({ onNavigate }: { onNavigate?: (page: Page) => void }) {
-  const { user } = useAuth()
-  // Access is determined by the authenticated backend-issued entitlement.
-  // An approved request is not itself authorization; the next authenticated
-  // session must carry the upgraded plan before Premium features unlock.
+  const { user, token } = useAuth()
+  // The server verifies the live, revocable PRICE_ALERTS grant on every API call.
   const isFree = !user || user.plan === 'FREE'
   const [upgradeOpen, setUpgradeOpen] = useState(false)
-  const storageKey = `aeroprice_price_alerts:${user?.email ?? 'anonymous'}`
-  const [alerts, setAlerts] = useState<UserPriceAlert[]>(() => {
-    try {
-      const stored = JSON.parse(localStorage.getItem(storageKey) || '[]')
-      return Array.isArray(stored) ? stored : []
-    } catch { return [] }
-  })
+  const [alerts, setAlerts] = useState<UserPriceAlert[]>([])
+  const [alertsLoading, setAlertsLoading] = useState(false)
+  const [alertsError, setAlertsError] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
   const [showUpgrade, setShowUpgrade] = useState(false)
   const [form, setForm] = useState<TrackForm>(INITIAL_FORM)
@@ -60,56 +54,39 @@ export default function PriceAlerts({ onNavigate }: { onNavigate?: (page: Page) 
   }
 
   useEffect(() => {
-    if (SUPABASE_CONFIGURED) {
-      getPriceAlerts(user?.email).then(rows => {
-        if (rows.length > 0) {
-          setAlerts(rows.map((r: Record<string, unknown>) => ({
-            id: String(r.id ?? Date.now()),
-            route: String(r.route ?? ''),
-            targetFare: Number(r.threshold_fare ?? 0),
-            currentFare: null,
-            triggered: false,
-            createdAt: String(r.created_at ?? new Date().toISOString()),
-          })))
-          localStorage.setItem(storageKey, JSON.stringify(rows.map((r: Record<string, unknown>) => ({
-            id: String(r.id ?? Date.now()), route: String(r.route ?? ''), targetFare: Number(r.threshold_fare ?? 0), currentFare: null, triggered: false, createdAt: String(r.created_at ?? new Date().toISOString()),
-          }))))
-        }
-      })
-    }
-  }, [storageKey, user?.email])
+    if (isFree || !token) return
+    let active = true
+    setAlertsLoading(true)
+    setAlertsError(null)
+    apiPriceAlerts(token).then(({ alerts: rows }) => {
+      if (!active) return
+      setAlerts(rows.map((row: PriceAlertEntry) => ({ id: row.id, route: row.route, targetFare: row.target_fare, currentFare: row.current_fare, triggered: row.triggered, createdAt: row.created_at })))
+    }).catch(error => {
+      if (active) setAlertsError(error instanceof Error ? error.message : 'Could not load server-saved alerts.')
+    }).finally(() => { if (active) setAlertsLoading(false) })
+    return () => { active = false }
+  }, [isFree, token])
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
-    if (!user?.email) return
-    const newAlert: UserPriceAlert = {
-      id: `alert-${Date.now()}`,
-      route: `${form.from}-${form.to}`,
-      targetFare: form.threshold,
-      currentFare: null,
-      triggered: false,
-      createdAt: new Date().toISOString(),
+    if (!token) return
+    try {
+      const alert = await apiCreatePriceAlert({ route: `${form.from}-${form.to}`, target_fare: form.threshold, notification_frequency: form.frequency }, token)
+      setAlerts(prev => [{ id: alert.id, route: alert.route, targetFare: alert.target_fare, currentFare: alert.current_fare, triggered: alert.triggered, createdAt: alert.created_at }, ...prev])
+      setShowCreate(false)
+      setForm(INITIAL_FORM)
+    } catch (error) {
+      setAlertsError(error instanceof Error ? error.message : 'Could not create this server-saved alert.')
     }
-    setAlerts(prev => {
-      const next = [...prev, newAlert]
-      localStorage.setItem(storageKey, JSON.stringify(next))
-      return next
-    })
-    if (SUPABASE_CONFIGURED) {
-      await savePriceAlert({ user_email: user.email, route: newAlert.route, threshold_fare: form.threshold })
-    }
-    setShowCreate(false)
-    setForm(INITIAL_FORM)
   }
 
-  async function deleteAlert(id: string, route: string) {
-    setAlerts(prev => {
-      const next = prev.filter(a => a.id !== id)
-      localStorage.setItem(storageKey, JSON.stringify(next))
-      return next
-    })
-    if (SUPABASE_CONFIGURED) {
-      if (user?.email) await supabase.from('price_alerts').delete().eq('route', route).eq('user_email', user.email)
+  async function deleteAlert(id: string) {
+    if (!token) return
+    try {
+      await apiDeletePriceAlert(id, token)
+      setAlerts(prev => prev.filter(a => a.id !== id))
+    } catch (error) {
+      setAlertsError(error instanceof Error ? error.message : 'Could not remove this alert.')
     }
   }
 
@@ -128,9 +105,9 @@ export default function PriceAlerts({ onNavigate }: { onNavigate?: (page: Page) 
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12, width: '100%', maxWidth: 560 }}>
           {[
-            { icon: Mail, label: 'Email alerts when fare drops' },
-            { icon: BarChart3, label: 'Booking window optimizer' },
-            { icon: FileDown, label: 'Historical fare export' },
+            { icon: Bell, label: 'Server-saved fare thresholds' },
+            { icon: Mail, label: 'In-app alert notifications' },
+            { icon: Lock, label: 'Administrator-approved Premium access' },
           ].map(({ icon: Icon, label }) => (
             <div key={label} style={{ background: 'var(--color-surface-bg)', border: '1px solid var(--color-border-primary)', borderRadius: 14, padding: '16px 12px', fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.4, boxShadow: 'var(--shadow-sm)' }}>
               <div style={{ width: 30, height: 30, borderRadius: 8, background: 'var(--color-brand-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px' }}>
@@ -157,15 +134,11 @@ export default function PriceAlerts({ onNavigate }: { onNavigate?: (page: Page) 
   return (
     <div style={{ maxWidth: 900, fontFamily: 'var(--font-sans)', display: 'flex', flexDirection: 'column', gap: 20 }}>
 
-      {/* Data source notice */}
-      <div style={{ background: SUPABASE_CONFIGURED ? 'var(--color-success-bg)' : 'var(--color-warning-bg)', border: `1px solid ${SUPABASE_CONFIGURED ? 'rgba(22,163,74,0.25)' : 'rgba(217,119,6,0.28)'}`, borderRadius: 10, padding: '12px 16px', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-        <CheckCircle size={14} style={{ color: 'var(--color-success)', flexShrink: 0, marginTop: 1 }} />
-        <span style={{ fontSize: 12, color: 'var(--color-text-primary)' }}>
-          <strong style={{ color: SUPABASE_CONFIGURED ? 'var(--color-success)' : '#b45309' }}>{SUPABASE_CONFIGURED ? 'PERSISTENT ALERT STORAGE ACTIVE' : 'BROWSER ALERT STORAGE ACTIVE'}</strong> — {SUPABASE_CONFIGURED
-            ? 'Alerts are saved persistently and can trigger when matching verified fare observations are available.'
-            : 'Alerts are saved on this device. Connect the production alert database to enable cross-device storage and automatic email delivery.'}
-        </span>
+      <div style={{ background: 'var(--color-info-bg)', border: '1px solid rgba(37,99,235,0.2)', borderRadius: 10, padding: '12px 16px', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+        <AlertCircle size={14} style={{ color: 'var(--color-brand-primary)', flexShrink: 0, marginTop: 1 }} />
+        <span style={{ fontSize: 12, color: 'var(--color-text-primary)' }}><strong style={{ color: 'var(--color-brand-primary)' }}>SERVER-SAVED ALERTS</strong> — Your thresholds are tied to your approved Premium entitlement. Current fares are shown only when verified fare observations are available.</span>
       </div>
+      {alertsError && <div role="alert" style={{ background: 'var(--color-danger-bg)', border: '1px solid rgba(220,38,38,0.25)', borderRadius: 10, padding: '12px 16px', fontSize: 12, color: 'var(--color-danger)' }}>{alertsError}</div>}
 
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
@@ -233,7 +206,7 @@ export default function PriceAlerts({ onNavigate }: { onNavigate?: (page: Page) 
                 </div>
               </div>
               <button
-                onClick={() => deleteAlert(alert.id, alert.route)}
+                onClick={() => void deleteAlert(alert.id)}
                 style={{ padding: 8, border: 'none', background: 'transparent', cursor: 'pointer', borderRadius: 8, color: 'var(--color-danger)', transition: 'background 150ms ease' }}
                 onMouseOver={e => { (e.currentTarget as HTMLElement).style.background = 'var(--color-danger-bg)' }}
                 onMouseOut={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
@@ -245,7 +218,7 @@ export default function PriceAlerts({ onNavigate }: { onNavigate?: (page: Page) 
           )
         })}
 
-        {alerts.length === 0 && (
+        {!alertsLoading && alerts.length === 0 && (
           <div style={{ padding: '48px 24px', textAlign: 'center', background: 'var(--color-surface-bg)', border: '1px dashed var(--color-border-secondary)', borderRadius: 12 }}>
             <Bell size={32} style={{ color: 'var(--color-text-tertiary)', marginBottom: 12, display: 'block', margin: '0 auto 12px' }} />
             <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 6 }}>No alerts yet</div>

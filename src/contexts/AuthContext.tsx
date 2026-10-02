@@ -1,6 +1,6 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
-import { apiFirebaseLogin, apiLogin, apiRegister } from '../services/api'
-import { signInWithGooglePopup } from '../services/firebase'
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
+import { AUTH_REJECTED_EVENT, apiCurrentUser, apiFirebaseLogin, apiLogin, apiRegister, clearApiAuthSession, setApiAuthTokenRefresher } from '../services/api'
+import { FIREBASE_CONFIGURED, getFirebaseAuth, getFirebaseIdToken, getGoogleRedirectResult, signInFirebaseEmailUser, signInWithGooglePopup, signOutFirebaseUser } from '../services/firebase'
 
 export type UserRole = 'PUBLIC' | 'ANALYST' | 'ADMIN'
 export type UserPlan = 'FREE' | 'SUBSCRIBER' | 'GOVERNMENT' | 'ADMIN'
@@ -23,6 +23,7 @@ interface AuthContextValue {
   createAccount: (name: string, email: string, password: string, workspace?: AuthWorkspace) => Promise<{ success: boolean; error?: string }>
   resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>
   logout: () => void
+  refreshUser: () => Promise<void>
 }
 
 const STORAGE_KEY = 'aeroprice_auth'
@@ -45,6 +46,25 @@ const FIREBASE_ANALYST_EMAILS = envEmailList(import.meta.env.VITE_FIREBASE_ANALY
 // explicit opt-in, but the default path uses the first-party backend auth
 // endpoint so a public deployment does not hang waiting for Firebase.
 const USE_BACKEND_AUTH = import.meta.env.VITE_AUTH_MODE !== 'firebase'
+
+function disabledAccountMessage(error: unknown): string | null {
+  const message = error instanceof Error ? error.message : String(error ?? '')
+  if (!/this account is disabled by an administrator/i.test(message)) return null
+  const jsonStart = message.indexOf('{')
+  if (jsonStart >= 0) {
+    try {
+      const body = JSON.parse(message.slice(jsonStart)) as { detail?: string }
+      if (body.detail) return body.detail
+    } catch { /* Keep the matching user-facing sentence below. */ }
+  }
+  return message.slice(message.toLowerCase().indexOf('this account is disabled')).replace(/["}]+$/, '')
+}
+
+function rejectedIdentityMessage(error: unknown): string | null {
+  const message = error instanceof Error ? error.message : ''
+  const status = error && typeof error === 'object' && 'status' in error ? Number(error.status) : 0
+  return status === 401 || status === 403 || /invalid authentication credentials|verify your email address/i.test(message) ? message || 'Sign-in verification was rejected. Please sign in again.' : null
+}
 
 function roleForFirebaseEmail(email: string): Pick<AuthUser, 'role' | 'plan'> {
   const normalized = email.trim().toLowerCase()
@@ -116,9 +136,116 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const storedToken = loadStoredToken()
     return storedToken ? loadStoredUser() : null
   })
+  const sessionRef = useRef({ token, email: user?.email })
+  sessionRef.current = { token, email: user?.email }
+
+  function rejectStoredIdentity(message: string) {
+    // Verification guidance belongs to the password sign-in attempt that
+    // produced it. Do not carry it into a fresh, blank login page or a later
+    // Google sign-in. Disabled-account notices remain actionable on reload.
+    const isDisabled = /account is disabled/i.test(message)
+    if (isDisabled) sessionStorage.setItem('aeroprice_auth_notice', message)
+    else sessionStorage.removeItem('aeroprice_auth_notice')
+    clearApiAuthSession()
+    clearStoredSession()
+    localStorage.removeItem(FIREBASE_SESSION_KEY)
+    sessionStorage.removeItem(FIREBASE_SESSION_KEY)
+    setUser(null)
+    setToken(null)
+    if (isDisabled) window.dispatchEvent(new CustomEvent('aeroprice-auth-notice', { detail: message }))
+  }
+
+  useEffect(() => {
+    const reject = (event: Event) => {
+      const detail = (event as CustomEvent<{ token?: string; message: string }>).detail
+      if (detail.token && detail.token === sessionRef.current.token) rejectStoredIdentity(detail.message)
+    }
+    window.addEventListener(AUTH_REJECTED_EVENT, reject)
+    return () => window.removeEventListener(AUTH_REJECTED_EVENT, reject)
+  }, [])
+
+  const refreshUser = useCallback(async () => {
+    if (!token || !user?.email) return
+    const snapshot = await apiCurrentUser(token)
+    if (sessionRef.current.token !== token || sessionRef.current.email !== snapshot.email) return
+    setUser(previous => {
+      if (!previous || previous.email !== snapshot.email) return previous
+      if (previous.role === snapshot.role && previous.plan === snapshot.plan && previous.name === snapshot.name) return previous
+      const next = { ...previous, ...snapshot, initials: (snapshot.name || snapshot.email).slice(0, 2).toUpperCase() }
+      saveStoredSession(next, token, localStorage.getItem(TOKEN_KEY) !== null)
+      return next
+    })
+  }, [token, user?.email])
+
+  useEffect(() => {
+    if (!token || !user?.email) return
+    const sync = () => { if (document.visibilityState !== 'hidden') void refreshUser().catch(() => undefined) }
+    sync()
+    // Server role, subscription and disabled-account changes are authoritative
+    // and must move an already-open workspace promptly without trusting the
+    // role embedded in an older browser token.
+    const timer = window.setInterval(sync, 10_000)
+    window.addEventListener('focus', sync)
+    window.addEventListener('aeroprice-notifications-changed', sync)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('focus', sync)
+      window.removeEventListener('aeroprice-notifications-changed', sync)
+    }
+  }, [token, user?.email, refreshUser])
 
   useEffect(() => {
     if (!token && user) setUser(null)
+  }, [token, user])
+
+  // Firebase-backed sessions can renew the short-lived API JWT silently. This
+  // lets protected submissions (feedback, screenshots, Premium requests, and
+  // admin actions) retry once instead of failing after an idle browser session.
+  // Backend-password sessions have no refresh credential and remain explicitly
+  // re-authentication-only.
+  useEffect(() => {
+    let active = true
+    const hasFirebaseSession = localStorage.getItem(FIREBASE_SESSION_KEY) === '1' || sessionStorage.getItem(FIREBASE_SESSION_KEY) === '1'
+    if (!token || !user || (!hasFirebaseSession && USE_BACKEND_AUTH)) {
+      setApiAuthTokenRefresher(null)
+      return () => { active = false }
+    }
+
+    const rejectedToken = token
+    const sessionUser = user
+    setApiAuthTokenRefresher(async (expiredToken) => {
+      if (!active || expiredToken !== rejectedToken) return null
+      const idToken = await getFirebaseIdToken(true)
+      if (!active || !idToken) return null
+      const firebaseUser = getFirebaseAuth()?.currentUser
+      if (!firebaseUser?.email || firebaseUser.email.trim().toLowerCase() !== sessionUser.email.trim().toLowerCase()) return null
+      let apiSession
+      try { apiSession = await apiFirebaseLogin(idToken) }
+      catch (failure) {
+        const rejected = rejectedIdentityMessage(failure)
+        if (active && rejected) rejectStoredIdentity(rejected)
+        throw failure
+      }
+      if (!active || apiSession.user.email.trim().toLowerCase() !== sessionUser.email.trim().toLowerCase()) return null
+      const displayName = apiSession.user.name || apiSession.user.email
+      const refreshedUser: AuthUser = {
+        name: displayName,
+        email: apiSession.user.email,
+        role: apiSession.user.role,
+        plan: apiSession.user.plan,
+        initials: displayName.slice(0, 2).toUpperCase(),
+      }
+      const remember = localStorage.getItem(FIREBASE_SESSION_KEY) === '1'
+      saveStoredSession(refreshedUser, apiSession.access_token, remember)
+      setUser(refreshedUser)
+      setToken(apiSession.access_token)
+      return apiSession.access_token
+    })
+
+    return () => {
+      active = false
+      setApiAuthTokenRefresher(null)
+    }
   }, [token, user])
 
   // A 401 from one background request is not proof that the signed-in user
@@ -127,12 +254,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // discard the browser session.
 
   useEffect(() => {
-    const hasFirebaseSession = localStorage.getItem(FIREBASE_SESSION_KEY) === '1' || sessionStorage.getItem(FIREBASE_SESSION_KEY) === '1'
-    if (USE_BACKEND_AUTH && !hasFirebaseSession) return
     let active = true
-    import('../services/firebase').then(async ({ getFirebaseAuth, getFirebaseIdToken, getGoogleRedirectResult }) => {
+    void (async () => {
       const redirectCredential = await getGoogleRedirectResult().catch(() => null)
-      const firebaseUser = redirectCredential?.user ?? getFirebaseAuth()?.currentUser
       if (redirectCredential?.user) {
         const pendingPassword = sessionStorage.getItem('aeroprice_pending_google_password')
         if (pendingPassword) {
@@ -141,7 +265,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           sessionStorage.removeItem('aeroprice_pending_google_password')
         }
       }
-      const idToken = firebaseUser ? await firebaseUser.getIdToken() : await getFirebaseIdToken()
+      const idToken = redirectCredential?.user ? await redirectCredential.user.getIdToken() : await getFirebaseIdToken()
+      const firebaseUser = redirectCredential?.user ?? getFirebaseAuth()?.currentUser
       if (!active || !idToken) return
       const remember = localStorage.getItem(FIREBASE_SESSION_KEY) === '1' || Boolean(redirectCredential?.user)
       try {
@@ -156,7 +281,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setToken(apiSession.access_token)
         ;(remember ? localStorage : sessionStorage).setItem(FIREBASE_SESSION_KEY, '1')
         saveStoredSession(restoredUser, apiSession.access_token, remember)
-      } catch {
+        // A previous password-login verification warning must not remain
+        // visible after a successful verified Google session.
+        sessionStorage.removeItem('aeroprice_auth_notice')
+        localStorage.removeItem('aeroprice_disabled_account_notice')
+      } catch (error) {
+        const rejected = rejectedIdentityMessage(error)
+        if (rejected) {
+          if (active) rejectStoredIdentity(rejected)
+          return
+        }
+        const disabledMessage = disabledAccountMessage(error)
+        if (disabledMessage) {
+          localStorage.setItem('aeroprice_disabled_account_notice', disabledMessage)
+          clearStoredSession()
+          localStorage.removeItem(FIREBASE_SESSION_KEY)
+          sessionStorage.removeItem(FIREBASE_SESSION_KEY)
+          await signOutFirebaseUser().catch(() => undefined)
+          if (!active) return
+          setUser(null)
+          setToken(null)
+          return
+        }
         // Keep the Firebase identity and its token while the backend recovers.
         if (!active || !firebaseUser?.email) return
         const email = firebaseUser.email
@@ -167,8 +313,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setToken(idToken)
         ;(remember ? localStorage : sessionStorage).setItem(FIREBASE_SESSION_KEY, '1')
         saveStoredSession(restoredUser, idToken, remember)
+        sessionStorage.removeItem('aeroprice_auth_notice')
+        localStorage.removeItem('aeroprice_disabled_account_notice')
       }
-    }).catch(() => {
+    })().catch(() => {
       // Keep the restored session; Firebase may be unavailable temporarily.
     })
     return () => { active = false }
@@ -178,137 +326,84 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const emailLower = email.trim().toLowerCase()
     const expectedRole = workspace === 'ADMIN' ? 'ADMIN' : workspace === 'DGCA' ? 'ANALYST' : workspace === 'USER' ? 'PUBLIC' : null
 
+    function finishLogin(response: Awaited<ReturnType<typeof apiLogin>>, firebaseSession: boolean) {
+      if (expectedRole && response.user.role !== expectedRole) {
+        return { success: false, error: `This account is not authorized for the ${workspace} workspace.` }
+      }
+      const displayName = response.user.name || response.user.email
+      const authedUser: AuthUser = {
+        name: displayName, email: response.user.email,
+        role: response.user.role, plan: response.user.plan,
+        initials: displayName.slice(0, 2).toUpperCase(),
+      }
+      if (firebaseSession) {
+        ;(remember ? localStorage : sessionStorage).setItem(FIREBASE_SESSION_KEY, '1')
+        ;(remember ? sessionStorage : localStorage).removeItem(FIREBASE_SESSION_KEY)
+        localStorage.removeItem('aeroprice_pending_workspace')
+      } else {
+        localStorage.removeItem(FIREBASE_SESSION_KEY)
+        sessionStorage.removeItem(FIREBASE_SESSION_KEY)
+      }
+      saveStoredSession(authedUser, response.access_token, remember)
+      setUser(authedUser)
+      setToken(response.access_token)
+      return { success: true, user: authedUser }
+    }
+
     try {
-      const { FIREBASE_CONFIGURED, signInFirebaseEmailUser } = await import('../services/firebase')
-      // A Firebase password-reset email must be followed by a Firebase sign-in.
-      // The previous implementation forced backend auth whenever VITE_AUTH_MODE
-      // was "backend", so a password changed through Firebase could never work.
-      // Try the configured identity provider first; backend accounts remain a
-      // supported fallback for users that do not exist in Firebase.
       if (FIREBASE_CONFIGURED) {
+        // Firebase remains first: a Firebase reset must use the new Firebase
+        // password, never a stale backend password.
+        let credential: Awaited<ReturnType<typeof signInFirebaseEmailUser>> | undefined
         try {
-          const credential = await signInFirebaseEmailUser(emailLower, password)
+          credential = await signInFirebaseEmailUser(emailLower, password)
+        } catch (providerError) {
+          const code = typeof providerError === 'object' && providerError && 'code' in providerError
+            ? String((providerError as { code?: string }).code) : ''
+          const credentialRejected = /invalid-credential|user-not-found|wrong-password/.test(code)
+          // Only a rejected credential may belong to a legacy backend account.
+          // Network failures and throttling must not start another password
+          // request. Provider discovery also adds a round trip on every typo.
+          if (!USE_BACKEND_AUTH || !credentialRejected) throw providerError
+        }
+        if (credential) {
           const firebaseUser = credential.user
-          if (!firebaseUser.emailVerified) {
-            await firebaseUser.reload()
-          }
+          if (!firebaseUser.emailVerified) await firebaseUser.reload()
           if (!firebaseUser.emailVerified) {
             return { success: false, error: 'Email is not verified. Please verify your email before signing in.' }
           }
-          const idToken = await firebaseUser.getIdToken()
-          let apiSession = await apiFirebaseLogin(idToken)
-          let backendCredential = false
-          if (workspace === 'DGCA' && apiSession.user.role !== 'ANALYST') {
-            // A DGCA account may have been registered in the backend before
-            // this email also acquired a Firebase identity.
+          const idToken = await firebaseUser.getIdToken(true)
+          // Errors here concern server verification, not the password.
+          // Never retry an accepted Firebase password against another store.
+          let response = await apiFirebaseLogin(idToken)
+          let firebaseSession = true
+          if (workspace === 'DGCA' && response.user.role !== 'ANALYST') {
+            // Preserve support for existing backend-registered DGCA accounts.
             try {
-              apiSession = await apiLogin(emailLower, password)
-              backendCredential = true
-            } catch { /* Keep the Firebase result for the role check below. */ }
+              response = await apiLogin(emailLower, password)
+              firebaseSession = false
+            } catch { /* Retain the verified Firebase result for the role check. */ }
           }
-          if (expectedRole && apiSession.user.role !== expectedRole) {
-            return { success: false, error: `This account is not authorized for the ${workspace} workspace.` }
-          }
-          const displayName = apiSession.user.name || firebaseUser.displayName || firebaseUser.email || emailLower
-          const authedUser: AuthUser = {
-            name: displayName,
-            email: apiSession.user.email,
-            role: apiSession.user.role,
-            plan: apiSession.user.plan,
-            initials: displayName.slice(0, 2).toUpperCase(),
-          }
-          setUser(authedUser)
-          setToken(apiSession.access_token)
-          if (backendCredential) {
-            localStorage.removeItem(FIREBASE_SESSION_KEY)
-            sessionStorage.removeItem(FIREBASE_SESSION_KEY)
-          } else {
-            ;(remember ? localStorage : sessionStorage).setItem(FIREBASE_SESSION_KEY, '1')
-          }
-          localStorage.removeItem('aeroprice_pending_workspace')
-          saveStoredSession(authedUser, apiSession.access_token, remember)
-          return { success: true, user: authedUser }
-        } catch (firebaseError) {
-          // Google-only accounts do not have a password credential. Do not
-          // incorrectly fall through to backend auth and report "incorrect
-          // password" for a valid Google account.
-          const code = typeof firebaseError === 'object' && firebaseError && 'code' in firebaseError
-            ? String((firebaseError as { code?: string }).code)
-            : ''
-          if (code.includes('invalid-credential') || code.includes('user-not-found') || code.includes('wrong-password')) {
-            const { getFirebaseSignInMethods } = await import('../services/firebase')
-            const methods = await getFirebaseSignInMethods(emailLower).catch((): string[] => [])
-            if (methods.includes('google.com')) {
-              return { success: false, error: 'This account uses Google sign-in. Click “Continue with Google”; it does not have a separate password.' }
-            }
-          }
-          if (code.includes('too-many-requests')) {
-            return { success: false, error: 'Too many sign-in attempts were made. Wait a moment, then try again or use Forgot password.' }
-          }
-          // Once Firebase accepted the password, this error is from the local
-          // session exchange, not from the password. Do not retry a Firebase
-          // identity against the legacy backend and then report a false
-          // "incorrect email or password" message.
-          const providerMessage = firebaseError instanceof Error ? firebaseError.message : ''
-          if (/session verification failed|too many requests|backend sign-in failed|unable to connect|network/i.test(providerMessage)) {
-            return { success: false, error: providerMessage }
-          }
-          // If Firebase does not know this account, continue with backend auth.
+          return finishLogin(response, firebaseSession)
         }
       }
-
-      if (!FIREBASE_CONFIGURED || USE_BACKEND_AUTH) {
-        const response = await apiLogin(emailLower, password)
-        if (expectedRole && response.user.role !== expectedRole) {
-          return { success: false, error: `This account is not authorized for the ${workspace} workspace.` }
-        }
-        const displayName = response.user.name || response.user.email
-        const authedUser: AuthUser = {
-          name: displayName,
-          email: response.user.email,
-          role: response.user.role,
-          plan: response.user.plan,
-          initials: displayName.slice(0, 2).toUpperCase(),
-        }
-        setUser(authedUser)
-        setToken(response.access_token)
-        localStorage.removeItem(FIREBASE_SESSION_KEY)
-        sessionStorage.removeItem(FIREBASE_SESSION_KEY)
-        saveStoredSession(authedUser, response.access_token, remember)
-        return { success: true, user: authedUser }
+      return finishLogin(await apiLogin(emailLower, password), false)
+    } catch (error) {
+      const disabledMessage = disabledAccountMessage(error)
+      if (disabledMessage) {
+        await signOutFirebaseUser().catch(() => undefined)
+        return { success: false, error: disabledMessage }
       }
-      return { success: false, error: FIREBASE_CONFIGURED ? 'Firebase rejected this email/password combination. Check the email spelling and password, then try again.' : 'Invalid email or password.' }
-    } catch (firebaseErr) {
-      const code = typeof firebaseErr === 'object' && firebaseErr && 'code' in firebaseErr ? String((firebaseErr as { code?: string }).code) : ''
-      // Keep the deployed prototype usable when Firebase rejects a local/demo
-      // credential or the current hostname is not yet authorized. The backend
-      // account is an explicit fallback; it never fabricates identity or fare
-      // data and Firebase remains the primary production path.
-      try {
-        const response = await apiLogin(emailLower, password)
-        if (expectedRole && response.user.role !== expectedRole) {
-          return { success: false, error: `This account is not authorized for the ${workspace} workspace.` }
-        }
-        const displayName = response.user.name || response.user.email
-        const authedUser: AuthUser = {
-          name: displayName,
-          email: response.user.email,
-          role: response.user.role,
-          plan: response.user.plan,
-          initials: displayName.slice(0, 2).toUpperCase(),
-        }
-        setUser(authedUser)
-        setToken(response.access_token)
-        localStorage.removeItem(FIREBASE_SESSION_KEY)
-        sessionStorage.removeItem(FIREBASE_SESSION_KEY)
-        saveStoredSession(authedUser, response.access_token, remember)
-        return { success: true, user: authedUser }
-      } catch {
-        // Preserve the useful Firebase-specific error below when both auth
-        // paths reject the supplied credentials.
+      const code = typeof error === 'object' && error && 'code' in error
+        ? String((error as { code?: string }).code) : ''
+      if (/invalid-credential|wrong-password|user-not-found/.test(code)) {
+        return { success: false, error: 'Incorrect email or password. Check your credentials or use Forgot password.' }
       }
-      if (code.includes('invalid-credential') || code.includes('wrong-password') || code.includes('user-not-found')) {
-        return { success: false, error: 'Invalid Firebase email or password.' }
+      if (code.includes('too-many-requests')) {
+        return { success: false, error: 'Too many sign-in attempts were made. Wait a moment, then try again or use Forgot password.' }
+      }
+      if (code.includes('network-request-failed')) {
+        return { success: false, error: 'Firebase could not be reached. Check your connection and try again.' }
       }
       if (code.includes('operation-not-allowed')) {
         return { success: false, error: 'Firebase Email/Password sign-in is not enabled yet.' }
@@ -316,7 +411,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (code.includes('unauthorized-domain')) {
         return { success: false, error: 'This domain is not authorized in Firebase Authentication.' }
       }
-      return { success: false, error: 'Invalid email or password.' }
+      return { success: false, error: error instanceof Error ? error.message : 'Incorrect email or password.' }
     }
   }
 
@@ -325,6 +420,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const credential = await signInWithGooglePopup()
       const { linkPasswordToCurrentFirebaseUser } = await import('../services/firebase')
       const firebaseUser = credential.user
+      // Google identities are normally verified by Firebase itself. Keep the
+      // same hard gate for any provider response that does not carry that
+      // verified-email claim rather than treating the provider name as proof.
+      if (firebaseUser.emailVerified === false) {
+        await signOutFirebaseUser().catch(() => undefined)
+        return { success: false, error: 'Google did not provide a verified email address for this account.' }
+      }
       const email = firebaseUser.email || ''
       const access = roleForWorkspace(email, workspace)
       const name = firebaseUser.displayName || email
@@ -369,7 +471,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setToken(apiSession.access_token)
         localStorage.setItem(FIREBASE_SESSION_KEY, '1')
         saveStoredSession(serverUser, apiSession.access_token, true)
-      } catch {
+      } catch (exchangeError) {
+        const disabledMessage = disabledAccountMessage(exchangeError)
+        if (disabledMessage) {
+          await signOutFirebaseUser().catch(() => undefined)
+          return { success: false, error: disabledMessage }
+        }
+        const rejected = rejectedIdentityMessage(exchangeError)
+        if (rejected) {
+          rejectStoredIdentity(rejected)
+          return { success: false, error: rejected }
+        }
         // Firebase identity remains valid and the backend verifies this token
         // directly when the optional exchange is unavailable.
         if (workspace && authedUser.role !== (workspace === 'DGCA' ? 'ANALYST' : workspace === 'ADMIN' ? 'ADMIN' : 'PUBLIC')) {
@@ -465,6 +577,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   function logout() {
+    clearApiAuthSession()
+    void signOutFirebaseUser().catch(() => undefined)
     setUser(null)
     setToken(null)
     clearStoredSession()
@@ -472,7 +586,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     sessionStorage.removeItem(FIREBASE_SESSION_KEY)
   }
 
-  return <AuthContext.Provider value={{ user, token, login, loginWithGoogle, createAccount, resetPassword, logout }}>{children}</AuthContext.Provider>
+  return <AuthContext.Provider value={{ user, token, login, loginWithGoogle, createAccount, resetPassword, logout, refreshUser }}>{children}</AuthContext.Provider>
 }
 
 export function useAuth(): AuthContextValue {

@@ -2,7 +2,6 @@ import { initializeApp, getApps, type FirebaseApp } from 'firebase/app'
 import {
   createUserWithEmailAndPassword,
   getAuth,
-  onAuthStateChanged,
   GoogleAuthProvider,
   sendEmailVerification,
   sendPasswordResetEmail,
@@ -11,6 +10,7 @@ import {
   signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
+  signOut,
   EmailAuthProvider,
   linkWithCredential,
   updateProfile,
@@ -52,16 +52,38 @@ export function getFirebaseAuth() {
   return auth
 }
 
-export function getFirebaseIdToken() {
+export async function signOutFirebaseUser() {
   const firebaseAuth = getFirebaseAuth()
-  if (!firebaseAuth) return Promise.resolve(null)
-  if (firebaseAuth.currentUser) return firebaseAuth.currentUser.getIdToken()
-  return new Promise<string | null>((resolve) => {
-    const unsubscribe = onAuthStateChanged(firebaseAuth, async (firebaseUser) => {
-      unsubscribe()
-      resolve(firebaseUser ? await firebaseUser.getIdToken() : null)
-    })
-  })
+  if (firebaseAuth?.currentUser) await signOut(firebaseAuth)
+}
+
+export async function getFirebaseIdToken(forceRefresh = false) {
+  const firebaseAuth = getFirebaseAuth()
+  if (!firebaseAuth) return null
+  // currentUser can be null while IndexedDB persistence is still restoring.
+  // Wait for the SDK's initial state before deciding that re-login is needed.
+  await firebaseAuth.authStateReady()
+  const firebaseUser = firebaseAuth.currentUser
+  if (!firebaseUser) return null
+  // Verification links are often opened in another tab. Reload the account
+  // flag and renew its cached token so the backend sees the verified claim.
+  if (!firebaseUser.emailVerified) {
+    await firebaseUser.reload()
+    forceRefresh = true
+  }
+  return firebaseUser.getIdToken(forceRefresh)
+}
+
+export async function resendFirebaseVerification() {
+  const firebaseAuth = getFirebaseAuth()
+  if (!firebaseAuth) throw new Error('Email verification is not configured.')
+  await firebaseAuth.authStateReady()
+  const firebaseUser = firebaseAuth.currentUser
+  if (!firebaseUser) throw new Error('Enter your email and password and try signing in first, then resend verification.')
+  await firebaseUser.reload()
+  if (firebaseUser.emailVerified) return 'Your email is already verified. Sign in again to continue.'
+  await sendEmailVerification(firebaseUser)
+  return 'Verification email sent. Check your inbox and spam folder, open the link, then sign in again.'
 }
 
 export function initFirebaseAnalytics() {

@@ -22,10 +22,12 @@ from app.api.routes import forecasts, exports, anomalies as anomalies_routes, av
 from app.api.routes.routes_basket import router as routes_router
 from app.api.routes.compare import router as compare_router
 from app.services.collector import run_collection
+from app.services.price_alerts import evaluate_price_alerts
 from app.services.gov_fetcher import run_gov_fetches, ensure_gov_dataset_registry
 from app.seed.routes import seed_route_basket
+from app.seed.feedback import seed_demo_feedback
 from app.models.feedback import UserFeedback  # noqa: F401 - register table metadata
-from app.models.access import FeatureAccessRequest, UserFeatureAccess, UserNotification  # noqa: F401 - register table metadata
+from app.models.access import FeatureAccessRequest, UserFeatureAccess, UserNotification, PriceAlert  # noqa: F401 - register table metadata
 from app.core.rate_limit import limiter, policy_for
 
 logging.basicConfig(
@@ -44,6 +46,8 @@ scheduler = AsyncIOScheduler()
 async def _scheduled_collection():
     async with AsyncSessionLocal() as db:
         await run_collection(db, triggered_by="scheduler")
+        await evaluate_price_alerts(db)
+        await db.commit()
 
 
 async def _scheduled_gov_fetch():
@@ -70,9 +74,15 @@ async def lifespan(app: FastAPI):
     logger.info("Database tables verified.")
     async with AsyncSessionLocal() as db:
         seeded = await seed_route_basket(db)
+        seeded_feedback = 0
+        if not settings.is_production:
+            seeded_feedback = await seed_demo_feedback(db)
+        await db.commit()
         await ensure_gov_dataset_registry(db)
     if seeded:
         logger.info(f"Seeded {seeded} routes into route_baskets table.")
+    if seeded_feedback:
+        logger.info(f"Seeded {seeded_feedback} development feedback records.")
 
     if settings.COLLECTION_ENABLED:
         scheduler.add_job(

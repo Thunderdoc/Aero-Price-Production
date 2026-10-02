@@ -10,7 +10,7 @@ import DataStatusBanner from './DataStatusBanner'
 import { useAuth, canAccess, type UserRole, type UserPlan } from '../contexts/AuthContext'
 import { useGovData } from '../hooks/useGovData'
 import UserSupportModal from './UserSupportModal'
-import { apiHealth, apiMarkAllNotificationsRead, apiMarkNotificationRead, apiNotifications, apiRouteBasket } from '../services/api'
+import { apiHealth, apiMarkAllNotificationsRead, apiMarkNotificationRead, apiNotifications, apiRouteBasket, type NotificationEntry } from '../services/api'
 import { useAviationRadar } from '../services/aviationRadar'
 import type { AviationPanel } from '../pages/AviationLive'
 
@@ -26,7 +26,7 @@ export type Portal = 'gov' | 'admin' | 'aviation'
 
 export type AdminTab = 'overview' | 'pipeline' | 'users' | 'access' | 'feedback' | 'audit' | 'config' | 'health'
 interface NavItem { page: Page; icon: typeof Home; label: string; badge?: string; minRole?: 'ANALYST' | 'ADMIN' | 'SUBSCRIBER'; supportAction?: 'settings' | 'help' | 'feedback'; section?: string; aviationAction?: AviationPanel; adminTab?: AdminTab }
-interface LocalNotification { id: string; email?: string; title: string; message: string; createdAt: string; read?: boolean }
+interface AppNotification extends NotificationEntry { createdAt: string }
 
 // Government Portal
 const govNav: NavItem[] = [
@@ -45,6 +45,7 @@ const govNav: NavItem[] = [
   { page: 'alerts',          icon: Bell,         label: 'Price Alerts' },
   { page: 'exports',         icon: Download,     label: 'Reports & Exports', minRole: 'ANALYST' },
   { page: 'methodology',     icon: BookOpen,     label: 'Methodology',       minRole: 'ANALYST' },
+  { page: 'sources',         icon: MessageSquare, label: 'Feedback',          supportAction: 'feedback' },
 ]
 
 // Admin Control Center
@@ -77,9 +78,6 @@ const aviationNav: NavItem[] = [
   { page: 'aviationlive', icon: History, label: 'Historical Replay', aviationAction: 'Historical Replay' },
   { page: 'aviationlive', icon: Fuel, label: 'Fuel & Emissions', aviationAction: 'Fuel & Emissions' },
   { page: 'aviationlive', icon: Download, label: 'Reports & Export', aviationAction: 'Reports & Export' },
-  { page: 'airfareindex', icon: LineChart, label: 'Airfare Index', section: 'GOVERNMENT MODULES', minRole: 'ANALYST' },
-  { page: 'insights', icon: BarChart2, label: 'Market Insights' },
-  { page: 'sources', icon: Database, label: 'Data Sources', minRole: 'ANALYST' },
 ]
 
 const userNav: NavItem[] = [
@@ -123,7 +121,8 @@ function NavButton({ icon, label, active, badge, onClick }: NavButtonProps) {
       onMouseLeave={() => setHovered(false)}
       style={{
         display: 'flex', alignItems: 'center', gap: 9, width: '100%',
-        padding: '7px 12px 7px 10px',
+        minHeight: 40,
+        padding: '6px 12px 6px 10px',
         background: active
           ? 'linear-gradient(90deg, rgba(37,99,235,0.14) 0%, rgba(37,99,235,0.04) 100%)'
           : hovered ? 'var(--color-surface-hover)' : 'transparent',
@@ -136,7 +135,7 @@ function NavButton({ icon, label, active, badge, onClick }: NavButtonProps) {
         marginBottom: 1,
       }}
     >
-      <span style={{ color: active ? 'var(--color-brand-primary)' : hovered ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)', display: 'flex', flexShrink: 0, transition: 'color 150ms ease' }}>
+      <span aria-hidden="true" style={{ width: 28, height: 28, display: 'grid', placeItems: 'center', borderRadius: 8, color: active ? 'var(--color-brand-primary)' : hovered ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)', background: active ? 'var(--color-brand-muted)' : hovered ? 'var(--color-surface-secondary)' : 'transparent', flexShrink: 0, transition: 'color 150ms ease, background 150ms ease' }}>
         {icon}
       </span>
       <span style={{ fontSize: 13, fontWeight: active ? 600 : 500, color: active ? 'var(--color-brand-primary)' : hovered ? 'var(--color-text-primary)' : 'var(--color-text-secondary)', flex: 1, textAlign: 'left', transition: 'color 150ms ease', letterSpacing: active ? '0.01em' : '0' }}>
@@ -198,7 +197,9 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
   const [searchOpen, setSearchOpen] = useState(false)
   const [supportMode, setSupportMode] = useState<'settings' | 'help' | 'feedback' | null>(null)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
-  const [notifications, setNotifications] = useState<LocalNotification[]>([])
+  const [notifications, setNotifications] = useState<AppNotification[]>([])
+  const [notificationUnreadCount, setNotificationUnreadCount] = useState(0)
+  const [notificationError, setNotificationError] = useState('')
   const [fareFeed, setFareFeed] = useState<{ connected: boolean; live: boolean; observations: number | null }>({ connected: false, live: false, observations: null })
   const [routeSearchCodes, setRouteSearchCodes] = useState<string[]>([])
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('aeroprice_theme') === 'dark')
@@ -265,24 +266,31 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
   }, [])
 
   useEffect(() => {
-    const loadNotifications = () => {
+    let active = true
+    const loadNotifications = async () => {
+      if (!token) {
+        if (active) { setNotifications([]); setNotificationUnreadCount(0); setNotificationError('') }
+        return
+      }
       try {
-        const stored = JSON.parse(localStorage.getItem('aeroprice_notifications') || '[]') as LocalNotification[]
-        setNotifications(stored.filter(item => !item.email || item.email === user?.email).slice(0, 8))
-      } catch {
-        setNotifications([])
+        const result = await apiNotifications(token)
+        if (!active) return
+        setNotifications(result.notifications.map(item => ({ ...item, createdAt: item.created_at })))
+        setNotificationUnreadCount(result.unread_count)
+        setNotificationError('')
+      } catch (error) {
+        if (active) setNotificationError(error instanceof Error ? error.message : 'Notifications could not be loaded.')
       }
     }
-    loadNotifications()
-    if (token) {
-      apiNotifications(token).then((result: any) => {
-        if (!Array.isArray(result?.notifications)) return
-        const serverNotifications = result.notifications.map((item: any) => ({ id: item.id, title: item.title, message: item.message, createdAt: item.created_at, read: Boolean(item.read) }))
-        setNotifications(prev => [...serverNotifications, ...prev.filter(item => !serverNotifications.some((server: LocalNotification) => server.id === item.id))].slice(0, 8))
-      }).catch(() => {})
+    void loadNotifications()
+    const onNotificationsChanged = () => void loadNotifications()
+    window.addEventListener('aeroprice-notifications-changed', onNotificationsChanged)
+    window.addEventListener('focus', onNotificationsChanged)
+    return () => {
+      active = false
+      window.removeEventListener('aeroprice-notifications-changed', onNotificationsChanged)
+      window.removeEventListener('focus', onNotificationsChanged)
     }
-    window.addEventListener('aeroprice-notifications-changed', loadNotifications)
-    return () => window.removeEventListener('aeroprice-notifications-changed', loadNotifications)
   }, [token, user?.email])
 
   useEffect(() => {
@@ -312,17 +320,16 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
   }, [])
 
   async function markNotificationsRead(ids?: string[]) {
+    if (!token) return
     try {
-      const stored = JSON.parse(localStorage.getItem('aeroprice_notifications') || '[]') as LocalNotification[]
-      const matches = (item: LocalNotification) => (!ids || ids.includes(item.id)) && (!item.email || item.email === user?.email)
-      localStorage.setItem('aeroprice_notifications', JSON.stringify(stored.map(item => matches(item) ? { ...item, read: true } : item)))
-      setNotifications(prev => prev.map(item => matches(item) ? { ...item, read: true } : item))
-    } catch { /* keep the notification panel usable if storage is unavailable */ }
-    if (token) {
-      try {
-        if (ids?.length === 1) await apiMarkNotificationRead(ids[0], token)
-        else await apiMarkAllNotificationsRead(token)
-      } catch { /* keep local read state when the server is unavailable */ }
+      if (ids?.length === 1) await apiMarkNotificationRead(ids[0], token)
+      else await apiMarkAllNotificationsRead(token)
+      const result = await apiNotifications(token)
+      setNotifications(result.notifications.map(item => ({ ...item, createdAt: item.created_at })))
+      setNotificationUnreadCount(result.unread_count)
+      setNotificationError('')
+    } catch (error) {
+      setNotificationError(error instanceof Error ? error.message : 'Notification status could not be updated.')
     }
   }
 
@@ -467,8 +474,8 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
           )}
           {activeNav.filter(isVisible).map(({ page, icon: Icon, label, badge, supportAction, section, aviationAction, adminTab }) => (
             <div key={page + label}>
-              {section && <div style={{ padding: '14px 14px 5px', fontSize: 9, fontWeight: 700, letterSpacing: '.12em', color: 'var(--color-text-tertiary)' }}>{section}</div>}
-              <NavButton icon={<Icon size={15} />} label={label} badge={badge}
+              {section && <div style={{ padding: '16px 14px 6px', fontSize: 9, fontWeight: 800, letterSpacing: '.12em', color: 'var(--color-text-tertiary)' }}>{section}</div>}
+              <NavButton icon={<Icon size={17} strokeWidth={1.9} />} label={label} badge={badge}
               active={adminTab ? currentPage === 'admin' && adminNavKey === label : supportAction || aviationAction ? false : currentPage === page} onClick={() => {
                   setAvatarOpen(false)
                   setNotificationsOpen(false)
@@ -598,8 +605,8 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
             />}
             <button onClick={() => setDarkMode(value => !value)} aria-label={darkMode ? 'Use light mode' : 'Use dark mode'} title={darkMode ? 'Use light mode' : 'Use dark mode'} style={{ width: 32, height: 32, display: 'grid', placeItems: 'center', border: '1px solid var(--color-border-primary)', borderRadius: 9, background: darkMode ? 'var(--color-brand-muted)' : 'var(--color-surface-bg)', color: darkMode ? 'var(--color-brand-primary)' : 'var(--color-text-secondary)', cursor: 'pointer', transition: 'all 150ms ease' }}>{darkMode ? <Sun size={16} /> : <Moon size={16} />}</button>
             <div style={{ position: 'relative' }}>
-              <button onClick={() => setNotificationsOpen(v => !v)} aria-label="Notifications" title="Notifications" style={{ position: 'relative', width: 32, height: 32, display: 'grid', placeItems: 'center', border: '1px solid var(--color-border-primary)', background: 'var(--color-surface-bg)', color: 'var(--color-text-secondary)', borderRadius: 9, cursor: 'pointer' }}><Bell size={16} />{notifications.some(item => !item.read) && <span style={{ position: 'absolute', right: -3, top: -5, minWidth: 15, height: 15, padding: '0 3px', borderRadius: 99, background: '#e33c3c', color: '#fff', fontSize: 9, fontWeight: 800, display: 'grid', placeItems: 'center' }}>{notifications.filter(item => !item.read).length}</span>}</button>
-              {notificationsOpen && <div style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, width: 290, padding: 14, background: 'var(--color-surface-bg)', border: '1px solid var(--color-border-primary)', borderRadius: 12, boxShadow: 'var(--shadow-floating)', zIndex: 160 }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><b style={{ fontSize: 13, color: 'var(--color-text-primary)' }}>Notifications</b><div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><button onClick={() => markNotificationsRead()} style={{ border: 0, background: 'none', color: 'var(--color-brand-primary)', cursor: 'pointer', fontSize: 10, fontWeight: 700 }}>Mark all read</button><button onClick={() => setNotificationsOpen(false)} style={{ border: 0, background: 'none', color: 'var(--color-text-tertiary)', cursor: 'pointer' }}><X size={14} /></button></div></div>{notifications.length === 0 ? <p style={{ margin: '12px 0 0', fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>No new notifications.</p> : <div style={{ display: 'grid', gap: 9, marginTop: 12 }}>{notifications.map(item => <button key={item.id} onClick={() => !item.read && markNotificationsRead([item.id])} style={{ padding: 9, borderRadius: 9, background: item.read ? 'var(--color-surface-secondary)' : 'var(--color-brand-muted)', border: 0, textAlign: 'left', cursor: item.read ? 'default' : 'pointer' }}><div style={{ fontSize: 11, fontWeight: 800, color: 'var(--color-text-primary)' }}>{item.title}</div><div style={{ marginTop: 3, fontSize: 11, lineHeight: 1.4, color: 'var(--color-text-secondary)' }}>{item.message}</div></button>)}</div>}</div>}
+              <button onClick={() => setNotificationsOpen(v => !v)} aria-label="Notifications" title="Notifications" style={{ position: 'relative', width: 32, height: 32, display: 'grid', placeItems: 'center', border: '1px solid var(--color-border-primary)', background: 'var(--color-surface-bg)', color: 'var(--color-text-secondary)', borderRadius: 9, cursor: 'pointer' }}><Bell size={16} />{notificationUnreadCount > 0 && <span style={{ position: 'absolute', right: -3, top: -5, minWidth: 15, height: 15, padding: '0 3px', borderRadius: 99, background: '#e33c3c', color: '#fff', fontSize: 9, fontWeight: 800, display: 'grid', placeItems: 'center' }}>{notificationUnreadCount > 99 ? '99+' : notificationUnreadCount}</span>}</button>
+              {notificationsOpen && <div role="dialog" aria-label="Notifications" style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, width: 290, padding: 14, background: 'var(--color-surface-bg)', border: '1px solid var(--color-border-primary)', borderRadius: 12, boxShadow: 'var(--shadow-floating)', zIndex: 160 }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><b style={{ fontSize: 13, color: 'var(--color-text-primary)' }}>Notifications</b><div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><button onClick={() => void markNotificationsRead()} disabled={notificationUnreadCount === 0} style={{ border: 0, background: 'none', color: 'var(--color-brand-primary)', cursor: 'pointer', fontSize: 10, fontWeight: 700, opacity: notificationUnreadCount ? 1 : .5 }}>Mark all read</button><button onClick={() => setNotificationsOpen(false)} aria-label="Close notifications" style={{ border: 0, background: 'none', color: 'var(--color-text-tertiary)', cursor: 'pointer' }}><X size={14} /></button></div></div>{notificationError ? <p role="alert" style={{ margin: '12px 0 0', fontSize: 12, color: 'var(--color-danger)', lineHeight: 1.5 }}>{notificationError}</p> : notifications.length === 0 ? <p style={{ margin: '12px 0 0', fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>No notifications yet.</p> : <div style={{ display: 'grid', gap: 9, marginTop: 12 }}>{notifications.map(item => <button key={item.id} onClick={() => { if (!item.read) void markNotificationsRead([item.id]) }} style={{ padding: 9, borderRadius: 9, background: item.read ? 'var(--color-surface-secondary)' : 'var(--color-brand-muted)', border: 0, textAlign: 'left', cursor: item.read ? 'default' : 'pointer' }}><div style={{ fontSize: 11, fontWeight: 800, color: 'var(--color-text-primary)' }}>{item.title}</div><div style={{ marginTop: 3, fontSize: 11, lineHeight: 1.4, color: 'var(--color-text-secondary)' }}>{item.message}</div><time style={{ display: 'block', marginTop: 4, fontSize: 10, color: 'var(--color-text-tertiary)' }}>{new Date(item.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</time></button>)}</div>}</div>}
             </div>
             <button
               onClick={() => { setNotificationsOpen(false); setAvatarOpen(false); setSupportMode('settings') }}

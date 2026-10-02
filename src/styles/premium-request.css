@@ -1,0 +1,7 @@
+.premium-request-content { min-width: 0; color: var(--color-text-primary); text-align: left; }
+.premium-request-benefit { display: flex; align-items: center; gap: 9px; text-align: left; line-height: 1.5; }
+.premium-request-benefit > svg { display: block; flex: 0 0 16px; color: var(--color-success); }
+.premium-request-benefit > span { display: inline; }
+.premium-request-footer { display: flex; justify-content: flex-end; align-items: center; gap: 10px; width: 100%; }
+.premium-request-footer button { min-height: 40px; }
+@media (max-width: 480px) { .premium-request-footer button { flex: 1; padding-left: 12px; padding-right: 12px; font-size: 12px; } }

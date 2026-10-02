@@ -8,7 +8,7 @@ function Test-LocalPort([int]$Port) {
 if (-not (Test-LocalPort 8000)) {
   $python = Join-Path $projectRoot 'backend\.venv\Scripts\python.exe'
   if (-not (Test-Path -LiteralPath $python)) { $python = 'python' }
-  Start-Process -FilePath $python -ArgumentList '-m','uvicorn','main:app','--host','127.0.0.1','--port','8000' `
+  Start-Process -FilePath $python -ArgumentList '-m','uvicorn','main:app','--host','127.0.0.1','--port','8000','--reload' `
     -WorkingDirectory (Join-Path $projectRoot 'backend') -WindowStyle Hidden
 }
 

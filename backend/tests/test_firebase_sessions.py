@@ -51,12 +51,19 @@ async def test_google_session_works_without_private_service_account(firebase_sig
 
 @pytest.mark.parametrize("overrides", [
     {"aud": "another-project"}, {"iss": "https://attacker.example"},
-    {"exp": 1}, {"email_verified": False}, {"sub": ""}, {"auth_time": 9999999999},
+    {"exp": 1}, {"sub": ""}, {"auth_time": 9999999999},
 ])
 async def test_reject_invalid_identity_claims(firebase_signer, overrides):
     with pytest.raises(HTTPException) as exc:
         await firebase_tokens.verify_firebase_identity(firebase_signer(**overrides))
     assert exc.value.status_code == 401
+
+
+async def test_unverified_email_has_actionable_error_instead_of_session_expired(firebase_signer):
+    with pytest.raises(HTTPException) as exc:
+        await firebase_tokens.verify_firebase_identity(firebase_signer(email_verified=False))
+    assert exc.value.status_code == 403
+    assert "verify your email address" in exc.value.detail
 
 
 async def test_government_role_comes_from_server_allowlist(firebase_signer, monkeypatch):
