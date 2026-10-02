@@ -18,9 +18,10 @@ export const BASE_URL = import.meta.env.DEV
   ? ((import.meta.env.VITE_API_URL as string | undefined)
       ?.replace(/\/$/, '')
       .replace(/\/api$/, '') || 'http://localhost:8000')
-  : ((import.meta.env.VITE_API_URL as string | undefined)
-      ?.replace(/\/$/, '')
-      .replace(/\/api$/, '') || 'https://aero-price-production-6osm.onrender.com')
+  // The Vercel deployment serves FastAPI under its own `/api` rewrite.  Do
+  // not fall back to the retired Render host: it has a different database and
+  // produces slow requests / 404s for current admin routes.
+  : ''
 
 // Protected API calls can outlive the browser auth token. Keep the UI from
 // presenting a stale authenticated shell with empty data when the backend
