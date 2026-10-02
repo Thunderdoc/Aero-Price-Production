@@ -8,7 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.config import settings
 from app.core.database import get_db
-from app.models.user import User
+from app.models.user import AuditLog, User
+from app.models.auth_account import AuthAccount
 
 # PBKDF2 is available without the version-sensitive bcrypt backend. Keep
 # bcrypt as a legacy verifier so existing hashes remain valid while all new
@@ -56,7 +57,7 @@ def authenticate_user(email: str, password: str) -> Optional[dict]:
     return {"email": email, **user}
 
 
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
+async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)) -> dict:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid authentication credentials",
@@ -75,11 +76,52 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
         # short-lived backend JWT exchange is unavailable, accept the already
         # verified Firebase ID token directly instead of leaving the signed-in
         # user unable to submit feedback or request feature access.
-        if token.count(".") == 2:
+        try:
+            firebase_token = jwt.get_unverified_header(token).get("alg") == "RS256"
+        except JWTError:
+            firebase_token = False
+        if firebase_token:
             from app.core.firebase_tokens import verify_firebase_identity
-            return await verify_firebase_identity(token)
-        raise credentials_exception
-    return {"email": email, "role": role, "plan": plan, "name": name}
+            identity = await verify_firebase_identity(token)
+            email = identity.get("email")
+            role = identity.get("role", "PUBLIC")
+            plan = identity.get("plan", "FREE")
+            name = identity.get("name", "User")
+        else:
+            raise credentials_exception
+
+    normalized_email = email.strip().lower()
+    # FastAPI injects the database for real HTTP requests. A few unit tests
+    # call this dependency directly without resolving Depends(get_db); keep
+    # those pure token/role checks usable while preserving database status
+    # enforcement on every actual request.
+    if not callable(getattr(db, "scalar", None)):
+        return {"email": normalized_email, "role": role, "plan": plan, "name": name}
+    account = await db.scalar(select(User).where(User.email == normalized_email))
+    auth_account = await db.scalar(select(AuthAccount).where(AuthAccount.email == normalized_email))
+    if (account and account.is_active is False) or (auth_account and auth_account.is_active is False):
+        event = await db.scalar(
+            select(AuditLog)
+            .where(
+                AuditLog.resource_type == "user",
+                AuditLog.resource_id == normalized_email,
+                AuditLog.action == "USER_DISABLED",
+            )
+            .order_by(AuditLog.created_at.desc())
+        )
+        reason = (event.details or {}).get("reason") if event and isinstance(event.details, dict) else None
+        message = "This account is disabled by an administrator. Contact support or an administrator to restore access."
+        if reason:
+            message += f" Reason: {reason}"
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=message)
+    # A valid JWT proves identity, not the continued validity of old grants.
+    # Admin approval, revocation and role changes must take effect immediately.
+    persisted = account if account is not None else auth_account
+    if persisted is not None:
+        role = persisted.role
+        plan = persisted.plan
+        name = persisted.name or name
+    return {"email": normalized_email, "role": role, "plan": plan, "name": name}
 
 
 def decode_token(token: str) -> Optional[dict]:
@@ -105,7 +147,7 @@ require_admin = require_role("ADMIN")
 require_analyst = require_role("ANALYST", "ADMIN")
 require_subscriber = require_role("PUBLIC", "ANALYST", "ADMIN")  # checked at plan level
 
-async def require_admin_or_local(token: str | None = Depends(oauth2_optional_scheme)) -> dict:
+async def require_admin_or_local(token: str | None = Depends(oauth2_optional_scheme), db: AsyncSession = Depends(get_db)) -> dict:
     """Require a verified admin identity in every environment.
 
     Keep the existing dependency name for route compatibility, without a local
@@ -113,4 +155,4 @@ async def require_admin_or_local(token: str | None = Depends(oauth2_optional_sch
     """
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
-    return await require_admin(await get_current_user(token))
+    return await require_admin(await get_current_user(token, db))

@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { AlertCircle, ArrowRight, CheckCircle, Eye, EyeOff, Lock, Mail, Plane, ShieldCheck, User, Users } from 'lucide-react'
 import { useAuth, type AuthWorkspace, type UserRole } from '../contexts/AuthContext'
 import type { Page } from '../components/AppShell'
+import { getFirebaseAuth, resendFirebaseVerification } from '../services/firebase'
 
 type AuthRole = 'USER' | 'DGCA' | 'ADMIN'
 const airportBg = '/airport-login-bg.jpg'
@@ -56,7 +57,7 @@ function isValidEmail(value: string) {
 
 function safeAuthError(message?: string) {
   if (!message) return 'Incorrect email or password.'
-  if (/not authorized|workspace|Google sign-in|Firebase|too many requests|session verification failed|backend sign-in failed/i.test(message)) return message
+  if (/not authorized|workspace|Google sign-in|Firebase|too many (?:requests|login attempts|sign-in attempts)|verification|verify your email|backend sign-in failed|timed out|this account is disabled/i.test(message)) return message
   if (/network|fetch|connect/i.test(message)) return 'Unable to connect. Please try again.'
   return 'Incorrect email or password.'
 }
@@ -68,16 +69,45 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
   const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
   const [pass, setPass] = useState('')
-  const [rememberMe, setRememberMe] = useState(true)
+  // Do not retain a personal account on a shared device unless the person
+  // deliberately opts in. Password values are never stored by this app.
+  const [rememberMe, setRememberMe] = useState(false)
   const [showPass, setShowPass] = useState(false)
   const [loading, setLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
   const [resetLoading, setResetLoading] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError] = useState(() => {
+    const disabledNotice = localStorage.getItem('aeroprice_disabled_account_notice') || sessionStorage.getItem('aeroprice_auth_notice') || ''
+    localStorage.removeItem('aeroprice_disabled_account_notice')
+    sessionStorage.removeItem('aeroprice_auth_notice')
+    return disabledNotice
+  })
   const [notice, setNotice] = useState('')
+  const [needsVerification, setNeedsVerification] = useState(false)
+
+  useEffect(() => {
+    const showAuthNotice = (event: Event) => setError((event as CustomEvent<string>).detail)
+    window.addEventListener('aeroprice-auth-notice', showAuthNotice)
+    return () => window.removeEventListener('aeroprice-auth-notice', showAuthNotice)
+  }, [])
+
+  async function resendVerification() {
+    if (authBusy) return
+    setResetLoading(true)
+    try { setNotice(await resendFirebaseVerification()) }
+    catch (failure) { setError(failure instanceof Error ? failure.message : 'Verification email could not be sent. Please retry.') }
+    finally { setResetLoading(false) }
+  }
+
+  useEffect(() => {
+    // Initialize Firebase persistence while the user fills in the form, not
+    // after Submit. This does not authenticate or change account permissions.
+    try { getFirebaseAuth() } catch { /* The selected login action reports configuration errors. */ }
+  }, [])
 
   const role = ROLE_CONFIG[activeRole]
   const workspace = activeRole as AuthWorkspace
+  const authBusy = loading || googleLoading || resetLoading
 
   const submitLabel = useMemo(
     () => (loading ? role.loadingLabel : role.buttonLabel),
@@ -87,10 +117,12 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
   function resetFeedback() {
     setError('')
     setNotice('')
+    setNeedsVerification(false)
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (authBusy) return
     resetFeedback()
 
     const trimmedEmail = email.trim()
@@ -125,7 +157,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
       }
       setAuthMode('login')
       setPass('')
-      setNotice(`Account created for ${trimmedEmail}. You can sign in now.`)
+      setNotice(`Verification email sent to ${trimmedEmail}. Open the link first, then return here to sign in.`)
       return
     }
 
@@ -134,7 +166,12 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
     setLoading(false)
 
     if (!result.success) {
-      setError(result.error?.includes('verified') || result.error?.includes('Firebase') ? result.error : safeAuthError(result.error))
+      if (/verify|verified/i.test(result.error || '')) {
+        setNeedsVerification(true)
+        setNotice('Verify your email address using the link we sent, then sign in again.')
+      } else {
+        setError(safeAuthError(result.error))
+      }
       return
     }
 
@@ -149,6 +186,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
   }
 
   async function handleGoogleAuth() {
+    if (authBusy) return
     resetFeedback()
     setGoogleLoading(true)
     const result = await loginWithGoogle(workspace, pass)
@@ -156,8 +194,8 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
     if (result.success) {
       const stored = localStorage.getItem('aeroprice_auth')
       const authedRole = stored ? JSON.parse(stored).role as UserRole : null
-      // Redirect-based Google auth navigates away before the Firebase result
-      // can be stored. The AuthProvider restores it when the app returns.
+      // Redirect sign-in navigates away; AuthProvider restores the verified
+      // Firebase session when it returns.
       if (!stored) return
       if (!authedRole || !role.expectedRoles.includes(authedRole)) {
         logout()
@@ -172,6 +210,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
 
   async function handleForgotPassword(e: React.MouseEvent<HTMLAnchorElement>) {
     e.preventDefault()
+    if (authBusy) return
     resetFeedback()
     if (!email.trim()) {
       setError('Enter your email address before requesting a reset.')
@@ -841,6 +880,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
                 type="button"
                 role="tab"
                 aria-selected={activeRole === key}
+                disabled={authBusy}
                 className={`ap-tab${activeRole === key ? ' active' : ''}`}
                 onClick={() => { setActiveRole(key); localStorage.setItem(WORKSPACE_STORAGE_KEY, key); if (key === 'ADMIN') setAuthMode('login'); resetFeedback() }}
               >
@@ -850,9 +890,9 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           </div>
 
           <div className="ap-mode-toggle" aria-label="Choose auth mode">
-            <button type="button" className={authMode === 'login' ? 'active' : ''} onClick={() => { setAuthMode('login'); resetFeedback() }}>Sign in</button>
+            <button type="button" disabled={authBusy} className={authMode === 'login' ? 'active' : ''} onClick={() => { setAuthMode('login'); resetFeedback() }}>Sign in</button>
             {activeRole !== 'ADMIN' && (
-              <button type="button" className={authMode === 'create' ? 'active' : ''} onClick={() => { setAuthMode('create'); resetFeedback() }}>Create account</button>
+              <button type="button" disabled={authBusy} className={authMode === 'create' ? 'active' : ''} onClick={() => { setAuthMode('create'); resetFeedback() }}>Create account</button>
             )}
             {activeRole === 'ADMIN' && (
               <button type="button" disabled style={{ opacity: 0.45, cursor: 'not-allowed' }}>Admin by invite</button>
@@ -865,6 +905,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
               <span>{error}</span>
             </div>
           )}
+          {needsVerification && <button type="button" className="ap-google" onClick={() => void resendVerification()} disabled={authBusy} style={{ margin: '0 0 12px', width: '100%' }}><Mail size={17} /><span>{resetLoading ? 'Sending verification…' : 'Resend verification email'}</span></button>}
           {notice && (
             <div className="ap-message notice" role="status">
               <CheckCircle size={17} aria-hidden="true" />
@@ -872,7 +913,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
             </div>
           )}
 
-          <form onSubmit={handleSubmit} noValidate>
+          <form onSubmit={handleSubmit} noValidate autoComplete="off">
             {authMode === 'create' && (
               <div className="ap-field">
                 <label htmlFor="ap-name">Full Name</label>
@@ -899,7 +940,9 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
                   className="ap-input"
                   type="email"
                   inputMode="email"
-                  autoComplete="email"
+                  autoComplete="off"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder={role.emailPlaceholder}
@@ -915,7 +958,9 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
                   id="ap-password"
                   className="ap-input"
                   type={showPass ? 'text' : 'password'}
-                  autoComplete={authMode === 'create' ? 'new-password' : 'current-password'}
+                  autoComplete="new-password"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
                   value={pass}
                   onChange={(e) => setPass(e.target.value)}
                   placeholder="Enter your password"
@@ -941,13 +986,13 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
               </a> : <button type="button" onClick={() => { setAuthMode('login'); resetFeedback() }} style={{ border: 0, background: 'transparent', color: '#075be8', fontWeight: 750, cursor: 'pointer', padding: 0 }}>Have an account?</button>}
             </div>
 
-            <button className="ap-submit" type="submit" disabled={loading}>
+            <button className="ap-submit" type="submit" disabled={authBusy}>
               {authMode === 'create' ? (loading ? 'Creating account...' : 'Create Account') : submitLabel}
               {!loading && <ArrowRight size={19} aria-hidden="true" />}
             </button>
           </form>
 
-          <button className="ap-google" type="button" onClick={handleGoogleAuth} disabled={googleLoading}>
+          <button className="ap-google" type="button" onClick={handleGoogleAuth} disabled={authBusy}>
               <svg width="19" height="19" viewBox="0 0 24 24" aria-hidden="true">
                 <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
                 <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />

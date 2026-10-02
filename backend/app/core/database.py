@@ -30,7 +30,7 @@ class Base(DeclarativeBase):
 # shared by all of them, so DDL must be serialized across PostgreSQL
 # connections rather than run independently from each worker's lifespan.
 _POSTGRES_SCHEMA_LOCK = 260956056
-_POSTGRES_SCHEMA_VERSION = 2
+_POSTGRES_SCHEMA_VERSION = 5
 _tables_initialized = False
 
 
@@ -59,6 +59,19 @@ async def create_all_tables():
             )
         await conn.run_sync(Base.metadata.create_all)
 
+        if conn.dialect.name == "sqlite":
+            # SQLite create_all does not add columns to an existing table.
+            columns = await conn.exec_driver_sql("PRAGMA table_info(feature_access_requests)")
+            if "request_message" not in {row[1] for row in columns.fetchall()}:
+                await conn.execute(text(
+                    "ALTER TABLE feature_access_requests ADD COLUMN request_message TEXT"
+                ))
+            feedback_columns = await conn.exec_driver_sql("PRAGMA table_info(user_feedback_details)")
+            if "internal_notes" not in {row[1] for row in feedback_columns.fetchall()}:
+                await conn.execute(text(
+                    "ALTER TABLE user_feedback_details ADD COLUMN internal_notes TEXT"
+                ))
+
         if conn.dialect.name == "postgresql":
             # Keep the DDL one-time after the lock is acquired.  Repeating
             # ALTER TABLE on every serverless worker is unnecessary and can
@@ -75,6 +88,12 @@ async def create_all_tables():
             ))
             current_version = result.scalar_one_or_none()
             if current_version != _POSTGRES_SCHEMA_VERSION:
+                await conn.execute(text(
+                    "ALTER TABLE feature_access_requests ADD COLUMN IF NOT EXISTS request_message TEXT"
+                ))
+                await conn.execute(text(
+                    "ALTER TABLE user_feedback_details ADD COLUMN IF NOT EXISTS internal_notes TEXT"
+                ))
                 # Render deployments may already contain the original
                 # source_health table. create_all() does not alter existing
                 # tables, so add telemetry columns introduced later.

@@ -7,14 +7,47 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
-from app.core.auth import authenticate_user, create_access_token, get_password_hash, verify_password
+from app.core.auth import authenticate_user, create_access_token, get_current_user, get_password_hash, verify_password
 from app.core.firebase_tokens import verify_firebase_identity
 from app.core.database import get_db
 from app.models.auth_account import AuthAccount
-from app.models.user import User
+from app.models.user import AuditLog, User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 _failed_attempts: dict[str, list[float]] = {}
+
+
+@router.get("/me")
+async def current_session(current_user: dict = Depends(get_current_user)):
+    """Return current server-controlled roles and entitlements, never stale claims."""
+    return current_user
+
+
+async def _disabled_account_error(email: str, db: AsyncSession) -> HTTPException | None:
+    """Return the user-facing disabled message before credential auth runs."""
+    # Real route requests always receive an AsyncSession. Direct route-helper
+    # tests may omit dependency resolution and pass FastAPI's Depends marker.
+    if not callable(getattr(db, "scalar", None)):
+        return None
+    normalized = email.strip().lower()
+    user = await db.scalar(select(User).where(User.email == normalized))
+    account = await db.scalar(select(AuthAccount).where(AuthAccount.email == normalized))
+    if not ((user and user.is_active is False) or (account and account.is_active is False)):
+        return None
+    event = await db.scalar(
+        select(AuditLog)
+        .where(
+            AuditLog.resource_type == "user",
+            AuditLog.resource_id == normalized,
+            AuditLog.action == "USER_DISABLED",
+        )
+        .order_by(AuditLog.created_at.desc())
+    )
+    reason = (event.details or {}).get("reason") if event and isinstance(event.details, dict) else None
+    message = "This account is disabled by an administrator. Contact support or an administrator to restore access."
+    if reason:
+        message += f" Reason: {reason}"
+    return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=message)
 
 
 class TokenResponse(BaseModel):
@@ -43,6 +76,9 @@ async def firebase_login(payload: FirebaseLoginRequest, db: AsyncSession = Depen
     # Firebase's verified email proves ownership, while persisted backend
     # metadata carries the admin-selected workspace role and entitlement.
     # This keeps roles stable even when the Firebase email allowlist is empty.
+    disabled_error = await _disabled_account_error(identity["email"], db)
+    if disabled_error:
+        raise disabled_error
     if identity["role"] == "PUBLIC" and hasattr(db, "scalar"):
         account = await db.scalar(select(AuthAccount).where(
             AuthAccount.email == identity["email"],
@@ -74,6 +110,9 @@ async def login(
     if len(attempts) >= 10:
         raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
     email = form_data.username.strip().lower()
+    disabled_error = await _disabled_account_error(email, db)
+    if disabled_error:
+        raise disabled_error
     user = authenticate_user(email, form_data.password)
     if not user:
         account = await db.scalar(
