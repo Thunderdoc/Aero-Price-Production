@@ -86,6 +86,13 @@ class Settings(BaseSettings):
     AVIATIONSTACK_API_KEY: str = ""
     CARTO_API_KEY: str = ""
 
+    # Optional WhatsApp bridge. OpenWA runs as a separate Node process/service;
+    # the FastAPI backend only calls its HTTP bridge when explicitly enabled.
+    WHATSAPP_NOTIFICATIONS_ENABLED: bool = False
+    WHATSAPP_BRIDGE_URL: str = ""
+    WHATSAPP_BRIDGE_TOKEN: str = ""
+    WHATSAPP_ADMIN_TO: str = ""
+
     # Server-side search providers. Never expose these as VITE_* browser vars.
     SERPER_API_KEY: str = ""
     SERPAPI_API_KEY: str = ""

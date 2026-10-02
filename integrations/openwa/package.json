@@ -1,0 +1,13 @@
+{
+  "name": "aeroprice-openwa-bridge",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Optional OpenWA bridge for AeroPrice WhatsApp notifications.",
+  "scripts": {
+    "start": "node server.cjs"
+  },
+  "dependencies": {
+    "@open-wa/wa-automate": "github:rmyndharis/OpenWA#022f4bc97fca9139b0b14bf3eeae1fc0fac3a91a",
+    "express": "^4.19.2"
+  }
+}

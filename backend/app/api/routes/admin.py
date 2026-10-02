@@ -24,6 +24,7 @@ from app.models.feedback import UserFeedback, FeedbackDetails
 from app.models.access import FeatureAccessRequest, UserFeatureAccess, UserNotification, PriceAlert
 from app.services.anomaly_detector import detect_anomalies, get_anomaly_summary
 from app.services.price_alerts import evaluate_price_alerts
+from app.services.whatsapp import notify_admins
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -629,6 +630,7 @@ async def create_feedback(
     admins.update((await db.execute(select(AuthAccount.email).where(AuthAccount.role == "ADMIN", AuthAccount.is_active == True))).scalars())
     for email in admins - {entry.user_email}:
         db.add(UserNotification(user_email=email.lower(), title="New feedback", message=f"{entry.user_name} submitted feedback: {(payload.title or message[:100]).strip()}"))
+    await notify_admins(f"New AeroPrice feedback from {entry.user_name} ({entry.user_email}): {(payload.title or message[:140]).strip()}")
     await db.flush()
     return {"id": entry.id, "status": entry.status, "created_at": _utc_iso(entry.created_at)}
 
@@ -952,6 +954,7 @@ async def create_access_request(
         resource_id=entry.id,
         details={"target_email": email, "feature_key": entry.feature_key, "requested_plan": "PREMIUM" if entry.feature_key == "PRICE_ALERTS" else None},
     ))
+    await notify_admins(f"New AeroPrice Premium access request from {entry.user_name} ({entry.user_email}) for {entry.feature_name}.")
     await db.flush()
     return _access_request_dict(entry)
 
