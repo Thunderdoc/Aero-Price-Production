@@ -425,12 +425,12 @@ export default function AuditTrail({
           export apply to the loaded events.
         </p>
       )}
-      {!loaded || (loading && !records.length) ? (
-        <div className="audit-empty">
-          <RefreshCw className="spin" />
-          <strong>Loading audit trail…</strong>
-        </div>
-      ) : error && !records.length ? (
+      {loading && (
+        <p className="audit-retention-note" role="status">
+          Refreshing audit trail...
+        </p>
+      )}
+      {error && !records.length ? (
         <div className="audit-empty">
           <strong>Audit events unavailable</strong>
           <span>{error}</span>
@@ -441,8 +441,12 @@ export default function AuditTrail({
       ) : !filtered.length ? (
         <div className="audit-empty">
           <Search />
-          <strong>No matching events</strong>
-          <span>Try another search or filter.</span>
+          <strong>{loaded ? "No matching events" : "No audit events shown yet"}</strong>
+          <span>
+            {loaded
+              ? "Try another search or filter."
+              : "The latest audit events will appear here as soon as the server responds."}
+          </span>
         </div>
       ) : (
         <>

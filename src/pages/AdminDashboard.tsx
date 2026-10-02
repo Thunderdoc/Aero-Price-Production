@@ -3083,22 +3083,13 @@ export default function AdminDashboard() {
               </Button>
             </div>
           )}
-          {accessLoading && accessRequests.length > 0 && (
+          {accessLoading && (
             <div className="admin-directory-sync" role="status">
               <RefreshCw size={13} className="spin" /> Refreshing requests…
             </div>
           )}
           <div className="admin-access-panel">
-            {accessLoading && accessRequests.length === 0 ? (
-              <div className="premium-access-loading" role="status" aria-label="Loading Premium access requests">
-                {[0, 1, 2].map((item) => <div className="premium-access-loading-card" key={item} aria-hidden="true"><span className="skeleton" /><div><i className="skeleton" /><i className="skeleton" /></div><span className="skeleton" /><span className="skeleton" /></div>)}
-              </div>
-            ) : !accessLoaded ? (
-              <div className="admin-empty-state">
-                <RefreshCw size={18} className="spin" />
-                <strong>Preparing access requests…</strong>
-              </div>
-            ) : accessError && accessRequests.length === 0 ? (
+            {accessError && accessRequests.length === 0 ? (
               <div className="admin-empty-state">
                 <AlertTriangle size={22} />
                 <strong>Premium requests are temporarily unavailable</strong>
@@ -3109,9 +3100,11 @@ export default function AdminDashboard() {
             ) : accessRequests.length === 0 && !accessError ? (
               <div className="admin-empty-state">
                 <ShieldCheck size={22} />
-                <strong>No Premium requests yet</strong>
+                <strong>{accessLoaded ? "No Premium requests yet" : "No Premium requests shown yet"}</strong>
                 <span>
-                  New Premium upgrade requests from users will appear here for administrator review.
+                  {accessLoaded
+                    ? "New Premium upgrade requests from users will appear here for administrator review."
+                    : "The live request queue will appear here as soon as the server responds."}
                 </span>
               </div>
             ) : filteredAccessRequests.length === 0 && !accessError ? (
@@ -4145,23 +4138,12 @@ export default function AdminDashboard() {
               </Button>
             </div>
           )}
-          {feedbackLoading && feedback.length > 0 && (
+          {feedbackLoading && (
             <div className="admin-directory-sync" role="status">
               <RefreshCw size={13} className="spin" /> Refreshing feedback…
             </div>
           )}
-          {feedbackLoading && feedback.length === 0 ? (
-            <div className="admin-empty-state">
-              <RefreshCw size={18} className="spin" />
-              <strong>Loading feedback…</strong>
-              <span>Fetching messages from the authenticated backend.</span>
-            </div>
-          ) : !feedbackLoaded ? (
-            <div className="admin-empty-state">
-              <RefreshCw size={18} className="spin" />
-              <strong>Preparing feedback…</strong>
-            </div>
-          ) : feedbackError && feedback.length === 0 ? (
+          {feedbackError && feedback.length === 0 ? (
             <div className="admin-empty-state">
               <AlertTriangle size={22} />
               <strong>Feedback unavailable</strong>
@@ -4172,10 +4154,11 @@ export default function AdminDashboard() {
           ) : feedback.length === 0 && !feedbackError ? (
             <div className="admin-empty-state">
               <MessageSquare size={22} />
-              <strong>No feedback yet</strong>
+              <strong>{feedbackLoaded ? "No feedback yet" : "No feedback shown yet"}</strong>
               <span>
-                Messages submitted from the user dashboard will appear here for
-                review.
+                {feedbackLoaded
+                  ? "Messages submitted from the user dashboard will appear here for review."
+                  : "The live feedback queue will appear here as soon as the server responds."}
               </span>
             </div>
           ) : filteredFeedback.length === 0 && !feedbackError ? (
