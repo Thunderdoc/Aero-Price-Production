@@ -55,6 +55,7 @@ export function clearApiAuthSession() {
 // making a page look current when its verified snapshot is old.
 const READ_SNAPSHOT_MAX_AGE_MS = 30_000
 const READ_SNAPSHOT_PREFIX = 'aeroprice:api-snapshot:'
+const API_REQUEST_TIMEOUT_MS = 12_000
 
 function readPersistedSnapshot<T>(cacheKey: string): T | undefined {
   if (typeof window === 'undefined') return undefined
@@ -88,6 +89,16 @@ function isFirebaseIdToken(token?: string): boolean {
   }
 }
 
+function tokenSubject(token?: string): string {
+  if (!token) return 'public'
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
+    return String(payload?.sub || payload?.email || 'auth').trim().toLowerCase() || 'auth'
+  } catch {
+    return 'auth'
+  }
+}
+
 // ── Auth ───────────────────────────────────────────────────────────────────
 
 export interface ApiUser {
@@ -101,6 +112,20 @@ export interface TokenResponse {
   access_token: string
   token_type: string
   user: ApiUser
+}
+
+function snapshotKey(method: string, path: string, token?: string): string | null {
+  if (method !== 'GET') return null
+  if (!token) return `${method}:${path}:public`
+  if (
+    path.startsWith('/api/admin/') ||
+    path.startsWith('/api/access-requests') ||
+    path.startsWith('/api/feedback/mine') ||
+    path.startsWith('/api/notifications')
+  ) {
+    return `${method}:${path}:auth:${tokenSubject(token)}`
+  }
+  return null
 }
 
 async function authRequest(path: string, init: RequestInit, failureLabel: string): Promise<TokenResponse> {
@@ -164,47 +189,60 @@ export async function apiCurrentUser(token: string): Promise<ApiUser> {
 }
 
 async function fetchWithAuthRefresh(url: string, token?: string, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), API_REQUEST_TIMEOUT_MS)
   const requestInit: RequestInit = {
     ...init,
     cache: 'no-store',
+    signal: init?.signal ?? controller.signal,
     headers: { ...authHeaders(token), ...(init?.headers ?? {}) },
   }
-  let response = await fetch(url, requestInit)
-  if (response.status === 401 && token && (authTokenRefresher || renewedTokens.has(token))) {
-    let refresh = authRefreshInFlight.get(token)
-    if (!refresh) {
-      refresh = renewedTokens.has(token)
-        ? Promise.resolve(renewedTokens.get(token)!)
-        : authTokenRefresher!(token).catch(() => null)
-      authRefreshInFlight.set(token, refresh)
-      void refresh.finally(() => authRefreshInFlight.delete(token)).catch(() => undefined)
+  try {
+    let response = await fetch(url, requestInit)
+    if (response.status === 401 && token && (authTokenRefresher || renewedTokens.has(token))) {
+      let refresh = authRefreshInFlight.get(token)
+      if (!refresh) {
+        refresh = renewedTokens.has(token)
+          ? Promise.resolve(renewedTokens.get(token)!)
+          : authTokenRefresher!(token).catch(() => null)
+        authRefreshInFlight.set(token, refresh)
+        void refresh.finally(() => authRefreshInFlight.delete(token)).catch(() => undefined)
+      }
+      const nextToken = await refresh
+      if (nextToken && nextToken !== token) {
+        renewedTokens.set(token, nextToken)
+        if (renewedTokens.size > 16) renewedTokens.delete(renewedTokens.keys().next().value!)
+        response = await fetch(url, {
+          ...requestInit,
+          headers: { ...authHeaders(nextToken), ...(init?.headers ?? {}) },
+        })
+      }
     }
-    const nextToken = await refresh
-    if (nextToken && nextToken !== token) {
-      renewedTokens.set(token, nextToken)
-      if (renewedTokens.size > 16) renewedTokens.delete(renewedTokens.keys().next().value!)
-      response = await fetch(url, {
-        ...requestInit,
-        headers: { ...authHeaders(nextToken), ...(init?.headers ?? {}) },
-      })
+    if (response.status === 401 && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { token } }))
     }
+    return response
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error('The server is taking too long to respond. Please retry in a moment.')
+    }
+    throw error
+  } finally {
+    clearTimeout(timeout)
   }
-  if (response.status === 401 && typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { token } }))
-  }
-  return response
 }
 
 async function apiFetch<T>(path: string, token?: string, init?: RequestInit, forceNetwork = false): Promise<T> {
   const method = (init?.method || 'GET').toUpperCase()
   const cacheKey = `${method}:${path}:${token || 'public'}`
+  const persistedKey = snapshotKey(method, path, token)
   if (method === 'GET') {
     const cached = readCache.get(cacheKey)
     if (!forceNetwork && cached && cached.expires > Date.now()) return cached.value as T
     // A recent public snapshot prevents the empty-state flash on a cold
     // serverless wake-up. The next explicit refresh still fetches truth.
-    if (!forceNetwork && !token) {
-      const snapshot = readPersistedSnapshot<T>(cacheKey)
+    if (!forceNetwork && persistedKey) {
+      const snapshot = readPersistedSnapshot<T>(persistedKey)
       if (snapshot !== undefined) {
         readCache.set(cacheKey, { expires: Date.now() + READ_CACHE_TTL_MS, value: snapshot })
         // Render verified data immediately, then refresh silently so the next
@@ -232,7 +270,7 @@ async function apiFetch<T>(path: string, token?: string, init?: RequestInit, for
   const value = await resp.json() as T
   if (method === 'GET') {
     readCache.set(cacheKey, { expires: Date.now() + READ_CACHE_TTL_MS, value })
-    if (!token) persistSnapshot(cacheKey, value)
+    if (persistedKey) persistSnapshot(persistedKey, value)
   }
   return value
   })

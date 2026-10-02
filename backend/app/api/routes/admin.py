@@ -1284,8 +1284,10 @@ async def audit_log(
     current_user=Depends(require_admin_or_local),
     db: AsyncSession = Depends(get_db),
 ):
-    await _backfill_audit_log(db)
     total = await db.scalar(select(func.count()).select_from(AuditLog)) or 0
+    if total == 0:
+        await _backfill_audit_log(db)
+        total = await db.scalar(select(func.count()).select_from(AuditLog)) or 0
     rows = await db.execute(
         select(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit)
     )
