@@ -8,6 +8,7 @@ from app.api.routes.admin import (
     AccessDecision,
     FeedbackCreate,
     UserStatusUpdate,
+    audit_log,
     approve_access_request,
     create_access_request,
     create_feedback,
@@ -123,6 +124,45 @@ async def test_feedback_submission_is_visible_and_audited(db):
     assert audit is not None
     assert audit.resource_id == result["id"]
     assert audit.details["category"] == "BUG"
+
+
+@pytest.mark.asyncio
+async def test_audit_log_backfills_existing_records(db):
+    user = User(
+        email="existing-user@example.test",
+        name="Existing User",
+        role="PUBLIC",
+        plan="FREE",
+        is_active=True,
+    )
+    feedback = UserFeedback(
+        user_email=user.email,
+        user_name=user.name,
+        message="Existing feedback before audit existed.",
+    )
+    request = FeatureAccessRequest(
+        user_email=user.email,
+        user_name=user.name,
+        feature_key="PRICE_ALERTS",
+        feature_name="Price Alerts",
+        status="APPROVED",
+        reviewed_at=datetime.now(timezone.utc),
+        reviewed_by="admin@example.test",
+    )
+    db.add_all([user, feedback, request])
+    await db.flush()
+
+    result = await audit_log(
+        200,
+        {"email": "admin@example.test", "role": "ADMIN", "plan": "ADMIN"},
+        db,
+    )
+
+    actions = {entry["action"] for entry in result["entries"]}
+    assert "USER_CREATE" in actions
+    assert "FEEDBACK_CREATE" in actions
+    assert "ACCESS_REQUESTED" in actions
+    assert "ACCESS_APPROVED" in actions
 
 
 @pytest.mark.asyncio

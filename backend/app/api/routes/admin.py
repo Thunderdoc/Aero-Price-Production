@@ -648,6 +648,145 @@ def _feedback_dict(row: UserFeedback, detail: FeedbackDetails | None, include_in
     return payload
 
 
+async def _audit_exists(db: AsyncSession, action: str, resource_type: str, resource_id: str) -> bool:
+    existing = await db.scalar(
+        select(AuditLog.id)
+        .where(
+            AuditLog.action == action,
+            AuditLog.resource_type == resource_type,
+            AuditLog.resource_id == resource_id,
+        )
+        .limit(1)
+    )
+    return existing is not None
+
+
+async def _backfill_audit_log(db: AsyncSession) -> int:
+    """Create audit rows for records saved before audit logging existed."""
+    created = 0
+
+    users = (await db.execute(select(User))).scalars().all()
+    for row in users:
+        email = row.email.strip().lower()
+        if not await _audit_exists(db, "USER_CREATE", "user", email):
+            db.add(AuditLog(
+                user_email=None,
+                action="USER_CREATE",
+                resource_type="user",
+                resource_id=email,
+                details={
+                    "target_email": email,
+                    "role": row.role,
+                    "plan": row.plan,
+                    "source": "audit_backfill",
+                },
+                created_at=row.created_at,
+            ))
+            created += 1
+
+    auth_accounts = (await db.execute(select(AuthAccount))).scalars().all()
+    for row in auth_accounts:
+        email = row.email.strip().lower()
+        if not await _audit_exists(db, "USER_CREATE", "user", email):
+            db.add(AuditLog(
+                user_email=None,
+                action="USER_CREATE",
+                resource_type="user",
+                resource_id=email,
+                details={
+                    "target_email": email,
+                    "role": row.role,
+                    "plan": row.plan,
+                    "source": "audit_backfill",
+                },
+                created_at=row.created_at,
+            ))
+            created += 1
+
+    feedback_rows = (await db.execute(
+        select(UserFeedback, FeedbackDetails).outerjoin(FeedbackDetails)
+    )).all()
+    for feedback, detail in feedback_rows:
+        if not await _audit_exists(db, "FEEDBACK_CREATE", "feedback", feedback.id):
+            db.add(AuditLog(
+                user_email=feedback.user_email,
+                action="FEEDBACK_CREATE",
+                resource_type="feedback",
+                resource_id=feedback.id,
+                details={
+                    "target_email": feedback.user_email,
+                    "title": detail.title if detail else feedback.message[:160],
+                    "category": detail.category if detail else "PRODUCT",
+                    "priority": detail.priority if detail else "MEDIUM",
+                    "source_module": detail.source_module if detail else None,
+                    "has_screenshot": bool(detail and detail.screenshot_name),
+                    "source": "audit_backfill",
+                },
+                created_at=feedback.created_at,
+            ))
+            created += 1
+        if feedback.status in {"REVIEWED", "RESOLVED", "IN_PROGRESS"} and feedback.reviewed_at:
+            if not await _audit_exists(db, "FEEDBACK_STATUS", "feedback", feedback.id):
+                db.add(AuditLog(
+                    user_email=None,
+                    action="FEEDBACK_STATUS",
+                    resource_type="feedback",
+                    resource_id=feedback.id,
+                    details={
+                        "target_email": feedback.user_email,
+                        "status": feedback.status,
+                        "source": "audit_backfill",
+                    },
+                    created_at=feedback.reviewed_at,
+                ))
+                created += 1
+
+    access_rows = (await db.execute(select(FeatureAccessRequest))).scalars().all()
+    for request in access_rows:
+        if not await _audit_exists(db, "ACCESS_REQUESTED", "feature_access", request.id):
+            db.add(AuditLog(
+                user_email=request.user_email,
+                action="ACCESS_REQUESTED",
+                resource_type="feature_access",
+                resource_id=request.id,
+                details={
+                    "target_email": request.user_email,
+                    "feature_key": request.feature_key,
+                    "feature_name": request.feature_name,
+                    "message": request.request_message,
+                    "source": "audit_backfill",
+                },
+                created_at=request.requested_at,
+            ))
+            created += 1
+        status_action = {
+            "APPROVED": "ACCESS_APPROVED",
+            "REJECTED": "ACCESS_REJECTED",
+            "REVOKED": "ACCESS_REVOKED",
+        }.get(str(request.status).upper())
+        if status_action and request.reviewed_at and not await _audit_exists(db, status_action, "feature_access", request.id):
+            db.add(AuditLog(
+                user_email=request.reviewed_by,
+                action=status_action,
+                resource_type="feature_access",
+                resource_id=request.id,
+                details={
+                    "target_email": request.user_email,
+                    "feature_key": request.feature_key,
+                    "feature_name": request.feature_name,
+                    "status": request.status,
+                    "reason": request.rejection_reason,
+                    "source": "audit_backfill",
+                },
+                created_at=request.reviewed_at,
+            ))
+            created += 1
+
+    if created:
+        await db.flush()
+    return created
+
+
 @router.get("/feedback/mine")
 async def list_my_feedback(current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     email = current_user["email"].strip().lower()
@@ -1145,6 +1284,7 @@ async def audit_log(
     current_user=Depends(require_admin_or_local),
     db: AsyncSession = Depends(get_db),
 ):
+    await _backfill_audit_log(db)
     total = await db.scalar(select(func.count()).select_from(AuditLog)) or 0
     rows = await db.execute(
         select(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit)
