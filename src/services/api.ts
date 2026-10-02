@@ -648,6 +648,10 @@ export async function apiAdminUsers(token?: string, pageToken?: string): Promise
   return apiFetch(`/api/admin/users${query}`, token)
 }
 
+export async function apiAdminUserByEmail(email: string, token?: string): Promise<{ users: Array<Record<string, any>>; note?: string; source?: string; next_page_token?: string | null }> {
+  return apiFetch(`/api/admin/users?email=${encodeURIComponent(email)}`, token)
+}
+
 export async function apiCreateAdminUser(payload: { name: string; email: string; role: 'PUBLIC' | 'ANALYST' | 'ADMIN'; plan?: 'FREE' | 'SUBSCRIBER' | 'GOVERNMENT' | 'ADMIN' }, token?: string) {
   return apiFetch('/api/admin/users', token, {
     method: 'POST',

@@ -8,6 +8,7 @@ import {
   apiAdminAccessRequests,
   apiAdminAccessRequestDetails,
   apiAdminFeedback,
+  apiAdminUserByEmail,
   apiAdminUsers,
   apiApproveAccessRequest,
   apiAuditLog,
@@ -731,16 +732,57 @@ export default function AdminDashboard() {
   ) {
     setUpdatingRole(email)
     try {
+      const existingEntry = managedUsers.find(
+        (entry) => entry.email.toLowerCase() === email.toLowerCase(),
+      )
       const result = (await apiUpdateAdminUserRole(
         email,
         role,
         plan,
         token ?? undefined,
+        existingEntry?.uid,
       )) as { role: string; plan: string; firebase_sync?: string }
+      let refreshedEntry: Partial<ManagedUser> | null = null
+      if (token) {
+        try {
+          const refreshed = await apiAdminUserByEmail(email, token)
+          const remote = Array.isArray(refreshed.users)
+            ? refreshed.users[0]
+            : null
+          if (remote?.email) {
+            refreshedEntry = {
+              uid: remote.uid,
+              email: remote.email,
+              role: remote.role || result.role,
+              plan: remote.plan || result.plan,
+              name: remote.name || existingEntry?.name || remote.email,
+              lastLogin:
+                remote.lastLogin || remote.last_login || existingEntry?.lastLogin || "Not recorded",
+              status:
+                remote.status ||
+                (remote.is_active === false ? "INACTIVE" : "ACTIVE"),
+              provider: Array.isArray(remote.providers)
+                ? remote.providers.join(", ")
+                : existingEntry?.provider,
+              verified:
+                typeof remote.email_verified === "boolean"
+                  ? remote.email_verified
+                  : existingEntry?.verified,
+            }
+          }
+        } catch {
+          refreshedEntry = null
+        }
+      }
       setManagedUsers((prev) => {
         const next = prev.map((entry) =>
           entry.email.toLowerCase() === email.toLowerCase()
-            ? { ...entry, role: result.role, plan: result.plan }
+            ? {
+                ...entry,
+                ...refreshedEntry,
+                role: refreshedEntry?.role || result.role,
+                plan: refreshedEntry?.plan || result.plan,
+              }
             : entry,
         )
         writeDirectorySnapshot(user?.email, next)
