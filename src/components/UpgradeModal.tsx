@@ -5,9 +5,9 @@ import { Modal } from './ui/Modal'
 import { useAuth } from '../contexts/AuthContext'
 import { apiCreateAccessRequest, apiMyAccessRequests } from '../services/api'
 
-interface Props { onClose: () => void; feature?: string; featureKey?: string }
+interface Props { onClose: () => void; onOpenFeature?: () => void; feature?: string; featureKey?: string }
 
-export default function UpgradeModal({ onClose, feature = 'Price Alerts', featureKey = 'PRICE_ALERTS' }: Props) {
+export default function UpgradeModal({ onClose, onOpenFeature, feature = 'Price Alerts', featureKey = 'PRICE_ALERTS' }: Props) {
   const { user, token, logout, refreshUser } = useAuth()
   const draftKey = `aeroprice:premium-draft:${user?.email ?? ''}:${featureKey}`
   const [message, setMessage] = useState('')
@@ -67,8 +67,15 @@ export default function UpgradeModal({ onClose, feature = 'Price Alerts', featur
     }
   }
 
+  async function openFeature() {
+    await refreshUser().catch(() => undefined)
+    window.dispatchEvent(new Event('aeroprice-notifications-changed'))
+    onOpenFeature?.()
+    onClose()
+  }
+
   return (
-    <Modal isOpen onClose={onClose} title="Request Premium access" icon={<LockKeyhole size={21} />} description="The administrator reviews Standard → Premium upgrades." footer={<div className="premium-request-footer"><Button variant="neutral" onClick={onClose}>Close</Button>{needsSignIn ? <Button variant="primary" onClick={logout}>Sign in again</Button> : status === 'APPROVED' ? <Button variant="primary" onClick={onClose}>Open feature</Button> : <Button variant="primary" onClick={() => void requestAccess()} loading={busy} disabled={status === 'PENDING' || checking}>{checking ? 'Checking access…' : status === 'PENDING' ? 'Pending review' : status === 'REJECTED' || status === 'REVOKED' ? 'Request again' : 'Request Premium'}</Button>}</div>}>
+    <Modal isOpen onClose={onClose} title="Request Premium access" icon={<LockKeyhole size={21} />} description="The administrator reviews Standard → Premium upgrades." footer={<div className="premium-request-footer"><Button variant="neutral" onClick={onClose}>Close</Button>{needsSignIn ? <Button variant="primary" onClick={logout}>Sign in again</Button> : status === 'APPROVED' ? <Button variant="primary" onClick={() => void openFeature()}>Open feature</Button> : <Button variant="primary" onClick={() => void requestAccess()} loading={busy} disabled={status === 'PENDING' || checking}>{checking ? 'Checking access…' : status === 'PENDING' ? 'Pending review' : status === 'REJECTED' || status === 'REVOKED' ? 'Request again' : 'Request Premium'}</Button>}</div>}>
         <div className="premium-request-content">
           <div style={{ padding: 16, borderRadius: 14, background: 'var(--color-surface-secondary)', border: '1px solid var(--color-border-primary)' }}>
             <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '.1em', color: 'var(--color-text-tertiary)' }}>FEATURE</div>

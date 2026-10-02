@@ -37,7 +37,8 @@ const selectStyle: React.CSSProperties = { ...inputStyle, appearance: 'none' }
 export default function PriceAlerts({ onNavigate }: { onNavigate?: (page: Page) => void }) {
   const { user, token } = useAuth()
   // The server verifies the live, revocable PRICE_ALERTS grant on every API call.
-  const isFree = !user || user.plan === 'FREE'
+  const [accessGrantedOverride, setAccessGrantedOverride] = useState(false)
+  const isFree = !user || (user.plan === 'FREE' && !accessGrantedOverride)
   const [upgradeOpen, setUpgradeOpen] = useState(false)
   const [alerts, setAlerts] = useState<UserPriceAlert[]>([])
   const [alertsLoading, setAlertsLoading] = useState(false)
@@ -126,7 +127,15 @@ export default function PriceAlerts({ onNavigate }: { onNavigate?: (page: Page) 
         <p style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
           Current access: standard user. Access is enabled after administrator approval.
         </p>
-        {upgradeOpen && <UpgradeModal onClose={() => setUpgradeOpen(false)} />}
+        {upgradeOpen && (
+          <UpgradeModal
+            onClose={() => setUpgradeOpen(false)}
+            onOpenFeature={() => {
+              setAccessGrantedOverride(true)
+              setShowCreate(true)
+            }}
+          />
+        )}
       </div>
     )
   }
@@ -253,7 +262,15 @@ export default function PriceAlerts({ onNavigate }: { onNavigate?: (page: Page) 
         </div>
       </div>
 
-      {showUpgrade && <UpgradeModal onClose={() => setShowUpgrade(false)} />}
+      {showUpgrade && (
+        <UpgradeModal
+          onClose={() => setShowUpgrade(false)}
+          onOpenFeature={() => {
+            setAccessGrantedOverride(true)
+            setShowCreate(true)
+          }}
+        />
+      )}
 
       {showCreate && (
         <Modal title="Track Price" isOpen={showCreate} onClose={() => setShowCreate(false)}>

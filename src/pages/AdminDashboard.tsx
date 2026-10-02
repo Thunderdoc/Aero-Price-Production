@@ -1185,7 +1185,12 @@ export default function AdminDashboard() {
     reply?: string,
     internalNotes?: string,
   ) {
+    const previousSelectedFeedback = selectedFeedback
+    const previousEditStatus = feedbackEditStatus
+    const previousReplyDraft = feedbackReplyDraft
+    const previousInternalNotesDraft = feedbackInternalNotesDraft
     setFeedbackBusyId(id)
+    setSelectedFeedback(null)
     try {
       await apiUpdateFeedback(id, status, token ?? undefined, reply, internalNotes)
       setFeedback((prev) =>
@@ -1195,7 +1200,6 @@ export default function AdminDashboard() {
             : item,
         ),
       )
-      setSelectedFeedback(null)
       setSelectedFeedbackIds((selected) => selected.filter((selectedId) => selectedId !== id))
       setFeedbackEditStatus(status)
       showToast(
@@ -1203,9 +1207,15 @@ export default function AdminDashboard() {
           ? "Feedback marked as reviewed."
           : status === "NEW"
             ? "Feedback reopened."
-            : "Feedback status updated.",
+          : "Feedback status updated.",
       )
     } catch (error) {
+      if (previousSelectedFeedback?.id === id) {
+        setSelectedFeedback(previousSelectedFeedback)
+        setFeedbackEditStatus(previousEditStatus)
+        setFeedbackReplyDraft(previousReplyDraft)
+        setFeedbackInternalNotesDraft(previousInternalNotesDraft)
+      }
       showToast(
         error instanceof Error ? error.message : "Could not update feedback.",
       )
