@@ -128,6 +128,7 @@ const ACTION_COLOR: Record<string, string> = {
   ACCESS_APPROVED: "var(--color-success)",
   ACCESS_REJECTED: "var(--color-danger)",
   ACCESS_REQUEST_DELETE: "var(--color-warning)",
+  FEEDBACK_CREATE: "var(--color-brand-primary)",
   FEEDBACK_STATUS: "var(--color-info)",
   FEEDBACK_DELETE: "var(--color-danger)",
 }
@@ -139,6 +140,7 @@ const ACTION_LABEL: Record<string, string> = {
   ACCESS_APPROVED: "Access approved",
   ACCESS_REJECTED: "Access rejected",
   ACCESS_REQUEST_DELETE: "Request cleared",
+  FEEDBACK_CREATE: "Feedback submitted",
   FEEDBACK_STATUS: "Feedback reviewed",
   FEEDBACK_DELETE: "Feedback removed",
 }

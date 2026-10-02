@@ -610,6 +610,20 @@ async def create_feedback(
         screenshot_name=payload.screenshot.name if image else None,
         screenshot_type=payload.screenshot.content_type if image else None, screenshot=image,
     ))
+    db.add(AuditLog(
+        user_email=entry.user_email,
+        action="FEEDBACK_CREATE",
+        resource_type="feedback",
+        resource_id=entry.id,
+        details={
+            "target_email": entry.user_email,
+            "title": (payload.title or message[:160]).strip(),
+            "category": payload.category,
+            "priority": payload.priority,
+            "source_module": payload.source_module,
+            "has_screenshot": image is not None,
+        },
+    ))
     db.add(UserNotification(user_email=entry.user_email, title="Feedback received", message="Your feedback has been saved. You can follow its status in My submissions."))
     admins = set((await db.execute(select(User.email).where(User.role == "ADMIN", User.is_active == True))).scalars())
     admins.update((await db.execute(select(AuthAccount.email).where(AuthAccount.role == "ADMIN", AuthAccount.is_active == True))).scalars())

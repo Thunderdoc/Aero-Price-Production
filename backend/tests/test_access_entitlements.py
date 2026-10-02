@@ -6,9 +6,11 @@ from sqlalchemy import select
 from app.api.routes.admin import (
     AccessRequestCreate,
     AccessDecision,
+    FeedbackCreate,
     UserStatusUpdate,
     approve_access_request,
     create_access_request,
+    create_feedback,
     get_access_request_details,
     mark_all_notifications_read,
     mark_notification_read,
@@ -25,6 +27,7 @@ from app.api.routes.admin import (
 from app.api.routes.auth import _disabled_account_error
 from app.models.access import FeatureAccessRequest, UserFeatureAccess, UserNotification, PriceAlert
 from app.models.auth_account import AuthAccount
+from app.models.feedback import UserFeedback
 from app.models.user import AuditLog, User
 
 
@@ -90,6 +93,36 @@ async def test_premium_request_message_is_persisted_and_audited(db):
     assert audit is not None
     assert audit.resource_id == request.id
     assert result["request_message"] == request.request_message
+
+
+@pytest.mark.asyncio
+async def test_feedback_submission_is_visible_and_audited(db):
+    result = await create_feedback(
+        FeedbackCreate(
+            title="Route page issue",
+            message="The route page keeps loading after I choose Delhi to Bengaluru.",
+            category="BUG",
+            priority="HIGH",
+            source_module="User Portal",
+        ),
+        {
+            "email": "feedback-user@example.test",
+            "name": "Feedback User",
+            "role": "PUBLIC",
+            "plan": "FREE",
+        },
+        db,
+    )
+    await db.flush()
+
+    feedback = await db.get(UserFeedback, result["id"])
+    audit = await db.scalar(select(AuditLog).where(AuditLog.action == "FEEDBACK_CREATE"))
+
+    assert feedback is not None
+    assert feedback.user_email == "feedback-user@example.test"
+    assert audit is not None
+    assert audit.resource_id == result["id"]
+    assert audit.details["category"] == "BUG"
 
 
 @pytest.mark.asyncio
