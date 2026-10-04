@@ -1,97 +1,90 @@
-# AeroPrice — India Airfare Intelligence Platform
+# AeroPrice
+<img width="2172" height="724" alt="image" src="https://github.com/user-attachments/assets/1cba6b94-5b8f-4494-98d1-e3b069be1145" />
 
-SIH 2026 prototype for problem statement SIH26056. AeroPrice is a role-aware airfare intelligence dashboard for Indian domestic aviation: route-level fare observations, Jevons index methodology, government data references, aviation map views, and administrative pipeline monitoring.
 
-This repository contains:
+> India’s airfare intelligence platform for evidence-led decisions across routes, markets, government data, and aviation operations.
 
-- React 19 + Vite frontend
+AeroPrice is an SIH 2026 prototype for problem statement **SIH26056**. It turns airfare observations and aviation data into a fast, role-aware intelligence workspace for public users, analysts, government stakeholders, and administrators.
+
+## What AeroPrice helps users do
+
+- **See the market at a glance** with an AI-assisted briefing of the latest verified fare movement.
+- **Compare domestic routes** using median fares, observed ranges, and route-level changes.
+- **Understand India geographically** through fare movement and aviation map views.
+- **Connect price signals to context** with DGCA, MoSPI CPI, PPAC ATF, and data.gov.in references.
+- **Explore live aviation activity** with aircraft, airports, and operational views.
+- **Create actionable alerts** for routes and price changes.
+- **Support governance workflows** with source provenance, freshness indicators, exports, and audit trails.
+
+## Product principles
+
+### Evidence first
+
+Verified and official observations stay visibly separate from modeled or AI-assisted interpretation. AI may summarize patterns and suggest where to look; it does not replace the underlying source record.
+
+### Intelligence before complexity
+
+The dashboard opens with a concise “what changed / why it matters / what to inspect next” brief, followed by the evidence needed to validate it.
+
+### Fast first view
+
+The first meaningful dashboard view should arrive quickly from cached, clearly labelled last-known data while live feeds refresh in parallel. The frontend is designed to load only the active workspace instead of initializing every page at startup.
+
+## Experience direction
+
+The visual system follows the AeroPrice mark: aviation blue, electric cyan accents, deep navy surfaces, glass-like data cards, route-line motifs, and generous information hierarchy. AI-generated or decorative imagery is used only as interface atmosphere; fares, government records, and operational statuses remain data-backed.
+
+## Architecture
+
+- React 19 + Vite + TypeScript frontend
+- Tailwind CSS v4 and Lucide icons
 - FastAPI backend
 - Firebase Google Authentication for normal user login
+- Backend JWT auth for privileged analyst and admin workspaces
 - Supabase client support for user-facing price-alert persistence
-- Backend JWT auth for Admin/TGC/DGCA-style privileged workspaces
-- Deployment-ready environment templates
+- SQLite for prototype storage; Postgres recommended for production durability
 
 ## Quick start
 
-Frontend:
+### Frontend
 
 ```bash
 npm install
 cp .env.example .env.local
-npm run build
 npm run dev
 ```
 
-Backend:
+Open `http://localhost:8443`.
+
+### Backend
 
 ```bash
 cd backend
 python -m venv .venv
-.venv\Scripts\activate
+.venv\\Scripts\\activate
 pip install -r requirements.txt
 cp .env.example .env
 python -m uvicorn main:app --reload --port 8000
 ```
 
-Open the app at `http://localhost:8443`.
+## Environment
 
-## Authentication model
+See [.env.example](./.env.example). Main frontend values include `VITE_API_URL`, Firebase web configuration, and Supabase client configuration.
 
-- User login:
-  - Email/password through existing backend auth when credentials exist.
-  - Google sign-in through Firebase Auth.
-- TGC/DGCA analyst login:
-  - Backend-authorized account only.
-  - Routes to the government intelligence workspace.
-- Admin login:
-  - Backend-authorized account only.
-  - Routes to the admin console.
+Firebase web configuration values are public client identifiers. Never commit service-account JSON, backend passwords, provider secrets, or Supabase service-role keys.
 
-The frontend role tabs do not grant privileges. They only select the intended workspace. The authenticated account role still controls access.
+## Performance plan
 
-## Required frontend environment variables
+The one-second goal applies to the first meaningful frontend view, not an unconditional promise about every backend response. Measure frontend bundle startup, first render, and backend/API cold start separately. Planned optimizations include route-level code splitting, cached dashboard snapshots, parallel refreshes, independent timeouts for optional feeds, and production-build measurements on a cold browser cache.
 
-See [.env.example](./.env.example).
-
-Important variables:
-
-- `VITE_API_URL`
-- `VITE_FIREBASE_API_KEY`
-- `VITE_FIREBASE_AUTH_DOMAIN`
-- `VITE_FIREBASE_PROJECT_ID`
-- `VITE_FIREBASE_STORAGE_BUCKET`
-- `VITE_FIREBASE_MESSAGING_SENDER_ID`
-- `VITE_FIREBASE_APP_ID`
-- `VITE_FIREBASE_MEASUREMENT_ID`
-- `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_ANON_KEY`
-
-Firebase web config values are public client identifiers, not service-role secrets. Do not commit Firebase service account JSON, backend database passwords, API provider secrets, or Supabase service-role keys.
-
-## Deployment
-
-See [DEPLOYMENT.md](./DEPLOYMENT.md).
-
-Recommended setup:
-
-- Frontend: Vercel or Netlify.
-- Backend: Render, Railway, Fly.io, or any Python/FastAPI host.
-- Database: keep current SQLite for prototype only; use Postgres for durable production-style deployment.
-- Firebase: enable Google provider and add deployment domains to Firebase Auth authorized domains.
-
-## Verification commands
+## Verification
 
 ```bash
 npm run build
 cd backend
-.venv\Scripts\python.exe -m pytest -q
+.venv\\Scripts\\python.exe -m pytest -q
 ```
 
-Current verified result in this workspace:
+The repository is a prototype and should be presented as an SIH 2026 prototype, not as an official Government of India service. Government, DGCA, and MoSPI references are data-source and methodology references only.
 
-- Frontend build passes.
-- Backend tests pass: 183 passed, 7 skipped.
-
-## SIH reviewer notes
-
-This is a prototype and should be presented as an SIH 2026 prototype, not as an official Government of India service. Government/DGCA/MoSPI references are data-source and methodology references only.
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for deployment guidance.
