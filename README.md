@@ -10,6 +10,30 @@ AeroPrice is an **SIH 2026 prototype for problem statement SIH26056**. It turns 
 
 > **Not an official Government of India service.** Government, DGCA, and MoSPI references in this project are data-source and methodology references only.
 
+## Screenshots
+
+Captured from a local run of this exact repository: the Vite frontend (`npm run dev`, port 8443) against the FastAPI backend on a fresh local database, signed in with locally created test accounts. There is no live deployment, so these are local-run screenshots, not a hosted demo. Because no authorized fare provider is configured in that run, the data panels honestly show the app's empty states ("Data unavailable", "0 routes with stored quotes", "0/6 sources responding") rather than populated figures.
+
+![AeroPrice sign-in screen with User, DGCA, and Admin workspace tabs](docs/images/01-login.png)
+
+**Sign-in** — the workspace gate: User, DGCA, and Admin tabs over the airport login artwork, with the Ministry of Civil Aviation badge and the SIH Prototype mark.
+
+![AeroPrice user dashboard with hero banner, stat cards, popular routes, and India fare movement map](docs/images/02-dashboard.png)
+
+**User dashboard (Overview)** — hero brief, stat cards (verified routes, verified observations, price drops, active alerts, airfare index), popular routes, and the India fare-movement map. With no provider configured, routes read "Data unavailable — No verified observation for this route yet."
+
+![AeroPrice GIS India map with airport markers and no-route-data notice](docs/images/03-india-map.png)
+
+**GIS / India Map** — Leaflet map of India with airport markers. The run shows the honest degraded state: "No verified route observations are available for the map", "0 routes with stored quotes", and "0 flight positions over India — OFFLINE".
+
+![AeroPrice Route Explorer for DEL to BOM showing Data unavailable](docs/images/04-route-explorer.png)
+
+**Route Explorer (DEL → BOM)** — verified fare observations by corridor, with travel-date search. Here it reports "No verified fare records are available for DEL-BOM" and 0 observations, rather than inventing a fare.
+
+![AeroPrice Government Intelligence page showing 0 of 6 sources responding](docs/images/05-gov-intelligence.png)
+
+**Government Intelligence (analyst workspace)** — official-source records kept separate from AeroPrice fare observations. This run shows "0/6 sources responding", "DGCA monthly 0 · DGCA circulars 0 · MoSPI CPI 0 · PPAC ATF 0", and "Index not published".
+
 ## What AeroPrice helps you do
 
 - **See the market at a glance** — an AI-assisted briefing of the latest verified fare movement, opening with what changed, why it matters, and what to inspect next.
@@ -58,6 +82,37 @@ The visual system follows the AeroPrice mark: aviation blue, electric cyan accen
 | Analysis | pandas, NumPy, scikit-learn, statsmodels |
 
 The repository is split in two parts: the Vite frontend at the repository root, and the FastAPI backend in `backend/` (entrypoint `backend/main.py`).
+
+## Architecture
+
+The frontend is a single-page app with state-based page switching (no router library): `src/App.tsx` renders one page at a time inside `src/components/AppShell.tsx`. It talks to the FastAPI backend over `/api`, and only to Firebase and Supabase where those integrations are actually wired.
+
+```mermaid
+flowchart TD
+    Browser["User browser"]
+    SPA["React 19 + Vite + TypeScript SPA<br/>src/App.tsx + src/components/AppShell.tsx<br/>state-based pages: Overview, Route Explorer,<br/>India Map, Gov Intelligence, and more"]
+    API["FastAPI backend<br/>backend/main.py — /api routers:<br/>auth, health, fares, index, dashboard,<br/>government, aviation, forecasts, anomalies,<br/>exports, admin, routes basket, compare,<br/>sources, collections, historical, maps"]
+    Firebase["Firebase Auth — opt-in only<br/>src/services/firebase.ts<br/>Google sign-in when VITE_AUTH_MODE=firebase"]
+    Supabase["Supabase client — optional<br/>src/services/supabase.ts<br/>user-facing price alerts"]
+    DB["Prototype storage: SQLite<br/>backend/app/core/config.py default<br/>Postgres recommended for production"]
+    Scheduler["APScheduler jobs in backend lifespan<br/>collection + government refresh"]
+    Collector["Collector + gov fetcher<br/>backend/app/services/<br/>authorized providers only;<br/>unavailable feeds report no data"]
+    GovFeeds["Official feeds: DGCA, MoSPI,<br/>PPAC ATF, data.gov.in"]
+    Aviation["Live aviation: ADSB.lol primary,<br/>AvioADSB, OpenSky fallback<br/>backend/app/api/routes/aviation.py"]
+    Maps["Leaflet + India state GeoJSON<br/>public/maps/india-states-*.geojson"]
+
+    Browser --> SPA
+    SPA -->|"REST /api"| API
+    SPA -->|"Google sign-in, only if configured"| Firebase
+    SPA -->|"price alerts, only if configured"| Supabase
+    SPA --> Maps
+    API --> DB
+    Scheduler --> Collector
+    Collector --> GovFeeds
+    API --> Aviation
+```
+
+Notes on what is *not* in the diagram: no component is drawn that was not verified in code. The backend issues backend JWT auth by default (`VITE_AUTH_MODE` anything other than `firebase` selects backend auth in `src/contexts/AuthContext.tsx`); Firebase is the opt-in path, not the default. Supabase is client-side and inert when its URL/key are unset.
 
 ## Quick start
 
