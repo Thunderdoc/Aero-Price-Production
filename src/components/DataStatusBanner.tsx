@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ShieldCheck, X } from 'lucide-react'
+import { formatDateTimeIST } from '../lib/liveStatus'
 
 interface Props {
   anyGovConnected?: boolean
@@ -11,26 +12,31 @@ interface Props {
   lastFetch?: string | null
 }
 
-export default function DataStatusBanner({ anyGovConnected = true, fareFeedConnected = false, fareFeedLive = false, verifiedObservations = null, showGovernmentStatus = true, isLoading = false, lastFetch }: Props) {
+// Display gating (Phase 4): nothing reads as connected until a successful,
+// timestamped check says so. The `healthy` OR-logic itself is Phase 2's fix.
+export default function DataStatusBanner({ anyGovConnected = false, fareFeedConnected = false, fareFeedLive = false, verifiedObservations = null, showGovernmentStatus = true, isLoading = false, lastFetch }: Props) {
   const [showDetails, setShowDetails] = useState(false)
-  const time = lastFetch
-    ? new Date(lastFetch).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST'
-    : 'CHECKED'
+  // No "· CHECKED" when nothing was checked — the badge says so honestly.
+  const time = lastFetch ? formatDateTimeIST(lastFetch) : 'NOT CHECKED'
   // The public dashboard is driven by verified fare observations, not the
-  // optional government registry. A registry outage must not label live fares
-  // as degraded.
-  const healthy = fareFeedConnected || (anyGovConnected && !isLoading)
+  // optional government registry. A connected gov registry must NOT mask a
+  // dead fare feed (the old OR-logic showed green "DATA FEEDS CONNECTED"
+  // with 0 live fares whenever any gov dataset was connected). Healthy means
+  // the fare feed is connected; the gov registry is shown as its own
+  // indicator in the details dropdown below.
+  const healthy = fareFeedConnected
   const headline = fareFeedLive
     ? 'LIVE VERIFIED FARE DATA AVAILABLE'
     : fareFeedConnected
       ? 'VERIFIED FARE SNAPSHOT AVAILABLE'
-      : healthy ? 'DATA FEEDS CONNECTED' : isLoading ? 'CHECKING DATA FEEDS' : 'DATA FEEDS DEGRADED'
+      : healthy ? 'DATA FEEDS CONNECTED' : isLoading ? 'CHECKING DATA FEEDS' : 'DATA FEEDS UNAVAILABLE'
 
   return (
     <div className="data-status-banner" style={{ position: 'relative' }}>
       <button
         onClick={() => setShowDetails(v => !v)}
-        title="Click to view real-time pipeline status"
+        title="Click to view pipeline status"
+        aria-expanded={showDetails}
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -82,7 +88,7 @@ export default function DataStatusBanner({ anyGovConnected = true, fareFeedConne
             position: 'absolute',
             top: 'calc(100% + 8px)',
             right: 0,
-            width: 340,
+            width: 'min(340px, calc(100vw - 24px))',
             background: 'var(--color-surface-bg)',
             border: '1px solid var(--color-border-primary)',
             borderRadius: 14,
@@ -94,7 +100,7 @@ export default function DataStatusBanner({ anyGovConnected = true, fareFeedConne
         >
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <ShieldCheck size={16} style={{ color: '#16a34a' }} />
+              <ShieldCheck size={16} style={{ color: healthy ? '#16a34a' : '#d97706' }} />
               <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-primary)' }}>
                 System Health
               </span>

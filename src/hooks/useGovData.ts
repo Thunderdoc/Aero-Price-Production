@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { apiDataGovAviation, apiDgcaCirculars, apiDgcaMonthly, apiGovDatasets, apiGovRefresh, apiMospiCpi, apiPpacAtf } from '../services/api'
+import { apiDataGovAviation, apiDgcaCirculars, apiDgcaMonthly, apiGovDatasets, apiGovRefresh, apiMospiCpi, apiPpacAtf, isForbiddenError } from '../services/api'
 import type { GovDataset, DgcaCircular, DgcaMonthlyRecord, MospiCpiRecord } from '../types/observation'
 import { useAuth } from '../contexts/AuthContext'
 
@@ -14,6 +14,11 @@ export interface GovDataState {
   anyConnected: boolean
   lastFetch: string | null
   refresh: () => Promise<void>
+  // True when the last government refresh was refused with a 403: the
+  // refresh action is analyst-gated even though the reads are open. The
+  // page renders an access-required banner from this instead of silently
+  // showing stale data.
+  refreshForbidden: boolean
 }
 
 const REFETCH_MS = 30 * 60 * 1000
@@ -31,6 +36,7 @@ export function useGovData(): GovDataState {
   const [isLoading, setIsLoading] = useState(true)
   const [lastFetch, setLastFetch] = useState<string | null>(null)
   const [hasLiveResponse, setHasLiveResponse] = useState(false)
+  const [refreshForbidden, setRefreshForbidden] = useState(false)
 
   async function fetchAll() {
     setIsLoading(true)
@@ -122,10 +128,13 @@ export function useGovData(): GovDataState {
 
   async function refresh() {
     setIsLoading(true)
+    setRefreshForbidden(false)
     try {
       await apiGovRefresh(token ?? undefined)
-    } catch {
-      // Soft fallback
+    } catch (error) {
+      // A 403 is an access refusal, not a transient failure: surface it
+      // instead of silently re-fetching the same stale data.
+      if (isForbiddenError(error)) setRefreshForbidden(true)
     }
     await fetchAll()
   }
@@ -140,6 +149,7 @@ export function useGovData(): GovDataState {
     isLoading,
     lastFetch,
     refresh,
+    refreshForbidden,
     anyConnected: hasLiveResponse && datasets.some(dataset => ['CONNECTED', 'HEALTHY'].includes(dataset.status)),
   }
 }

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, Building2, CheckCircle, ExternalLink, RefreshCw, XCircle } from 'lucide-react'
+import { AlertTriangle, Building2, CheckCircle, ExternalLink, RefreshCw, ShieldAlert, XCircle } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { useGovData } from '../hooks/useGovData'
-import { apiFareSummary, apiIndexCurrent, apiRouteBasket, type IndexResponse, type RouteBasketItem } from '../services/api'
+import SectorHeatmap, { type HeatmapRow } from '../components/SectorHeatmap'
+import { apiCreateAccessRequest, apiFareSummary, apiIndexCurrent, apiRouteBasket, type IndexResponse, type RouteBasketItem } from '../services/api'
 
 const WINDOWS = [1, 7, 15, 30, 45]
 
@@ -97,12 +98,27 @@ function badgeClass(ok: boolean) {
 
 export default function GovernmentIntelligence() {
   const { token } = useAuth()
-  const { datasets, dgcaMonthly, dgcaCirculars, mospiCpi, ppacAtf, dataGovAviationCount, isLoading, anyConnected, lastFetch, refresh } = useGovData()
+  const { datasets, dgcaMonthly, dgcaCirculars, mospiCpi, ppacAtf, dataGovAviationCount, isLoading, anyConnected, lastFetch, refresh, refreshForbidden } = useGovData()
   const [indexStatus, setIndexStatus] = useState<IndexResponse | null>(null)
   const [routes, setRoutes] = useState<RouteBasketItem[]>([])
   const [summaries, setSummaries] = useState<FareSummary[]>([])
   const [selectedRoute, setSelectedRoute] = useState<string | null>(null)
   const [fareLoading, setFareLoading] = useState(false)
+  const [requestState, setRequestState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
+
+  // The government refresh action stays analyst-gated even though the reads
+  // are open; a refused refresh surfaces here as an access state, not as a
+  // silent stale-data page.
+  async function requestAccess() {
+    if (!token || requestState === 'sending' || requestState === 'sent') return
+    setRequestState('sending')
+    try {
+      await apiCreateAccessRequest('GOVERNMENT_REFRESH', 'Government Refresh', token, 'Government data refresh was denied for this account.')
+      setRequestState('sent')
+    } catch {
+      setRequestState('error')
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -146,6 +162,19 @@ export default function GovernmentIntelligence() {
 
   const officialRecordCount = dgcaMonthly.length + dgcaCirculars.length + mospiCpi.length + ppacAtf.length + dataGovAviationCount
   const selectedSummary = summaries.find(summary => summary.route === selectedRoute) ?? summaries[0]
+  // Heatmap rows from the same verified per-route summaries — no simulated
+  // fares: a window with no verified median renders as a blank cell.
+  const heatmapRows: HeatmapRow[] = summaries.map(summary => {
+    const [from, to] = summary.route.split('-')
+    const windows: Record<number, number | null> = {}
+    const counts: Record<number, number> = {}
+    WINDOWS.forEach(day => {
+      const win = summary.windows?.[`T+${day}`]
+      windows[day] = win?.median ?? null
+      if (win?.count) counts[day] = win.count
+    })
+    return { route: summary.route, from: from ?? summary.route, to: to ?? '', windows, counts }
+  })
   const realFareValues = summaries.flatMap(summary => WINDOWS.map(day => summary.windows?.[`T+${day}`]?.median).filter((value): value is number => Number.isFinite(Number(value))))
   const minFare = realFareValues.length ? Math.min(...realFareValues) : 0
   const maxFare = realFareValues.length ? Math.max(...realFareValues) : 1
@@ -175,6 +204,23 @@ export default function GovernmentIntelligence() {
         </div>
       </div>
 
+      {refreshForbidden && (
+        <div style={{ background: 'var(--color-warning-bg)', border: '1px solid var(--color-warning)', borderRadius: 'var(--radius-lg)', padding: '16px 18px', display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          <ShieldAlert size={20} style={{ color: 'var(--color-warning)', flexShrink: 0, marginTop: 2 }} />
+          <div style={{ flex: 1, minWidth: 240 }}>
+            <strong style={{ display: 'block', color: 'var(--color-text-primary)', fontSize: 14 }}>Analyst access required</strong>
+            <span style={{ color: 'var(--color-text-secondary)', fontSize: 13 }}>Refreshing government data needs analyst access. The records above are the last fetched data. Request access and an administrator will review it.</span>
+            <div style={{ marginTop: 12, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <button onClick={requestAccess} disabled={!token || requestState === 'sending' || requestState === 'sent'} style={{ padding: '8px 18px', borderRadius: 8, border: 0, background: 'var(--color-brand-primary)', color: '#fff', fontSize: 12, fontWeight: 800, cursor: requestState === 'sent' ? 'default' : 'pointer' }}>
+                {requestState === 'sent' ? 'Request sent' : requestState === 'sending' ? 'Sending…' : 'Request access'}
+              </button>
+              {requestState === 'error' && <span style={{ fontSize: 12, color: 'var(--color-danger)' }}>The request could not be sent. Please try again.</span>}
+              {!token && <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>Sign in to request access.</span>}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div style={{ background: anyConnected ? 'var(--color-success-bg)' : 'var(--color-warning-bg)', border: `1px solid ${statusColor}40`, borderRadius: 'var(--radius-lg)', padding: 'var(--space-md) var(--space-xl)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         {anyConnected ? <CheckCircle size={15} style={{ color: statusColor }} /> : <XCircle size={15} style={{ color: statusColor }} />}
         <span style={{ fontSize: 12, fontWeight: 800, color: statusColor, letterSpacing: '0.05em' }}>{statusLabel}</span>
@@ -189,7 +235,7 @@ export default function GovernmentIntelligence() {
           {[
             { label: 'AIRFARE INDEX', value: indexPublished && indexStatus?.index_value != null ? indexStatus.index_value.toFixed(2) : '—', sub: indexPublished ? indexStatus?.method ?? 'Backend published' : indexStatus?.message ?? 'Not published' },
             { label: 'ROUTE COVERAGE', value: `${indexStatus?.covered_routes_count ?? routes.filter(route => route.has_data).length}/${routeCoverageTotal || '—'}`, sub: `Requires ${indexStatus?.required_routes ?? indexStatus?.required ?? 10} routes` },
-            { label: 'REAL FARES', value: (indexStatus?.real_observations ?? summaries.reduce((sum, summary) => sum + Number(summary.overall?.count ?? 0), 0)).toLocaleString('en-IN'), sub: 'Stored observations' },
+            { label: 'STORED FARES', value: (indexStatus?.real_observations ?? summaries.reduce((sum, summary) => sum + Number(summary.overall?.count ?? 0), 0)).toLocaleString('en-IN'), sub: 'Stored observations' },
             { label: 'GOV RECORDS', value: officialRecordCount.toLocaleString('en-IN'), sub: 'Rows returned' },
             { label: 'CPI TRANSPORT', value: latestCpi ? latestCpi.cpi_transport.toFixed(2) : '—', sub: latestCpi ? `${latestCpi.period}, base ${latestCpi.base_year ?? '—'}` : 'Not imported' },
             { label: 'PPAC ATF', value: latestPpac ? `₹${Number(latestPpac.atf_export_duty_per_litre).toFixed(2)}` : '—', sub: latestPpac ? 'Export duty/litre' : 'Not imported' },
@@ -204,39 +250,8 @@ export default function GovernmentIntelligence() {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 'var(--space-lg)' }}>
-        <Panel title="Route Fare Matrix" eyebrow="BACKEND VERIFIED FARE OBSERVATIONS" right={<span className={badgeClass(Boolean(summaries.length))}>{fareLoading ? 'LOADING' : summaries.length ? 'REAL STORED FARES' : 'NO DATA'}</span>}>
-          {summaries.length ? (
-            <div style={{ overflowX: 'auto' }}>
-              <table className="ap-table" style={{ minWidth: 620 }}>
-                <thead>
-                  <tr>
-                    <th>Route</th>
-                    {WINDOWS.map(day => <th key={day}>T+{day}</th>)}
-                  </tr>
-                </thead>
-                <tbody>
-                  {summaries.map(summary => (
-                    <tr key={summary.route}>
-                      <td style={{ fontWeight: 800 }}>{summary.route}</td>
-                      {WINDOWS.map(day => {
-                        const win = summary.windows?.[`T+${day}`]
-                        const fare = win?.median
-                        const intensity = fare ? (fare - minFare) / Math.max(1, maxFare - minFare) : 0
-                        return (
-                          <td key={day} style={{ background: fare ? `rgba(37,99,235,${0.08 + intensity * 0.24})` : undefined }}>
-                            {fare ? `₹${fare.toLocaleString('en-IN')}` : '—'}
-                            {win?.count ? <div style={{ fontSize: 9, color: 'var(--color-text-tertiary)' }}>{win.count} obs</div> : null}
-                          </td>
-                        )
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <EmptyState title="NO VERIFIED FARE MATRIX" detail="The backend has not returned fare summaries for the current basket routes." />
-          )}
+        <Panel title="Route Fare Matrix" eyebrow="BACKEND VERIFIED FARE OBSERVATIONS" right={<span className={badgeClass(Boolean(summaries.length))}>{fareLoading ? 'LOADING' : summaries.length ? 'STORED FARES' : 'NO DATA'}</span>}>
+          <SectorHeatmap rows={heatmapRows} />
         </Panel>
 
         <Panel title="Booking Window Profile" eyebrow={selectedSummary ? selectedSummary.route : 'NO ROUTE SELECTED'} right={<span className={badgeClass(Boolean(selectedSummary))}>{selectedSummary?.overall?.data_origin ?? 'UNAVAILABLE'}</span>}>

@@ -1,8 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { CheckCircle2, Download, Filter, RefreshCw, Zap, ShieldCheck } from 'lucide-react'
-import { Button } from '../components/ui/Button'
+import { Download, Filter, RefreshCw } from 'lucide-react'
 import { apiFares, isBackendAvailable, resetBackendAvailability, type FareObservationApi } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
+import LiveBadge from '../components/LiveBadge'
+import DataFreshness from '../components/DataFreshness'
+import EmptyState from '../components/EmptyState'
+import { LIVE_STATE_BG, LIVE_STATE_COLOR, formatDateIST, formatDateTimeIST, liveSignal, type LiveCheck } from '../lib/liveStatus'
 
 const PIPELINE_STAGES = [
   { name: 'Acquisition', icon: '⬇', desc: 'Real-time B2B/NDC Feeds' },
@@ -11,17 +14,9 @@ const PIPELINE_STAGES = [
   { name: 'CPI Augmentation', icon: '📈', desc: 'MoSPI Transport Weighting' },
 ]
 
-const AIRFARE_SOURCES: Array<{ name: string; code: string; status: string; ping: string; offers: string }> = []
-/* Provider rows are populated only from the authorized backend response. */
-/*
-  { name: 'IndiGo', code: '6E', status: 'CONNECTED', ping: '24ms', offers: '4,820' },
-  { name: 'Air India', code: 'AI', status: 'CONNECTED', ping: '32ms', offers: '3,240' },
-  { name: 'Akasa Air', code: 'QP', status: 'CONNECTED', ping: '28ms', offers: '1,840' },
-  { name: 'SpiceJet', code: 'SG', status: 'CONNECTED', ping: '38ms', offers: '975' },
-  { name: 'AI Express', code: 'IX', status: 'CONNECTED', ping: '35ms', offers: '1,540' },
-  { name: 'SerpAPI / Google', code: 'SRP', status: 'CONNECTED', ping: '42ms', offers: '8,920' },
-]
-*/
+// Provider source pills were removed (audit §2.1): the list was empty and
+// the commented-out rows were fabricated CONNECTED/ping/offers figures.
+// Per-source status lives on the Data Sources page, from the backend.
 
 const ORIGINS = ['ALL', 'DEL', 'BOM', 'BLR', 'HYD', 'MAA', 'CCU']
 const AIRLINES = ['ALL', 'IndiGo', 'Air India', 'Akasa Air', 'SpiceJet', 'Air India Express']
@@ -40,11 +35,25 @@ export default function LiveFares() {
   const [allFares, setAllFares] = useState<FareObservationApi[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [lastFetched, setLastFetched] = useState<string>(
-    new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST'
-  )
+  // null until the first successful fetch — "Last synchronized" must never
+  // show the page-load time as if a sync happened (audit §2.1).
+  const [lastFetched, setLastFetched] = useState<Date | null>(null)
+  const [fetchOk, setFetchOk] = useState(false)
+  const [fetchFailed, setFetchFailed] = useState(false)
   const [currentPage, setCurrentPage] = useState(0)
   const pageSize = 20
+
+  // The one live-signal check for this page: every green treatment below is
+  // gated on it (audit §7.1).
+  const feedCheck: LiveCheck = {
+    ok: fetchOk,
+    checkedAt: lastFetched,
+    loading,
+    failed: fetchFailed,
+    newestRecordAt: allFares.length
+      ? new Date(allFares.reduce((latest, row) => row.collected_at > latest ? row.collected_at : latest, allFares[0].collected_at))
+      : null,
+  }
 
   const refreshFares = useCallback(async () => {
     setLoading(true)
@@ -77,12 +86,14 @@ export default function LiveFares() {
 
       if (!loaded) throw lastError instanceof Error ? lastError : new Error('The verified fare service is temporarily unavailable.')
 
-      setLastFetched(
-        new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST'
-      )
+      setLastFetched(new Date())
+      setFetchOk(true)
+      setFetchFailed(false)
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : ''
       setAllFares([])
+      setFetchOk(false)
+      setFetchFailed(true)
       setError(message.includes(' 401 ')
         ? 'Your session expired. Please sign in again to load verified fare observations.'
         : message || 'The verified fare service is temporarily unavailable. Please try again.')
@@ -159,10 +170,8 @@ export default function LiveFares() {
       >
         <div style={{ position: 'relative', zIndex: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 20 }}>
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 999, background: 'rgba(186,230,253,0.14)', color: '#bae6fd', border: '1px solid rgba(186,230,253,0.28)', fontSize: 11, fontWeight: 800, letterSpacing: '0.06em' }}>
-                ● DATA FEED CHECKED
-              </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+              <LiveBadge check={feedCheck} label="DATA FEED" />
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 999, background: 'rgba(219,234,254,0.95)', color: '#075985', border: '1px solid rgba(186,230,253,0.8)', fontSize: 11, fontWeight: 800, letterSpacing: '0.06em' }}>
                 JEVONS MATCHED-SAMPLE
               </span>
@@ -177,11 +186,16 @@ export default function LiveFares() {
 
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10 }}>
             <span style={{ fontSize: 11, color: '#94a3b8', fontFamily: 'var(--font-mono)' }}>
-              Last synchronized: {lastFetched}
+              {lastFetched ? `Last synchronized: ${formatDateTimeIST(lastFetched)}` : 'Not synchronized yet'}
             </span>
+            {feedCheck.newestRecordAt && (
+              <DataFreshness minutesAgo={Math.max(0, Math.floor((Date.now() - feedCheck.newestRecordAt.getTime()) / 60000))} />
+            )}
             <div style={{ display: 'flex', gap: 10 }}>
               <button
                 onClick={exportCsv}
+                disabled={filteredFares.length === 0}
+                title={filteredFares.length === 0 ? 'No rows to export' : undefined}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -193,7 +207,8 @@ export default function LiveFares() {
                   color: 'white',
                   fontSize: 12,
                   fontWeight: 700,
-                  cursor: 'pointer',
+                  cursor: filteredFares.length === 0 ? 'not-allowed' : 'pointer',
+                  opacity: filteredFares.length === 0 ? 0.55 : 1,
                   fontFamily: 'var(--font-sans)',
                   transition: 'all 0.15s ease',
                 }}
@@ -257,74 +272,47 @@ export default function LiveFares() {
         </div>
       )}
 
-      {/* ── Active Pipeline Stages Bar ── */}
+      {/* ── Pipeline Stages Bar — green only after a successful feed check ── */}
       <div
+        className="kpi-grid-4"
         style={{
           background: 'var(--color-surface-bg)',
           border: '1px solid var(--color-border-primary)',
           borderRadius: 'var(--radius-lg)',
           padding: '16px 20px',
-          display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
-          gap: 12,
         }}
       >
-        {PIPELINE_STAGES.map((s, i) => (
-          <div
-            key={s.name}
-            style={{
-              padding: '12px 14px',
-              borderRadius: 10,
-              background: 'rgba(22, 163, 74, 0.08)',
-              border: '1px solid rgba(22, 163, 74, 0.25)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 4,
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span style={{ fontSize: 11, fontWeight: 800, color: '#15803d', fontFamily: 'var(--font-mono)' }}>
-                {s.icon} {s.name.toUpperCase()}
-              </span>
-              <span style={{ fontSize: 9, fontWeight: 700, color: '#16a34a', background: 'rgba(22,163,74,0.15)', padding: '2px 6px', borderRadius: 4 }}>
-                ● ACTIVE
-              </span>
-            </div>
-            <span style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>
-              {s.desc}
-            </span>
-          </div>
-        ))}
-      </div>
-
-      {/* ── Source Status Pills ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
-        {AIRFARE_SOURCES.map(src => (
-          <div
-            key={src.code}
-            style={{
-              background: 'var(--color-surface-bg)',
-              border: '1px solid var(--color-border-primary)',
-              borderRadius: 10,
-              padding: '12px 14px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-            }}
-          >
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--color-text-primary)' }}>{src.name}</div>
-              <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', marginTop: 2 }}>{src.offers} offers active</div>
-            </div>
-            <div style={{ textAlign: 'right' }}>
-              <div style={{ fontSize: 9, fontWeight: 700, color: '#16a34a', display: 'flex', alignItems: 'center', gap: 4 }}>
-                <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#16a34a' }} />
-                {src.ping}
+        {PIPELINE_STAGES.map(s => {
+          const state = liveSignal(feedCheck)
+          const color = LIVE_STATE_COLOR[state]
+          const word = state === 'live' || state === 'connected' ? 'CONNECTED' : state === 'loading' ? 'CHECKING' : state === 'stale' ? 'STALE' : 'UNAVAILABLE'
+          return (
+            <div
+              key={s.name}
+              style={{
+                padding: '12px 14px',
+                borderRadius: 10,
+                background: LIVE_STATE_BG[state],
+                border: `1px solid ${color}44`,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 4,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: 11, fontWeight: 800, color, fontFamily: 'var(--font-mono)' }}>
+                  {s.icon} {s.name.toUpperCase()}
+                </span>
+                <span style={{ fontSize: 9, fontWeight: 700, color, background: `${color}22`, padding: '2px 6px', borderRadius: 4 }}>
+                  {word}
+                </span>
               </div>
-              <div style={{ fontSize: 9, color: 'var(--color-text-tertiary)', marginTop: 2 }}>HTTP 200</div>
+              <span style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>
+                {s.desc}
+              </span>
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
 
       {/* ── Filters Bar ── */}
@@ -429,7 +417,7 @@ export default function LiveFares() {
                     {o.observation_id}
                   </td>
                   <td style={{ padding: '12px 14px', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--color-text-secondary)' }}>
-                    {new Date(o.collected_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                    {formatDateTimeIST(o.collected_at)}
                   </td>
                   <td style={{ padding: '12px 14px', fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--color-brand-primary)' }}>
                     {o.route}
@@ -441,7 +429,7 @@ export default function LiveFares() {
                     {o.flight_number || 'Not provided'}
                   </td>
                   <td style={{ padding: '12px 14px', fontFamily: 'var(--font-mono)', color: 'var(--color-text-secondary)' }}>
-                    {o.travel_date}
+                    {formatDateIST(o.travel_date)}
                   </td>
                   <td style={{ padding: '12px 14px', fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--color-text-primary)' }}>
                     T+{o.advance_days}
@@ -472,6 +460,14 @@ export default function LiveFares() {
               ))}
             </tbody>
           </table>
+          {!loading && paginatedFares.length === 0 && (
+            <EmptyState
+              title={allFares.length ? 'NO FARES MATCH THESE FILTERS' : 'NO VERIFIED FARES AVAILABLE'}
+              detail={allFares.length
+                ? 'Loosen the filters to see more verified observations.'
+                : 'The backend returned no verified REAL fare observations for this session. Try Refresh Feeds, or check the Data Sources page for provider status.'}
+            />
+          )}
         </div>
 
         {/* Pagination */}

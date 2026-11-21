@@ -2,11 +2,11 @@ import { useCallback, useEffect, useState } from 'react'
 import { Calendar, Database, Download, History, RefreshCw, ShieldCheck } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { apiHistoricalBackfill, apiHistoricalSummary, type HistoricalSummary } from '../services/api'
+import { formatDateIST } from '../lib/liveStatus'
 
 function formatDate(value?: string) {
   if (!value) return '—'
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString('en-IN')
+  return formatDateIST(value)
 }
 
 function formatMoney(value?: number) {
@@ -79,7 +79,7 @@ export default function HistoricalFares() {
         <p style={{ margin: 0, maxWidth: 730, color: '#d6e7ff', fontSize: 13, lineHeight: 1.55 }}>Historical figures are shown only after the backend confirms their provenance. This page never fills missing data with a static or demo series.</p>
       </section>
 
-      {error && <div style={{ padding: '12px 14px', borderRadius: 10, background: '#fff7ed', border: '1px solid #fed7aa', color: '#9a3412', fontSize: 12 }}>{error}</div>}
+      {error && <div role="alert" style={{ padding: '12px 14px', borderRadius: 10, background: 'var(--color-danger-bg)', border: '1px solid rgba(220,38,38,0.3)', color: 'var(--color-danger)', fontSize: 12 }}>{error}</div>}
 
       <section style={{ background: '#fff', border: '1px solid var(--color-border-primary)', borderRadius: 14, padding: 18 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 14, flexWrap: 'wrap' }}>
@@ -101,7 +101,7 @@ export default function HistoricalFares() {
           </div>
         ) : (
           <>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 10, marginTop: 18 }}>
+            <div className="kpi-grid-4" style={{ marginTop: 18 }}>
               {[
                 ['Records', summary.records.toLocaleString('en-IN')],
                 ['Period', `${formatDate(summary.period_start)} – ${formatDate(summary.period_end)}`],

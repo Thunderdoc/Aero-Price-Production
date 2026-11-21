@@ -58,9 +58,12 @@ export function useAviationRadar(enabled = true) {
   useEffect(() => {
     if (!enabled) return
     consumers++
-    // Poll frequently enough to recover from a short provider interruption;
-    // cached positions remain visible between attempts.
-    if (!timer) { void refreshRadar(); timer = setInterval(() => void refreshRadar(), 5000) }
+    // Poll every 30 s (was 5 s): ADSB.lol is a free community feed with
+    // dynamic anonymous limits, and the backend cache is 30 s anyway — a
+    // 5 s poll bought nothing but ~5,760 upstream requests/day. Cached
+    // positions remain visible between attempts; the CACHED retry below
+    // still recovers quickly from a short provider interruption.
+    if (!timer) { void refreshRadar(); timer = setInterval(() => void refreshRadar(), 30000) }
     return () => { if (--consumers === 0) { clearInterval(timer); timer = undefined; if (retryTimer) { clearTimeout(retryTimer); retryTimer = undefined } } }
   }, [enabled])
   return state

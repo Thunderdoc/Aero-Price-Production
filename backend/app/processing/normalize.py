@@ -108,7 +108,7 @@ def normalize_fare(record: FareRecord) -> Optional[FareRecord]:
         availability_status=record.availability_status or "AVAILABLE",
         source=record.source,
         source_url=record.source_url,
-        data_origin=record.data_origin or "REAL",
+        data_origin=record.data_origin or "UNKNOWN",
         raw_hash=raw_hash,
         quality_flags=list(record.quality_flags or []),
     )

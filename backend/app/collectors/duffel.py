@@ -35,7 +35,7 @@ from typing import Any, Optional
 
 import httpx
 
-from app.collectors.base import CollectionResult, FareRecord, FareSourceAdapter
+from app.collectors.base import CollectionResult, FareRecord, FareSourceAdapter, redact_credentials
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -262,6 +262,8 @@ class DuffelAdapter(FareSourceAdapter):
             source_id=SOURCE_ID, route=route, travel_date=travel_date,
             advance_days=advance_days, status="SUCCESS",
             records=records, records_rejected=rejected, latency_ms=latency_ms,
+            # Real provider response (credential-stripped) for the audit trail.
+            raw_response=redact_credentials(json.dumps(raw_response, default=str)),
         )
 
     # ── sync HTTP call (runs in thread pool) ───────────────────────────────

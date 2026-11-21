@@ -11,7 +11,9 @@ from app.models.fare import FareObservation
 from app.services.collector import ROUTE_BASKET
 
 router = APIRouter()
-LIVE_ORIGINS = ("REAL", "OFFICIAL")
+# PUBLIC_INTERFACE (scraped Google Flights fares, honestly labelled) counts as
+# live data here — same set as the fares listing and the index.
+LIVE_ORIGINS = ("REAL", "OFFICIAL", "PUBLIC_INTERFACE")
 
 AIRPORTS = {
     "DEL": {"name": "Indira Gandhi International", "city": "New Delhi"},
@@ -88,13 +90,13 @@ async def system_context(
     """Overall system context: coverage, freshness, data-origin breakdown."""
     total = await db.scalar(
         select(func.count()).select_from(FareObservation)
-        .where(FareObservation.data_origin.in_(["REAL", "OFFICIAL"]))
+        .where(FareObservation.data_origin.in_(LIVE_ORIGINS))
     )
     since_24h = datetime.now(timezone.utc) - timedelta(hours=24)
     fresh = await db.scalar(
         select(func.count()).select_from(FareObservation)
         .where(and_(
-            FareObservation.data_origin.in_(["REAL", "OFFICIAL"]),
+            FareObservation.data_origin.in_(LIVE_ORIGINS),
             FareObservation.collected_at >= since_24h,
         ))
     )

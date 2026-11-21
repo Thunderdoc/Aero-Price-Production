@@ -4,6 +4,9 @@ SerpApi is queried server-side with the account key.  Each stored value is an
 actual offer returned for the requested route/date; this adapter never creates
 fallback prices.  To protect provider quota, the standard collection uses the
 T+7 window only (one request per monitored route per run).
+
+Provenance: results are Google Flights fares returned via SerpApi — real
+observed fares from a public interface, labelled PUBLIC_INTERFACE, never REAL.
 """
 import hashlib
 import json
@@ -12,8 +15,9 @@ from typing import Any
 
 import httpx
 
-from app.collectors.base import CollectionResult, FareRecord, FareSourceAdapter
+from app.collectors.base import CollectionResult, FareRecord, FareSourceAdapter, redact_credentials
 from app.core.config import settings
+from app.processing.provenance import PUBLIC_INTERFACE
 
 
 class SerpApiGoogleFlightsAdapter(FareSourceAdapter):
@@ -74,8 +78,9 @@ class SerpApiGoogleFlightsAdapter(FareSourceAdapter):
                 departure_time=str((first.get("departure_airport") or {}).get("time") or ""),
                 arrival_time=str((last.get("arrival_airport") or {}).get("time") or ""),
                 stops=max(0, len(legs) - 1), cabin="ECONOMY", source=self.source_id,
-                source_url="https://serpapi.com/google-flights-api", data_origin="REAL", raw_hash=payload_hash,
+                source_url="https://serpapi.com/google-flights-api", data_origin=PUBLIC_INTERFACE, raw_hash=payload_hash,
             ))
         return CollectionResult(self.source_id, route, travel_date, advance_days,
                                 "SUCCESS" if records else "NO_DATA", records=records,
+                                raw_response=redact_credentials(json.dumps(payload, default=str)),
                                 latency_ms=int((time.time() - start) * 1000))

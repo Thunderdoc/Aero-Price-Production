@@ -35,7 +35,7 @@ beforeEach(() => {
 })
 afterEach(cleanup)
 
-test('Google login uses the backend-confirmed role and keeps a valid session', async () => {
+test('Google login uses the backend-confirmed role and an expiry event clears the session', async () => {
   vi.mocked(signInWithGooglePopup).mockResolvedValue({
     user: { email: 'analyst@example.test', displayName: 'Analyst', getIdToken: async () => 'firebase-token' },
   } as Awaited<ReturnType<typeof signInWithGooglePopup>>)
@@ -50,8 +50,15 @@ test('Google login uses the backend-confirmed role and keeps a valid session', a
   expect(view.container.textContent).toBe('dashboard:ANALYST:server-token')
   expect(localStorage.getItem('aeroprice_token')).toBe('server-token')
 
-  act(() => window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { token: 'server-token' } })))
+  // A stale expiry event for a different token must not touch the session.
+  act(() => window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { token: 'stale-token' } })))
   expect(view.container.textContent).toBe('dashboard:ANALYST:server-token')
+
+  // An expiry event for the current token clears the session and leaves a notice.
+  act(() => window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { token: 'server-token' } })))
+  expect(view.container.textContent).toBe('login')
+  expect(localStorage.getItem('aeroprice_token')).toBeNull()
+  expect(sessionStorage.getItem('aeroprice_auth_notice')).toBe('Your session expired. Please sign in again.')
 })
 
 test('temporary backend failure retains Firebase identity instead of signing out', async () => {
@@ -69,7 +76,7 @@ test.each([
   ['USER', 'PUBLIC', 'FREE'],
   ['DGCA', 'ANALYST', 'GOVERNMENT'],
   ['ADMIN', 'ADMIN', 'ADMIN'],
-] as const)('%s backend login survives a background 401', async (workspace, role, plan) => {
+] as const)('%s backend login is cleared by a background 401 for its own token', async (workspace, role, plan) => {
   vi.mocked(apiLogin).mockResolvedValue({
     access_token: `${workspace}-token`, token_type: 'bearer',
     user: { email: 'new@example.test', name: 'New Account', role, plan },
@@ -78,8 +85,9 @@ test.each([
   await act(async () => { expect((await auth.login('new@example.test', 'secret123', false, workspace)).success).toBe(true) })
   expect(view.container.textContent).toBe(`dashboard:${role}:${workspace}-token`)
   act(() => window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { token: `${workspace}-token` } })))
-  expect(view.container.textContent).toBe(`dashboard:${role}:${workspace}-token`)
-  expect(sessionStorage.getItem('aeroprice_session_token')).toBe(`${workspace}-token`)
+  expect(view.container.textContent).toBe('login')
+  expect(sessionStorage.getItem('aeroprice_session_token')).toBeNull()
+  expect(sessionStorage.getItem('aeroprice_auth_notice')).toBe('Your session expired. Please sign in again.')
 })
 
 test.each([401, 403])('Google exchange rejection (%s) never creates a fake signed-in session', async status => {

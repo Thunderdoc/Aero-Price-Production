@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react'
-import { List, RefreshCw, Search, Clock, Plane, ShieldCheck } from 'lucide-react'
+import { List, RefreshCw, Search, Clock, Plane } from 'lucide-react'
 import { fetchAllCorridorFlights, type LiveFlight } from '../services/flightData'
+import LiveBadge from '../components/LiveBadge'
+import EmptyState from '../components/EmptyState'
+import { formatDateTimeIST, type LiveCheck } from '../lib/liveStatus'
 
 const STATUS_ORDER = ['active','scheduled','landed']
 
@@ -20,20 +23,29 @@ export default function AviationFlights() {
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
-  const [lastFetch, setLastFetch] = useState<Date|null>(null)
+  const [lastFetch, setLastFetch] = useState<Date | null>(null)
+  const [fetchOk, setFetchOk] = useState(false)
+  const [fetchFailed, setFetchFailed] = useState(false)
 
+  // lastFetch is set ONLY on a successful fetch — a failed attempt must not
+  // stamp the page as freshly checked (audit §2.2).
   async function load() {
     setLoading(true)
+    setFetchFailed(false)
     try {
       const results = await fetchAllCorridorFlights()
       const all = results.flatMap(r => r.flights)
       setFlights(all)
+      setLastFetch(new Date())
+      setFetchOk(true)
     } catch {
-      // Handled cleanly
+      setFetchOk(false)
+      setFetchFailed(true)
     }
     setLoading(false)
-    setLastFetch(new Date())
   }
+
+  const feedCheck: LiveCheck = { ok: fetchOk, checkedAt: lastFetch, loading, failed: fetchFailed }
 
   useEffect(() => { load() }, [])
 
@@ -63,17 +75,13 @@ export default function AviationFlights() {
           <h1 style={{ margin:0, fontSize:18, fontWeight:700, color:'var(--color-text-primary)', letterSpacing:'-0.01em' }}>
             Live Flight Operations
           </h1>
-          <span style={{ fontSize:11, fontWeight:600, color:'var(--color-success)', background:'var(--color-success-bg)', padding:'3px 9px', borderRadius:99, border:'1px solid rgba(22,163,74,0.3)', display:'flex', alignItems:'center', gap:4 }}>
-            <ShieldCheck size={11} /> ADS-B LIVE FEED · 4 FIRs
-          </span>
+          <LiveBadge check={feedCheck} label="ADS-B LIVE FEED" />
         </div>
-        <div style={{ display:'flex', gap:10, alignItems:'center' }}>
-          {lastFetch && (
-            <span style={{ fontSize:11, color:'var(--color-text-tertiary)', display:'flex', alignItems:'center', gap:4 }}>
-              <Clock size={11}/>
-              {lastFetch.toLocaleTimeString()}
-            </span>
-          )}
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)', display: 'flex', alignItems: 'center', gap: 4 }}>
+            <Clock size={11} />
+            {lastFetch ? formatDateTimeIST(lastFetch) : 'Not fetched yet'}
+          </span>
           <button onClick={load} disabled={loading}
             style={{ display:'flex', alignItems:'center', gap:5, padding:'6px 12px', borderRadius:8,
               border:'1px solid var(--color-border-primary)', background:'var(--color-surface-secondary)',
@@ -94,6 +102,7 @@ export default function AviationFlights() {
           <Search size={13} style={{ color:'var(--color-text-tertiary)' }}/>
           <input value={search} onChange={e=>setSearch(e.target.value)}
             placeholder="Search flight, airline, registration, route…"
+            aria-label="Search flights by flight number, airline, registration or route"
             style={{ border:'none', background:'none', outline:'none', fontSize:12,
               color:'var(--color-text-primary)', width:'100%', fontFamily:'var(--font-sans)' }}/>
         </div>
@@ -114,7 +123,7 @@ export default function AviationFlights() {
           })}
         </div>
         <span style={{ fontSize:11, color:'var(--color-text-tertiary)', marginLeft:'auto', fontFamily:'var(--font-mono)' }}>
-          Showing {filtered.length} of {flights.length} active flights
+          Showing {filtered.length} of {flights.length} flights
         </span>
       </div>
 
@@ -163,11 +172,11 @@ export default function AviationFlights() {
                   </td>
                   <td style={{ padding:'10px 16px', fontSize:11, fontFamily:'var(--font-mono)',
                     color:'var(--color-text-secondary)' }}>
-                    {f.dep_scheduled ? new Date(f.dep_scheduled).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '—'}
+                    {f.dep_scheduled ? formatDateTimeIST(f.dep_scheduled) : '—'}
                   </td>
                   <td style={{ padding:'10px 16px', fontSize:11, fontFamily:'var(--font-mono)',
                     color:'var(--color-text-secondary)' }}>
-                    {f.arr_scheduled ? new Date(f.arr_scheduled).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '—'}
+                    {f.arr_scheduled ? formatDateTimeIST(f.arr_scheduled) : '—'}
                   </td>
                   <td style={{ padding:'10px 16px' }}>
                     <span style={{ fontSize:9, fontWeight:700, padding:'3px 8px', borderRadius:99,
@@ -181,6 +190,13 @@ export default function AviationFlights() {
             })}
           </tbody>
         </table>
+        {!loading && filtered.length === 0 && (
+          fetchFailed
+            ? <EmptyState tone="error" title="FLIGHT FEED UNAVAILABLE" detail="The live flight feed did not return a result. Refresh Telemetry to retry." />
+            : flights.length === 0
+              ? <EmptyState title="NO FLIGHTS RETURNED" detail="The feed returned no flights for the monitored corridors in this session." />
+              : <EmptyState title="NO FLIGHTS MATCH THESE FILTERS" detail="Loosen the search or status filter to see more flights." />
+        )}
       </div>
     </div>
   )

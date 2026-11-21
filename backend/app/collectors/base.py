@@ -4,12 +4,44 @@ Abstract base for all fare source adapters.
 Every adapter must implement collect() and return a CollectionResult.
 Adapters that cannot access the source must set status=CHALLENGE_DETECTED
 and never fabricate fare data.
+
+Provenance rule (FIX-ONCE, Phase 2): a record's data_origin defaults to
+"UNKNOWN" — never "REAL". An adapter must explicitly claim its provenance;
+the quality stage hard-rejects UNKNOWN origins, so a record that forgets
+its provenance is dropped loudly instead of silently becoming "real".
 """
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import List, Optional
 from datetime import datetime, timezone
+import re
 import uuid
+
+
+# Credential-looking values that must never reach the audit trail, even if an
+# adapter accidentally includes a request URL or auth payload in its raw
+# response. Applied by adapters before attaching raw_response, and again by
+# the collector before persisting (defense in depth).
+_CREDENTIAL_PATTERNS = (
+    re.compile(r"([?&](?:api[-_]?key|token|secret)[=])[^&\s\"'}]+", re.IGNORECASE),
+    re.compile(
+        r"((?:\"|')(?:api[-_]?key|apiKey|token|secret|password|access_token)"
+        r"(?:\"|')\s*:\s*(?:\"|'))[^\"']*",
+        re.IGNORECASE,
+    ),
+)
+
+
+def redact_credentials(text: str) -> str:
+    """Replace credential-looking values with [REDACTED]. Never raises."""
+    if not text:
+        return text
+    try:
+        for pattern in _CREDENTIAL_PATTERNS:
+            text = pattern.sub(r"\1[REDACTED]", text)
+    except Exception:
+        return "[REDACTED]"
+    return text
 
 
 @dataclass
@@ -36,7 +68,9 @@ class FareRecord:
     seats_available: Optional[int] = None
     source: str = ""
     source_url: Optional[str] = None
-    data_origin: str = "REAL"
+    # UNKNOWN until an adapter explicitly claims a provenance. Never REAL by
+    # default — see the module docstring.
+    data_origin: str = "UNKNOWN"
     raw_hash: Optional[str] = None
     quality_flags: List[str] = field(default_factory=list)
 
@@ -55,6 +89,11 @@ class CollectionResult:
     error: Optional[str] = None
     challenge_reason: Optional[str] = None
     http_status: Optional[int] = None
+    # Credential-stripped provider response (JSON string) for the audit trail.
+    # Adapters attach the real response they received; the collector stores it
+    # in raw_fare_payloads instead of a synthetic summary. None when the
+    # adapter has no response to preserve (e.g. NOT_CONFIGURED).
+    raw_response: Optional[str] = None
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 

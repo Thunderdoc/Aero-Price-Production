@@ -14,7 +14,7 @@ vi.mock('../services/firebase', () => ({
   getFirebaseIdToken: vi.fn().mockResolvedValue(null),
   signOutFirebaseUser: vi.fn().mockResolvedValue(undefined),
 }))
-vi.mock('../services/api', () => ({ AUTH_REJECTED_EVENT: 'aeroprice:auth-rejected', apiCurrentUser: vi.fn(), apiFirebaseLogin: vi.fn(), apiLogin: vi.fn(), apiRegister: vi.fn(), clearApiAuthSession: vi.fn(), setApiAuthTokenRefresher: vi.fn() }))
+vi.mock('../services/api', () => ({ AUTH_EXPIRED_EVENT: 'aeroprice:auth-expired', AUTH_REJECTED_EVENT: 'aeroprice:auth-rejected', apiCurrentUser: vi.fn(), apiFirebaseLogin: vi.fn(), apiLogin: vi.fn(), apiRegister: vi.fn(), clearApiAuthSession: vi.fn(), setApiAuthTokenRefresher: vi.fn() }))
 
 let auth: ReturnType<typeof useAuth>
 function Consumer() { auth = useAuth(); return null }
@@ -64,7 +64,7 @@ test('unverified Firebase email still cannot sign in', async () => {
   expect(auth.user).toBeNull()
 })
 
-test('a normal user cannot enter Admin by choosing the Admin tab', async () => {
+test('a normal user signs in with the server-resolved PUBLIC role — the role is never chosen by the user', async () => {
   vi.mocked(signInFirebaseEmailUser).mockResolvedValue({ user: {
     email: 'account@example.test', emailVerified: true, getIdToken: async () => 'test-id-token',
   } } as unknown as Awaited<ReturnType<typeof signInFirebaseEmailUser>>)
@@ -72,9 +72,12 @@ test('a normal user cannot enter Admin by choosing the Admin tab', async () => {
     user: { name: 'Account', email: 'account@example.test', role: 'PUBLIC', plan: 'FREE' },
   })
   render(<AuthProvider><Consumer /></AuthProvider>)
-  await act(async () => { expect((await auth.login('account@example.test', 'test-password', false, 'ADMIN')).error).toContain('not authorized') })
-  expect(auth.user).toBeNull()
-  expect(auth.token).toBeNull()
+  // The old role-tab argument is ignored: sign-in succeeds and the role comes
+  // from the server, so the account stays PUBLIC and admin pages stay closed
+  // to it via canAccess — no wrong-tab logout, no client-side role choice.
+  await act(async () => { expect((await auth.login('account@example.test', 'test-password', false, 'ADMIN')).success).toBe(true) })
+  expect(auth.user?.role).toBe('PUBLIC')
+  expect(auth.token).toBe('verified-server-token')
 })
 
 test('401 recovery waits for Firebase persistence before checking the signed-in identity', async () => {

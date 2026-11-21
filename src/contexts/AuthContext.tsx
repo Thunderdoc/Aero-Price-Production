@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
-import { AUTH_REJECTED_EVENT, apiCurrentUser, apiFirebaseLogin, apiLogin, apiRegister, clearApiAuthSession, setApiAuthTokenRefresher } from '../services/api'
+import { AUTH_EXPIRED_EVENT, AUTH_REJECTED_EVENT, apiCurrentUser, apiFirebaseLogin, apiLogin, apiRegister, clearApiAuthSession, setApiAuthTokenRefresher } from '../services/api'
 import { FIREBASE_CONFIGURED, getFirebaseAuth, getFirebaseIdToken, getGoogleRedirectResult, signInFirebaseEmailUser, signInWithGooglePopup, signOutFirebaseUser } from '../services/firebase'
 
 export type UserRole = 'PUBLIC' | 'ANALYST' | 'ADMIN'
@@ -18,6 +18,10 @@ export interface AuthUser {
 interface AuthContextValue {
   user: AuthUser | null
   token: string | null
+  // True when the backend (email/password) auth mode is active. The login
+  // page uses it for mode-accurate messaging: backend mode sends no
+  // verification or reset emails.
+  isBackendAuth: boolean
   login: (email: string, password: string, remember?: boolean, workspace?: AuthWorkspace) => Promise<{ success: boolean; error?: string; user?: AuthUser }>
   loginWithGoogle: (workspace?: AuthWorkspace, passwordToLink?: string) => Promise<{ success: boolean; error?: string }>
   createAccount: (name: string, email: string, password: string, workspace?: AuthWorkspace) => Promise<{ success: boolean; error?: string }>
@@ -71,25 +75,13 @@ function roleForFirebaseEmail(email: string): Pick<AuthUser, 'role' | 'plan'> {
   if (FIREBASE_ADMIN_EMAILS.includes(normalized)) {
     return { role: 'ADMIN', plan: 'ADMIN' }
   }
-  try {
-    const pending = JSON.parse(localStorage.getItem('aeroprice_pending_workspace') || 'null') as { email?: string; workspace?: AuthWorkspace } | null
-    if (pending?.email === normalized && pending.workspace === 'DGCA') {
-      return { role: 'ANALYST', plan: 'GOVERNMENT' }
-    }
-  } catch {
-    // Ignore malformed local registration metadata and use the configured lists.
-  }
+  // Roles come only from the server or these server-configured email lists.
+  // The old localStorage role path (aeroprice_pending_workspace) was deleted:
+  // anyone could edit it in DevTools and self-grant the analyst UI.
   if (FIREBASE_ANALYST_EMAILS.includes(normalized)) {
     return { role: 'ANALYST', plan: 'GOVERNMENT' }
   }
   return { role: 'PUBLIC', plan: 'FREE' }
-}
-
-function roleForWorkspace(email: string, workspace?: AuthWorkspace): Pick<AuthUser, 'role' | 'plan'> {
-  const normalized = email.trim().toLowerCase()
-  if (FIREBASE_ADMIN_EMAILS.includes(normalized)) return { role: 'ADMIN', plan: 'ADMIN' }
-  if (workspace === 'DGCA') return { role: 'ANALYST', plan: 'GOVERNMENT' }
-  return roleForFirebaseEmail(normalized)
 }
 
 function loadStoredUser(): AuthUser | null {
@@ -164,6 +156,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener(AUTH_REJECTED_EVENT, reject)
   }, [])
 
+  // A 401 for the CURRENT session token ends the session: clear the stored
+  // session and route back to login with a "session expired" notice. The
+  // token match is what keeps this safe — a stale background request that
+  // finishes after a re-login must not sign out the new session, and a
+  // token-less (guest) 401 is not an expiry at all.
+  useEffect(() => {
+    const expire = (event: Event) => {
+      const detail = (event as CustomEvent<{ token?: string }>).detail
+      if (!detail.token || detail.token !== sessionRef.current.token) return
+      const message = 'Your session expired. Please sign in again.'
+      sessionStorage.setItem('aeroprice_auth_notice', message)
+      clearApiAuthSession()
+      clearStoredSession()
+      localStorage.removeItem(FIREBASE_SESSION_KEY)
+      sessionStorage.removeItem(FIREBASE_SESSION_KEY)
+      setUser(null)
+      setToken(null)
+      window.dispatchEvent(new CustomEvent('aeroprice-auth-notice', { detail: message }))
+    }
+    window.addEventListener(AUTH_EXPIRED_EVENT, expire)
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, expire)
+  }, [])
+
+  useEffect(() => {
+    // Drop the deleted localStorage role key if an older build left one.
+    try { localStorage.removeItem('aeroprice_pending_workspace') } catch { /* Storage may be unavailable. */ }
+  }, [])
+
   const refreshUser = useCallback(async () => {
     if (!token || !user?.email) return
     const snapshot = await apiCurrentUser(token)
@@ -183,13 +203,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     sync()
     // Server role, subscription and disabled-account changes are authoritative
     // and must move an already-open workspace promptly without trusting the
-    // role embedded in an older browser token.
-    const timer = window.setInterval(sync, 10_000)
+    // role embedded in an older browser token. Poll at 60 s (the old 10 s
+    // poll exhausted the shared auth rate-limit bucket in ~10 minutes) plus
+    // on focus / tab-visible, which is when a returning user notices staleness.
+    const timer = window.setInterval(sync, 60_000)
     window.addEventListener('focus', sync)
+    window.addEventListener('visibilitychange', sync)
     window.addEventListener('aeroprice-notifications-changed', sync)
     return () => {
       window.clearInterval(timer)
       window.removeEventListener('focus', sync)
+      window.removeEventListener('visibilitychange', sync)
       window.removeEventListener('aeroprice-notifications-changed', sync)
     }
   }, [token, user?.email, refreshUser])
@@ -248,10 +272,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [token, user])
 
-  // A 401 from one background request is not proof that the signed-in user
-  // logged out. In particular, an older request can finish after a new login.
-  // The API still rejects invalid credentials; only an explicit logout may
-  // discard the browser session.
+  // A 401 for the current session token is handled by the AUTH_EXPIRED_EVENT
+  // listener above (token-matched, so a stale request cannot sign out a
+  // newer session). Nothing else here discards the browser session.
 
   useEffect(() => {
     let active = true
@@ -322,14 +345,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => { active = false }
   }, [])
 
-  async function login(email: string, password: string, remember = true, workspace?: AuthWorkspace): Promise<{ success: boolean; error?: string; user?: AuthUser }> {
+  // Single sign-in: the role is resolved post-auth from the server response.
+  // The `workspace` argument is accepted for call-site compatibility but is
+  // deliberately ignored — there are no role tabs anymore, and a valid login
+  // must never succeed and then be undone by a tab check.
+  async function login(email: string, password: string, remember = true, _workspace?: AuthWorkspace): Promise<{ success: boolean; error?: string; user?: AuthUser }> {
     const emailLower = email.trim().toLowerCase()
-    const expectedRole = workspace === 'ADMIN' ? 'ADMIN' : workspace === 'DGCA' ? 'ANALYST' : workspace === 'USER' ? 'PUBLIC' : null
 
     function finishLogin(response: Awaited<ReturnType<typeof apiLogin>>, firebaseSession: boolean) {
-      if (expectedRole && response.user.role !== expectedRole) {
-        return { success: false, error: `This account is not authorized for the ${workspace} workspace.` }
-      }
       const displayName = response.user.name || response.user.email
       const authedUser: AuthUser = {
         name: displayName, email: response.user.email,
@@ -339,7 +362,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (firebaseSession) {
         ;(remember ? localStorage : sessionStorage).setItem(FIREBASE_SESSION_KEY, '1')
         ;(remember ? sessionStorage : localStorage).removeItem(FIREBASE_SESSION_KEY)
-        localStorage.removeItem('aeroprice_pending_workspace')
       } else {
         localStorage.removeItem(FIREBASE_SESSION_KEY)
         sessionStorage.removeItem(FIREBASE_SESSION_KEY)
@@ -375,16 +397,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const idToken = await firebaseUser.getIdToken(true)
           // Errors here concern server verification, not the password.
           // Never retry an accepted Firebase password against another store.
-          let response = await apiFirebaseLogin(idToken)
-          let firebaseSession = true
-          if (workspace === 'DGCA' && response.user.role !== 'ANALYST') {
-            // Preserve support for existing backend-registered DGCA accounts.
-            try {
-              response = await apiLogin(emailLower, password)
-              firebaseSession = false
-            } catch { /* Retain the verified Firebase result for the role check. */ }
-          }
-          return finishLogin(response, firebaseSession)
+          const response = await apiFirebaseLogin(idToken)
+          return finishLogin(response, true)
         }
       }
       return finishLogin(await apiLogin(emailLower, password), false)
@@ -411,11 +425,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (code.includes('unauthorized-domain')) {
         return { success: false, error: 'This domain is not authorized in Firebase Authentication.' }
       }
-      return { success: false, error: error instanceof Error ? error.message : 'Incorrect email or password.' }
+      // Honest errors: only a real 401 means wrong credentials. A 429, a
+      // 5xx, or a network failure must never be reported as a wrong password
+      // — the user cannot fix those by retyping.
+      const status = error && typeof error === 'object' && 'status' in error ? Number(error.status) : 0
+      const detail = error instanceof Error ? error.message : ''
+      if (status === 401) {
+        return { success: false, error: 'Incorrect email or password. Check your credentials or use Forgot password.' }
+      }
+      if (status === 429) {
+        return { success: false, error: detail || 'Too many sign-in attempts. Try again in a few minutes.' }
+      }
+      if (status >= 500) {
+        if (detail && !/something went wrong/i.test(detail)) return { success: false, error: detail }
+        return { success: false, error: 'The server is having trouble right now. Please try again in a moment.' }
+      }
+      if (/failed to fetch|network|load failed/i.test(detail)) {
+        return { success: false, error: 'Unable to connect to the server. Check your connection and try again.' }
+      }
+      return { success: false, error: detail || 'Incorrect email or password.' }
     }
   }
 
-  async function loginWithGoogle(workspace?: AuthWorkspace, passwordToLink?: string): Promise<{ success: boolean; error?: string }> {
+  // Single sign-in: the role is resolved post-auth from the server response
+  // (or, when the backend exchange is unavailable, from the server-configured
+  // Firebase email lists). The `workspace` argument is accepted for
+  // call-site compatibility but is deliberately ignored.
+  async function loginWithGoogle(_workspace?: AuthWorkspace, passwordToLink?: string): Promise<{ success: boolean; error?: string }> {
     try {
       const credential = await signInWithGooglePopup()
       const { linkPasswordToCurrentFirebaseUser } = await import('../services/firebase')
@@ -428,7 +464,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { success: false, error: 'Google did not provide a verified email address for this account.' }
       }
       const email = firebaseUser.email || ''
-      const access = roleForWorkspace(email, workspace)
+      const access = roleForFirebaseEmail(email)
       const name = firebaseUser.displayName || email
       const authedUser: AuthUser = {
         name,
@@ -464,9 +500,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           plan: apiSession.user.plan,
           initials: (apiSession.user.name || authedUser.name).slice(0, 2).toUpperCase(),
         }
-        if (workspace && serverUser.role !== (workspace === 'DGCA' ? 'ANALYST' : workspace === 'ADMIN' ? 'ADMIN' : 'PUBLIC')) {
-          return { success: false, error: `This Google account is not authorized for the ${workspace} workspace.` }
-        }
         setUser(serverUser)
         setToken(apiSession.access_token)
         localStorage.setItem(FIREBASE_SESSION_KEY, '1')
@@ -484,9 +517,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         // Firebase identity remains valid and the backend verifies this token
         // directly when the optional exchange is unavailable.
-        if (workspace && authedUser.role !== (workspace === 'DGCA' ? 'ANALYST' : workspace === 'ADMIN' ? 'ADMIN' : 'PUBLIC')) {
-          return { success: false, error: `This Google account is not authorized for the ${workspace} workspace.` }
-        }
         setUser(authedUser)
         setToken(idToken)
         localStorage.setItem(FIREBASE_SESSION_KEY, '1')
@@ -523,13 +553,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function createAccount(name: string, email: string, password: string, workspace?: AuthWorkspace): Promise<{ success: boolean; error?: string }> {
+  // Self-registration creates a PUBLIC user account only. Analyst and admin
+  // accounts are granted by an administrator (role change / invite) — the
+  // `workspace` argument is accepted for call-site compatibility but is
+  // deliberately ignored, and the backend rejects DGCA self-registration.
+  async function createAccount(name: string, email: string, password: string, _workspace?: AuthWorkspace): Promise<{ success: boolean; error?: string }> {
     if (USE_BACKEND_AUTH) {
-      if (workspace === 'ADMIN') {
-        return { success: false, error: 'Admin accounts require approved credentials.' }
-      }
       try {
-        await apiRegister(name.trim(), email.trim().toLowerCase(), password, workspace === 'DGCA' ? 'DGCA' : 'USER')
+        await apiRegister(name.trim(), email.trim().toLowerCase(), password, 'USER')
         return { success: true }
       } catch (err) {
         return { success: false, error: err instanceof Error ? err.message : 'Unable to create account.' }
@@ -538,9 +569,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const { createFirebaseEmailUser } = await import('../services/firebase')
       const credential = await createFirebaseEmailUser(email.trim().toLowerCase(), password, name)
-      if (workspace === 'DGCA') {
-        localStorage.setItem('aeroprice_pending_workspace', JSON.stringify({ email: email.trim().toLowerCase(), workspace }))
-      }
       await credential.user.reload()
       setUser(null)
       setToken(null)
@@ -557,6 +585,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function resetPassword(email: string): Promise<{ success: boolean; error?: string }> {
+    // Backend mode has no email sender: there is no self-service email reset.
+    // Say so plainly instead of pretending an email was sent — an admin
+    // resets the password (POST /api/admin/users/{email}/reset-password).
+    if (USE_BACKEND_AUTH) {
+      return { success: false, error: 'This account uses backend sign-in, which has no email password reset. Ask an administrator to reset your password.' }
+    }
     try {
       const { sendFirebasePasswordReset } = await import('../services/firebase')
       await sendFirebasePasswordReset(email.trim().toLowerCase())
@@ -586,7 +620,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     sessionStorage.removeItem(FIREBASE_SESSION_KEY)
   }
 
-  return <AuthContext.Provider value={{ user, token, login, loginWithGoogle, createAccount, resetPassword, logout, refreshUser }}>{children}</AuthContext.Provider>
+  return <AuthContext.Provider value={{ user, token, isBackendAuth: USE_BACKEND_AUTH, login, loginWithGoogle, createAccount, resetPassword, logout, refreshUser }}>{children}</AuthContext.Provider>
 }
 
 export function useAuth(): AuthContextValue {
@@ -596,15 +630,13 @@ export function useAuth(): AuthContextValue {
 }
 
 // Helper: can a role access a given page?
-export function canAccess(role: UserRole, plan: UserPlan, page: string): boolean {
+// Since the 21 Nov 2026 access decision, every read-only page is open to any
+// signed-in user (the analyst gate was dropped on reads, backend + frontend).
+// Only admin operations stay gated — collection/admin pages. There must be no
+// visible nav item that silently does nothing: anything the sidebar shows a
+// signed-in user, this matrix allows.
+export function canAccess(role: UserRole, _plan: UserPlan, page: string): boolean {
   const adminOnly = ['collection', 'admin']
-  const analystPlus = ['government', 'methodology', 'exports', 'sources']
-  const subscriberPlus: string[] = []
-  const publicFreePages = ['overview', 'routes', 'insights', 'map', 'alerts', 'historicalfares']
-
-  if (role === 'PUBLIC' && plan === 'FREE' && !publicFreePages.includes(page)) return false
   if (adminOnly.includes(page)) return role === 'ADMIN'
-  if (analystPlus.includes(page)) return role === 'ANALYST' || role === 'ADMIN'
-  if (subscriberPlus.includes(page)) return plan !== 'FREE'
   return true
 }

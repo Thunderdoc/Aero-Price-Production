@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { BarChart2, CheckCircle2, Download, RefreshCw, Info, Layers } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
-import { apiIndexBasket, apiIndexCurrent, apiIndexHistory, type IndexBasketRoute, type IndexHistoryResponse, type IndexResponse } from '../services/api'
+import { apiIndexBasket, apiIndexCurrent, apiIndexHistory, type IndexBasketRoute, type IndexFrequency, type IndexHistoryResponse, type IndexResponse } from '../services/api'
+import { fareChangeColor, formatDateIST, formatDateTimeIST } from '../lib/liveStatus'
 
 const DEFAULT_INDEX_CURRENT: IndexResponse = {
   status: 'NO_DATA',
@@ -14,12 +15,14 @@ export default function AirfareIndex() {
   const [current, setCurrent] = useState<IndexResponse>(DEFAULT_INDEX_CURRENT)
   const [history, setHistory] = useState<IndexHistoryResponse['observations']>([])
   const [basket, setBasket] = useState<IndexBasketRoute[]>([])
+  const [dgcaWeightsNote, setDgcaWeightsNote] = useState<string>('')
+  const [frequency, setFrequency] = useState<IndexFrequency>('daily')
   // Start in a loading state so a cold backend never flashes "no data".
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
-  const [lastRefreshed, setLastRefreshed] = useState<string>(
-    new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST'
-  )
+  // null until the first successful index response — "VIEW LOADED" must never
+  // show the page-load time as if data loaded (audit §2.9).
+  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null)
 
   async function load() {
     setLoading(true)
@@ -27,22 +30,22 @@ export default function AirfareIndex() {
     try {
       const [indexResult, historyResult, basketResult] = await Promise.allSettled([
         apiIndexCurrent(token ?? undefined),
-        apiIndexHistory(token ?? undefined) as Promise<IndexHistoryResponse>,
+        apiIndexHistory(token ?? undefined, frequency) as Promise<IndexHistoryResponse>,
         apiIndexBasket(token ?? undefined),
       ])
-      if (indexResult.status === 'fulfilled') setCurrent(indexResult.value)
-      else {
+      if (indexResult.status === 'fulfilled') {
+        setCurrent(indexResult.value)
+        setLastRefreshed(new Date())
+      } else {
         setCurrent(DEFAULT_INDEX_CURRENT)
         setLoadError('The index endpoint could not be reached. Check your session and backend connection.')
       }
       setHistory(historyResult.status === 'fulfilled'
         ? historyResult.value.observations.filter(row => row.status === 'PUBLISHED') : [])
       setBasket(basketResult.status === 'fulfilled' ? basketResult.value.routes : [])
+      setDgcaWeightsNote(basketResult.status === 'fulfilled' ? (basketResult.value.dgca_weights_note ?? '') : '')
     } finally {
       setLoading(false)
-      setLastRefreshed(
-        new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST'
-      )
     }
   }
 
@@ -56,7 +59,7 @@ export default function AirfareIndex() {
 
   useEffect(() => {
     void load()
-  }, [token])
+  }, [token, frequency])
 
   function exportHistoryCsv() {
     const header = 'Period,Index Value,Base Value,Route Count,Observations,Data Origin,Status'
@@ -121,6 +124,8 @@ export default function AirfareIndex() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <button
             onClick={exportHistoryCsv}
+            disabled={history.length === 0}
+            title={history.length === 0 ? 'No published periods to export' : undefined}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -131,7 +136,8 @@ export default function AirfareIndex() {
               background: 'var(--color-surface-secondary)',
               fontSize: 12,
               fontWeight: 700,
-              cursor: 'pointer',
+              cursor: history.length === 0 ? 'not-allowed' : 'pointer',
+              opacity: history.length === 0 ? 0.55 : 1,
               color: 'var(--color-text-secondary)',
             }}
           >
@@ -163,10 +169,21 @@ export default function AirfareIndex() {
           overflow: 'hidden',
         }}
       >
-        <div style={{ position: 'relative', zIndex: 1, display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 48, alignItems: 'center' }}>
-          <div>
+        <div className="index-spotlight-grid" style={{ position: 'relative', zIndex: 1, alignItems: 'center' }}>
+          <div style={{ minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-              <div className="live-data-dot" style={{ width: 8, height: 8, borderRadius: '50%', background: '#38bdf8', boxShadow: '0 0 10px #38bdf8' }} />
+              {/* The dot pulses ONLY when a PUBLISHED index came back — never
+                  on a cold load or a failed check (audit §2.9). */}
+              <div
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  background: isPublished ? '#38bdf8' : '#64748b',
+                  boxShadow: isPublished ? '0 0 10px #38bdf8' : 'none',
+                  animation: isPublished ? 'pulse-dot 1.8s ease-in-out infinite' : 'none',
+                }}
+              />
               <span style={{ fontSize: 11, letterSpacing: '0.14em', color: '#93c5fd', fontWeight: 800, fontFamily: 'var(--font-mono)' }}>
                 OBSERVED ROUTE-BASKET COMPOSITE
               </span>
@@ -174,7 +191,10 @@ export default function AirfareIndex() {
             <div style={{ fontSize: 64, fontWeight: 900, fontFamily: 'var(--font-mono)', lineHeight: 1, letterSpacing: '-0.03em' }}>
               {current.index_value != null ? current.index_value.toFixed(2) : '—'}
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14 }}>
+            {/* flexWrap: without it this row's max-content forces the left
+                grid column wide and squeezes the middle column to ~100px,
+                wrapping the message one word per line (seen in local run). */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 13, color: '#94a3b8', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4 }}>
                 <Info size={16} /> {isPublished ? 'Verified matched-sample index' : 'No published index available yet'}
               </span>
@@ -184,10 +204,18 @@ export default function AirfareIndex() {
             </div>
           </div>
 
-          <div style={{ borderLeft: '1px solid rgba(255,255,255,0.12)', paddingLeft: 36 }}>
+          {/* minWidth keeps the message + base-period note readable: the
+              grid's 1fr middle column otherwise collapses under the left
+              column's max-content in the no-data state. */}
+          <div className="index-spotlight-middle" style={{ minWidth: 280 }}>
             <div style={{ fontSize: 14, lineHeight: 1.65, color: '#cbd5e1', marginBottom: 16 }}>
               {loadError || current.message || 'Calculated from matched, verified fare observations. See the coverage and observation period below.'}
             </div>
+            {current.base_period_note && (
+              <div style={{ fontSize: 11, lineHeight: 1.6, color: '#94a3b8', marginBottom: 16 }}>
+                Base period: {current.base_period_note}
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
               <div>
                 <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: '#94a3b8', letterSpacing: '0.08em' }}>BASKET COVERAGE</div>
@@ -206,23 +234,48 @@ export default function AirfareIndex() {
 
           <div style={{ textAlign: 'right' }}>
             <div style={{ padding: '8px 14px', borderRadius: 8, background: 'rgba(56,189,248,0.15)', border: '1px solid rgba(56,189,248,0.3)', color: '#38bdf8', fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', marginBottom: 8 }}>
-              VIEW LOADED: {lastRefreshed}
+              {lastRefreshed ? `VIEW LOADED: ${formatDateTimeIST(lastRefreshed)}` : 'VIEW NOT LOADED YET'}
             </div>
             <div style={{ fontSize: 11, color: '#94a3b8' }}>Observation period: {current.observation_period ?? 'not published'}</div>
           </div>
         </div>
       </div>
 
-      {/* ── Published daily history table ── */}
+      {/* ── Published history table (daily / weekly / monthly) ── */}
       <div className="ap-card" style={{ padding: 'var(--space-2xl)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
           <div>
             <h2 style={{ margin: '0 0 4px', fontSize: 16, fontWeight: 800, color: 'var(--color-text-primary)' }}>
               Historical Index Series & Trends
             </h2>
             <p style={{ margin: 0, fontSize: 12, color: 'var(--color-text-secondary)' }}>
-              One latest published value per observed day, with sample counts and provenance.
+              {frequency === 'daily'
+                ? 'One latest published value per observed day, with sample counts and provenance.'
+                : `End-of-period value per ${frequency === 'weekly' ? 'ISO week' : 'calendar month'} — the last published daily value in the period, with no averaging or interpolation.`}
             </p>
+          </div>
+          <div style={{ display: 'flex', gap: 6 }} role="tablist" aria-label="Index frequency">
+            {(['daily', 'weekly', 'monthly'] as const).map(f => (
+              <button
+                key={f}
+                role="tab"
+                aria-selected={frequency === f}
+                onClick={() => setFrequency(f)}
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: 8,
+                  border: '1px solid var(--color-border-primary)',
+                  background: frequency === f ? 'var(--color-brand-primary)' : 'var(--color-surface-secondary)',
+                  color: frequency === f ? 'white' : 'var(--color-text-secondary)',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  textTransform: 'capitalize',
+                }}
+              >
+                {f}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -250,13 +303,13 @@ export default function AirfareIndex() {
               const chg = prev ? ((Number(row.value) - prev) / prev) * 100 : null
               return (
                 <tr key={`${row.period}-${i}`}>
-                  <td style={{ fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{row.period}</td>
+                  <td style={{ fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{frequency === 'daily' ? formatDateIST(row.period) : row.period}</td>
                   <td style={{ fontSize: 16, fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--color-brand-primary)' }}>
                     {row.value?.toFixed(2)}
                   </td>
                   <td>
                     {chg !== null ? (
-                      <span style={{ color: chg >= 0 ? '#16a34a' : '#ef4444', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
+                      <span style={{ color: fareChangeColor(chg), fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
                         {chg >= 0 ? '+' : ''}{chg.toFixed(2)}%
                       </span>
                     ) : (
@@ -284,12 +337,16 @@ export default function AirfareIndex() {
 
       {/* ── Route Weighting Basket Breakdown ── */}
       <div className="ap-card" style={{ padding: 'var(--space-2xl)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
           <Layers size={18} style={{ color: 'var(--color-brand-primary)' }} />
           <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: 'var(--color-text-primary)' }}>
             Configured Route Basket — Not DGCA Weights
           </h2>
         </div>
+        <p style={{ margin: '0 0 16px', fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.6 }}>
+          {dgcaWeightsNote || current.weights?.dgca_weights_note ||
+            'The index uses equal 1.0 weights for every route. DGCA route-level traffic weights are unavailable — this is a stated limitation, not a DGCA-weighted index.'}
+        </p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
           {basket.map(rw => (
             <div

@@ -1,7 +1,13 @@
 """
 Government data fetchers.
-Uses AllOrigins proxy to access public government HTML pages.
+Fetches official government pages directly (no third-party proxy — the old
+AllOrigins reference was stale: _official_get has always fetched directly).
 All data tagged OFFICIAL. Never presented as live airfare observations.
+
+MoSPI and data.gov.in need free registrations/keys (MOSPI_API_EMAIL +
+MOSPI_API_PASSWORD, DATAGOV_API_KEY + DATAGOV_AVIATION_DATASET_ID). Until
+Ankit creates them, those fetchers report NOT_CONFIGURED honestly and import
+nothing — no unauthenticated or placeholder data is ever imported.
 
 Retry policy: up to MAX_RETRIES attempts with exponential backoff starting at
 BACKOFF_BASE_S seconds.  Only transient errors (network, 5xx, timeout) trigger
@@ -226,7 +232,7 @@ GOV_DATASET_REGISTRY = [
         "source_name": "MoSPI eSankhyiki CPI Transport",
         "organization": "Ministry of Statistics and Programme Implementation",
         "access_type": "PUBLIC",
-        "api_key_required": "NO",
+        "api_key_required": "YES",
         "format": "HTML",
         "source_url": settings.MOSPI_ESANKHYIKI_URL,
     },
@@ -235,7 +241,7 @@ GOV_DATASET_REGISTRY = [
         "source_name": "data.gov.in Aviation Dataset",
         "organization": "National Data & Analytics Platform",
         "access_type": "PUBLIC",
-        "api_key_required": "NO",
+        "api_key_required": "YES",
         "format": "JSON",
         "source_url": "https://www.data.gov.in/catalog/monthly-air-traffic-statistics",
     },

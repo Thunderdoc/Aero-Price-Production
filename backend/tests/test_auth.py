@@ -8,28 +8,17 @@ from sqlalchemy import select
 from starlette.requests import Request
 
 from app.api.routes.auth import FirebaseLoginRequest, RegistrationRequest, firebase_login, login, register_account
-from app.core.auth import DEMO_USERS, create_access_token, decode_token, verify_password
+from app.core import auth as auth_core
+from app.core.auth import create_access_token, decode_token, verify_password
 from app.models.auth_account import AuthAccount
 
 
-def test_demo_users_populated():
-    assert len(DEMO_USERS) >= 4
-
-
-def test_admin_user_exists():
-    assert "admin@aeroprice.in" in DEMO_USERS
-    assert DEMO_USERS["admin@aeroprice.in"]["role"] == "ADMIN"
-
-
-def test_analyst_user_exists():
-    assert "dgca@gov.in" in DEMO_USERS
-    assert DEMO_USERS["dgca@gov.in"]["role"] == "ANALYST"
-
-
-def test_public_user_plan():
-    user = DEMO_USERS.get("visitor@example.com") or DEMO_USERS.get("user@aeroprice.in")
-    assert user is not None
-    assert user["role"] == "PUBLIC"
+def test_demo_users_removed_from_production_code():
+    # Phase 1 (S1/L2): hardcoded demo accounts — including a full ADMIN with a
+    # plaintext password — were deleted from app code. Fixtures live only in
+    # tests/demo_fixtures.py; no production code path may reference them.
+    assert not hasattr(auth_core, "DEMO_USERS")
+    assert not hasattr(auth_core, "authenticate_user")
 
 
 def test_jwt_roundtrip():
@@ -72,24 +61,22 @@ async def test_user_registration_persists_a_backend_auth_account(db):
     assert token_response.access_token
 
 
-async def test_dgca_registration_creates_non_admin_analyst_account(db):
-    response = await register_account(
-        RegistrationRequest(name="DGCA Analyst", email="dgca.new@example.com", password="secret123", workspace="DGCA"),
-        db,
-    )
-
-    assert response["user"]["role"] == "ANALYST"
-    assert response["user"]["plan"] == "GOVERNMENT"
-    account = await db.scalar(select(AuthAccount).where(AuthAccount.email == "dgca.new@example.com"))
-    assert account is not None
-    assert account.role == "ANALYST"
+# DGCA self-registration is CLOSED (Phase 1, S2/L4): workspace="DGCA" no
+# longer grants ANALYST/GOVERNMENT. The regression test lives in
+# test_phase1_security.py::test_dgca_self_registration_is_closed.
 
 
-async def test_verified_google_login_uses_registered_dgca_role(db, monkeypatch):
-    await register_account(
-        RegistrationRequest(name="DGCA Analyst", email="dgca.new@example.com", password="secret123", workspace="DGCA"),
-        db,
-    )
+async def test_verified_google_login_uses_admin_granted_dgca_role(db, monkeypatch):
+    # Analyst role is granted by an admin only (direct DB row here simulates
+    # the admin grant); self-registration can no longer create it.
+    db.add(AuthAccount(
+        email="dgca.new@example.com",
+        name="DGCA Analyst",
+        password_hash="unused",
+        role="ANALYST",
+        plan="GOVERNMENT",
+    ))
+    await db.flush()
 
     async def verified_identity(_token):
         return {"email": "dgca.new@example.com", "name": "DGCA Analyst", "role": "PUBLIC", "plan": "FREE"}

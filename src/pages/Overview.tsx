@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ArrowRight, BarChart3, Bell, CalendarDays, CheckCircle2, GitBranch, Map as MapIcon, Plane, Tag, TrendingDown, TrendingUp } from 'lucide-react'
-import UpgradeModal from '../components/UpgradeModal'
 import { useAuth } from '../contexts/AuthContext'
-import { apiDashboard, apiFareMovement, apiFares, BASE_URL } from '../services/api'
+import { apiDashboard, apiFareMovement, apiFares, apiPriceAlerts, BASE_URL } from '../services/api'
+import { median } from '../lib/liveStatus'
 
 // Version the public hero asset so Vercel/browser caches cannot keep an older
 // dashboard image after a deployment.
@@ -18,8 +18,8 @@ type GeoCollection = { features?: GeoFeature[] }
 
 const routeSpecs = [
   { key: 'DEL-BOM', code: 'DEL → BOM', name: 'Delhi to Mumbai' },
-  { key: 'DEL-BLR', code: 'BLR → DEL', name: 'Bengaluru to Delhi' },
-  { key: 'DEL-MAA', code: 'MAA → DEL', name: 'Chennai to Delhi' },
+  { key: 'DEL-BLR', code: 'DEL → BLR', name: 'Delhi to Bengaluru' },
+  { key: 'DEL-MAA', code: 'DEL → MAA', name: 'Delhi to Chennai' },
 ]
 const GEOJSON_URL = '/maps/india-states-2019.geojson'
 const ROUTE_CACHE_KEY = 'aeroprice:verified-route-cards:v1'
@@ -50,13 +50,6 @@ function readDashboardCache(): { routes_tracked?: number; real_observations?: nu
     const value = JSON.parse(localStorage.getItem(DASHBOARD_CACHE_KEY) || 'null')
     return value && typeof value === 'object' ? value : null
   } catch { return null }
-}
-
-function median(values: number[]) {
-  if (!values.length) return null
-  const sorted = [...values].sort((a, b) => a - b)
-  const middle = Math.floor(sorted.length / 2)
-  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2
 }
 
 function nestedPoints(value: unknown, output: Array<[number, number]>) {
@@ -148,20 +141,6 @@ function FareMovementMap({ movement }: { movement: FareMovementResponse | null }
   </div>
 }
 
-function FareRangeGraph({ routes }: { routes: RouteCard[] }) {
-  const available = routes.filter(route => route.fare != null && route.minFare != null && route.maxFare != null)
-  if (!available.length) return <div style={{ minHeight: 165, display: 'grid', placeItems: 'center', color: '#7388a6', fontSize: 12, background: '#fbfdff', borderRadius: 10 }}>No verified fare observations are available for comparison.</div>
-  const min = Math.min(...available.map(route => route.minFare as number))
-  const max = Math.max(...available.map(route => route.maxFare as number))
-  const range = Math.max(1, max - min)
-  return <div style={{ display: 'grid', gap: 15, marginTop: 14 }}>{available.map(route => {
-    const left = (((route.minFare as number) - min) / range) * 100
-    const right = (((route.maxFare as number) - min) / range) * 100
-    const marker = (((route.fare as number) - min) / range) * 100
-    return <div key={route.key}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 7 }}><b style={{ fontSize: 12, color: '#183c78' }}>{route.code}</b><span style={{ fontSize: 11, color: '#6f84a2' }}>median {formatFare(route.fare)} · {route.sampleCount} observations</span></div><div style={{ position: 'relative', height: 12, borderRadius: 99, background: '#edf3fa' }}><div style={{ position: 'absolute', left: `${left}%`, width: `${Math.max(3, right - left)}%`, height: '100%', borderRadius: 99, background: 'linear-gradient(90deg, #9ec8f6, #1769e8)' }} /><span title={`Median ${formatFare(route.fare)}`} style={{ position: 'absolute', left: `calc(${marker}% - 5px)`, top: -3, width: 18, height: 18, borderRadius: '50%', background: '#fff', border: '3px solid #1769e8', boxSizing: 'border-box' }} /></div><div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 5, fontSize: 10, color: '#8a9cb3' }}><span>{formatFare(route.minFare)}</span><span>{formatFare(route.maxFare)}</span></div></div>
-  })}</div>
-}
-
 function ChangeLabel({ change }: { change?: number }) {
   if (change == null) return <span style={{ color: '#8194ad', fontSize: 11 }}>Comparison pending</span>
   const isDrop = change < 0
@@ -170,7 +149,10 @@ function ChangeLabel({ change }: { change?: number }) {
   return <span style={{ color, fontWeight: 800, fontSize: 11 }}>{isStable ? '• Stable' : `${isDrop ? '↓' : '↑'} ${Math.abs(change).toFixed(2)}%`} <span style={{ color: '#7185a2', fontWeight: 500 }}>vs prior collection</span></span>
 }
 
-function IndexTrend({ routes, range }: { routes: RouteCard[]; range: string }) {
+// One bar per route median from the latest verified collection. This is NOT
+// a time series — the old "Airfare Trend" title and 7D/30D/90D/1Y buttons
+// implied a history the data does not have (audit §2.11).
+function LatestRouteMedians({ routes }: { routes: RouteCard[] }) {
   const available = routes.filter(route => route.fare != null).slice(0, 6)
   if (!available.length) return <div style={{ minHeight: 128, display: 'grid', placeItems: 'center', color: '#7388a6', fontSize: 12, textAlign: 'center' }}>Waiting for verified fare observations.</div>
 
@@ -186,7 +168,7 @@ function IndexTrend({ routes, range }: { routes: RouteCard[]; range: string }) {
         </div>
       })}
     </div>
-    <div style={{ marginTop: 28, color: '#7388a6', fontSize: 11, textAlign: 'center' }}>Latest verified fare collection · {range} history will appear after additional published periods.</div>
+    <div style={{ marginTop: 28, color: '#7388a6', fontSize: 11, textAlign: 'center' }}>Latest verified fare collection · one bar per route median.</div>
   </div>
 }
 
@@ -200,11 +182,9 @@ export default function Overview({ onNavigate }: Props) {
   const [activeAlerts, setActiveAlerts] = useState<number | null>(null)
   const [fareMovement, setFareMovement] = useState<FareMovementResponse | null>(null)
   const [routeCards, setRouteCards] = useState<RouteCard[]>(() => readRouteCache() ?? routeSpecs.map(route => ({ ...route, fare: null, minFare: null, maxFare: null, sampleCount: 0 })))
-  const [showAccess, setShowAccess] = useState(false)
   const [liveAircraft, setLiveAircraft] = useState<number | null>(null)
   const [compactDashboard, setCompactDashboard] = useState(() => localStorage.getItem('aeroprice_compact_mode') === 'true')
   const [dataSaver, setDataSaver] = useState(() => localStorage.getItem('aeroprice_data_saver') === 'true')
-  const [trendRange, setTrendRange] = useState('7D')
 
   useEffect(() => {
     const refreshPreferences = () => {
@@ -215,13 +195,17 @@ export default function Overview({ onNavigate }: Props) {
     return () => window.removeEventListener('aeroprice-preferences-changed', refreshPreferences)
   }, [])
 
+  // "Active alerts" comes from the backend price-alerts list — the old
+  // localStorage key was never written anywhere, so the KPI was stuck at 0.
+  // On 403 (no grant) or any error the KPI stays "Data unavailable".
   useEffect(() => {
     if (!user?.email) { setActiveAlerts(null); return }
-    try {
-      const stored = JSON.parse(localStorage.getItem(`aeroprice_price_alerts:${user.email}`) || '[]')
-      setActiveAlerts(Array.isArray(stored) ? stored.length : 0)
-    } catch { setActiveAlerts(0) }
-  }, [user?.email])
+    let active = true
+    apiPriceAlerts(token ?? undefined)
+      .then(data => { if (active) setActiveAlerts(Array.isArray(data.alerts) ? data.alerts.length : 0) })
+      .catch(() => { if (active) setActiveAlerts(null) })
+    return () => { active = false }
+  }, [user?.email, token])
 
   useEffect(() => {
     let active = true
@@ -249,7 +233,7 @@ export default function Overview({ onNavigate }: Props) {
     Promise.all(routeSpecs.map(async spec => {
       try {
         const response = await apiFares({ route: spec.key, limit: 200 }, token ?? undefined)
-        const fares = response.observations.filter(observation => observation.data_origin === 'REAL' || observation.data_origin === 'OFFICIAL').map(observation => Number(observation.total_fare)).filter(Number.isFinite)
+        const fares = response.observations.filter(observation => observation.data_origin === 'REAL' || observation.data_origin === 'OFFICIAL' || observation.data_origin === 'PUBLIC_INTERFACE').map(observation => Number(observation.total_fare)).filter(Number.isFinite)
         return { ...spec, fare: median(fares), minFare: fares.length ? Math.min(...fares) : null, maxFare: fares.length ? Math.max(...fares) : null, sampleCount: fares.length }
       } catch { return { ...spec, fare: null, minFare: null, maxFare: null, sampleCount: 0 } }
     })).then(next => {
@@ -279,7 +263,6 @@ export default function Overview({ onNavigate }: Props) {
     return () => { active = false; window.clearInterval(timer) }
   }, [])
 
-  const isFree = user?.role === 'PUBLIC' && user.plan === 'FREE'
   const availableRoutes = useMemo(() => routeCards.filter(route => route.fare != null), [routeCards])
   const movementForRoute = (route: string) => fareMovement?.routes.find(item => item.route === route)
   const priceDropEvents = (fareMovement?.routes ?? []).filter(item => item.change_pct < 0).sort((a, b) => a.change_pct - b.change_pct)
@@ -287,12 +270,12 @@ export default function Overview({ onNavigate }: Props) {
   return <div className={`user-dashboard${compactDashboard ? ' is-compact' : ''}${dataSaver ? ' is-data-saver' : ''}`} style={{ maxWidth: 1380, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 12, color: '#102b63' }}>
     <section className="user-dashboard-hero" style={{ minHeight: 202, borderRadius: 16, padding: '25px 34px', position: 'relative', overflow: 'hidden', background: `linear-gradient(90deg, rgba(2,31,75,.92) 0%, rgba(4,56,116,.67) 48%, rgba(4,32,74,.28) 100%), url(${DASHBOARD_HERO}) center/cover`, border: '1px solid #2d73bb', boxShadow: 'inset 0 0 70px rgba(25,157,255,.16), 0 10px 28px rgba(10,42,91,.20)', color: '#fff' }}>
       <div className="user-dashboard-hero-copy" style={{ position: 'relative', zIndex: 1, maxWidth: 720 }}><div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.17em', color: '#69d5ff', marginBottom: 9 }}>◉ GOVERNMENT INTELLIGENCE PORTAL</div><h1 style={{ margin: 0, fontSize: 38, lineHeight: 1.05, letterSpacing: '-.04em', fontWeight: 850, color: '#fff' }}>Explore Airfares <span style={{ color: '#2aa8ff' }}>Smarter</span></h1><p style={{ margin: '10px 0 17px', fontSize: 16, color: '#edf6ff' }}>Compare verified routes, understand fare changes and get actionable insights for policy, planning and CPI-related analysis.</p><div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}><button onClick={() => onNavigate('routes')} style={{ border: 0, borderRadius: 10, padding: '11px 18px', background: '#1268ee', color: '#fff', fontWeight: 800, fontSize: 13, cursor: 'pointer' }}><Plane size={15} style={{ verticalAlign: 'middle', marginRight: 7 }} />Explore Routes <ArrowRight size={15} style={{ verticalAlign: 'middle', marginLeft: 7 }} /></button><button onClick={() => onNavigate('map')} style={{ border: 0, borderRadius: 10, padding: '11px 18px', background: '#fff', color: '#102e70', fontWeight: 800, fontSize: 13, cursor: 'pointer' }}><MapIcon size={15} style={{ verticalAlign: 'middle', marginRight: 7 }} />View India Map</button></div></div>
-      <div className="user-dashboard-hero-stats" style={{ position: 'absolute', right: 28, top: 30, width: 190, color: '#fff', fontWeight: 800, fontSize: 13, lineHeight: 1.45 }}>Better insights.<br />Brighter journeys.<br />A more connected India.<div style={{ width: 30, borderTop: '3px solid #2aa8ff', marginTop: 11 }} /><div style={{ display: 'flex', gap: 22, marginTop: 17 }}><span><b style={{ fontSize: 23 }}>{liveAircraft ?? '—'}</b><small style={{ display: 'block', color: '#c5dbf5' }}>Aircraft tracked</small></span><span><b style={{ fontSize: 23 }}>{verifiedObservations ?? '—'}</b><small style={{ display: 'block', color: '#c5dbf5' }}>Fare observations</small></span></div></div>
+      <div className="user-dashboard-hero-stats" style={{ position: 'absolute', right: 28, top: 30, width: 190, color: '#fff', fontWeight: 800, fontSize: 13, lineHeight: 1.45, background: 'rgba(10,18,36,0.55)', padding: '12px 14px', borderRadius: 12 }}>Better insights.<br />Brighter journeys.<br />A more connected India.<div style={{ width: 30, borderTop: '3px solid #2aa8ff', marginTop: 11 }} /><div style={{ display: 'flex', gap: 22, marginTop: 17 }}><span><b style={{ fontSize: 23 }}>{liveAircraft ?? '—'}</b><small style={{ display: 'block', color: '#c5dbf5' }}>Aircraft tracked</small></span><span><b style={{ fontSize: 23 }}>{verifiedObservations ?? '—'}</b><small style={{ display: 'block', color: '#c5dbf5' }}>Fare observations</small></span></div></div>
     </section>
 
     <section className="user-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0,1fr))', gap: 10 }}>{[
       { icon: Plane, label: 'Verified routes', value: routesTracked == null ? 'Data unavailable' : routesTracked.toLocaleString('en-IN'), tone: '#1989e8', helper: 'Current monitored corridors' },
-      { icon: CheckCircle2, label: 'Verified observations', value: verifiedObservations == null ? 'Data unavailable' : verifiedObservations.toLocaleString('en-IN'), tone: '#159669', helper: 'REAL / OFFICIAL fare rows' },
+      { icon: CheckCircle2, label: 'Verified observations', value: verifiedObservations == null ? 'Data unavailable' : verifiedObservations.toLocaleString('en-IN'), tone: '#159669', helper: 'REAL / OFFICIAL / PUBLIC_INTERFACE rows' },
       { icon: Tag, label: 'Price drops', value: priceDrops == null ? 'Data unavailable' : priceDrops.toLocaleString('en-IN'), tone: '#7c55e8', helper: priceDrops == null ? 'A comparison period is required' : 'Routes cheaper than the prior collection' },
       { icon: Bell, label: 'Active alerts', value: activeAlerts == null ? 'Data unavailable' : activeAlerts.toLocaleString('en-IN'), tone: '#f0a22b', helper: activeAlerts == null ? 'Sign in to view account alerts' : 'Saved alerts for this account' },
       { icon: TrendingUp, label: 'Airfare index (latest)', value: latestIndex == null ? 'Data unavailable' : latestIndex.toFixed(2), tone: '#159ed1', helper: indexDelta == null ? 'Verified index pending' : `${indexDelta >= 0 ? '↑' : '↓'} ${Math.abs(indexDelta).toFixed(1)}% vs prior collection` },
@@ -308,10 +291,9 @@ export default function Overview({ onNavigate }: Props) {
     </section>
 
     <section className="user-analytics-layout overview-analytics" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.5fr) minmax(300px, 1fr) minmax(300px, 1fr)', gap: 12 }}>
-      <div className="overview-analytics-card trend-card" style={{ background: '#fff', border: '1px solid #dbe7f2', borderRadius: 14, padding: 16, boxShadow: '0 5px 15px rgba(25,71,130,.05)' }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}><div><h2 style={{ margin: 0, fontSize: 18, color: '#102e70' }}>Airfare Trend <span style={{ fontSize: 12, color: '#7890ae' }}>(All India Index)</span></h2><p style={{ margin: '4px 0 0', fontSize: 11, color: '#7890ae' }}>Verified movement from the latest fare collections</p></div><div style={{ display: 'flex', gap: 5 }}>{['7D','30D','90D','1Y'].map(t => <button type="button" key={t} onClick={() => setTrendRange(t)} aria-pressed={trendRange === t} style={{ padding: '6px 9px', border: '1px solid #dbe7f2', borderRadius: 7, background: trendRange === t ? '#1769e8' : '#f1f6fc', color: trendRange === t ? '#fff' : '#1769e8', fontSize: 10, fontWeight: 800, cursor: 'pointer' }}>{t}</button>)}</div></div><IndexTrend routes={routeCards} range={trendRange} />{latestIndex != null && <div className="trend-kpis" style={{ display: 'flex', justifyContent: 'flex-end', gap: 18, marginTop: -2, color: '#173b78' }}><span style={{ fontSize: 11 }}>Current Index<br/><b style={{ fontSize: 22 }}>{latestIndex.toFixed(2)}</b></span><span style={{ fontSize: 11 }}>Movement<br/><b style={{ fontSize: 16, color: (indexDelta ?? 0) >= 0 ? '#d9343e' : '#07875d' }}>{indexDelta == null ? '—' : `${indexDelta > 0 ? '+' : ''}${indexDelta.toFixed(2)}%`}</b></span></div>}</div>
+      <div className="overview-analytics-card trend-card" style={{ background: '#fff', border: '1px solid #dbe7f2', borderRadius: 14, padding: 16, boxShadow: '0 5px 15px rgba(25,71,130,.05)' }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}><div><h2 style={{ margin: 0, fontSize: 18, color: '#102e70' }}>Latest route medians</h2><p style={{ margin: '4px 0 0', fontSize: 11, color: '#7890ae' }}>Verified medians from the latest fare collection</p></div></div><LatestRouteMedians routes={routeCards} />{latestIndex != null && <div className="trend-kpis" style={{ display: 'flex', justifyContent: 'flex-end', gap: 18, marginTop: -2, color: '#173b78' }}><span style={{ fontSize: 11 }}>Current Index<br/><b style={{ fontSize: 22 }}>{latestIndex.toFixed(2)}</b></span><span style={{ fontSize: 11 }}>Movement<br/><b style={{ fontSize: 16, color: (indexDelta ?? 0) >= 0 ? '#d9343e' : '#07875d' }}>{indexDelta == null ? '—' : `${indexDelta > 0 ? '+' : ''}${indexDelta.toFixed(2)}%`}</b></span></div>}</div>
       <div className="overview-analytics-card route-contribution-card" style={{ background: '#fff', border: '1px solid #dbe7f2', borderRadius: 14, padding: 16, boxShadow: '0 5px 15px rgba(25,71,130,.05)' }}><div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 13 }}><div style={{ width: 38, height: 38, borderRadius: 11, display: 'grid', placeItems: 'center', background: '#eaf3ff', color: '#1769e8', fontSize: 20 }}>⌁</div><div style={{ flex: 1 }}><h2 style={{ margin: 0, fontSize: 18, color: '#102e70' }}>Route Contribution to Index <span title="How each verified route moves the index" style={{ color: '#7d91ad', fontSize: 12 }}>ⓘ</span></h2><p style={{ margin: '4px 0 0', fontSize: 11, color: '#7890ae' }}>Latest verified route movement · select a route to explore</p></div><button type="button" onClick={() => onNavigate('routes')} style={{ border: '1px solid #dbe7f2', borderRadius: 8, padding: '8px 10px', background: '#eff6ff', color: '#1265db', fontWeight: 800, cursor: 'pointer', whiteSpace: 'nowrap' }}>View All →</button></div><div style={{ display: 'grid', gridTemplateColumns: '70px 1fr 72px 18px', gap: 8, padding: '0 8px 7px', color: '#6882a4', fontSize: 10, fontWeight: 800 }}><span>Route</span><span>Contribution</span><span style={{ textAlign: 'right' }}>Change</span><span /></div>{routeCards.map(route => { const change = movementForRoute(route.key)?.change_pct ?? null; const positive = change != null && change >= 0; const cityByCode: Record<string, string> = { DEL: 'Delhi', BLR: 'Bengaluru', MAA: 'Chennai', BOM: 'Mumbai', HYD: 'Hyderabad', CCU: 'Kolkata' }; const city = cityByCode[route.code.split(' ')[0]] ?? 'India'; return <button type="button" key={route.code} onClick={() => onNavigate('routes')} title={`Open ${route.code} route details`} style={{ width: '100%', display: 'grid', gridTemplateColumns: '70px 1fr 72px 18px', gap: 8, alignItems: 'center', padding: '10px 8px', border: '1px solid #edf2f7', borderRadius: 10, marginBottom: 6, background: '#fbfdff', fontSize: 11, cursor: 'pointer', textAlign: 'left' }}><span><b style={{ display: 'block', color: '#173b78', fontSize: 13 }}>{route.code.split(' ')[0]}</b><small style={{ color: '#8aa0bb' }}>{city}</small></span><span style={{ height: 10, background: '#e6eef7', borderRadius: 99, overflow: 'hidden' }}><i style={{ display: 'block', width: `${change == null ? 0 : Math.min(100, Math.max(9, Math.abs(change) * 12))}%`, height: '100%', background: positive ? '#ef7661' : '#39a978', borderRadius: 99 }} /></span><span style={{ textAlign: 'right' }}><b style={{ display: 'block', color: change == null ? '#7890ae' : positive ? '#ef3f44' : '#07875d', fontSize: 13 }}>{change == null ? '—' : `${change > 0 ? '+' : ''}${change.toFixed(2)}`}</b><small style={{ color: change == null ? '#7890ae' : positive ? '#ef3f44' : '#07875d' }}>{change == null ? 'unavailable' : `${change > 0 ? '+' : ''}${change.toFixed(2)}%`}</small></span><span style={{ color: '#7890ae', fontSize: 20 }}>›</span></button> })}</div>
-      <div className="overview-analytics-card recent-alerts-card" style={{ background: '#fff', border: '1px solid #dbe7f2', borderRadius: 14, padding: 16, boxShadow: '0 5px 15px rgba(25,71,130,.05)' }}><div style={{ display: 'flex', justifyContent: 'space-between' }}><div><h2 style={{ margin: 0, fontSize: 18, color: '#102e70' }}>Recent Price Alerts</h2><p style={{ margin: '4px 0 0', fontSize: 11, color: '#7890ae' }}>Verified changes from the latest collection</p></div><button onClick={() => onNavigate('alerts')} style={{ border: 0, background: 'none', color: '#1265db', fontWeight: 800, cursor: 'pointer' }}>View All →</button></div>{priceDropEvents.length > 0 ? <div className="recent-alert-list" style={{ display: 'grid', gap: 9, marginTop: 13 }}>{priceDropEvents.slice(0, 3).map(event => <div className="recent-alert-row" key={event.route} style={{ display: 'grid', gridTemplateColumns: '20px 1fr auto', gap: 8, alignItems: 'center', padding: '7px 0', borderBottom: '1px solid #edf2f7' }}><TrendingDown size={18} color="#07875d" /><div><b style={{ display: 'block', fontSize: 11, color: '#173b78' }}>{event.route} fare dropped by {Math.abs(event.change_pct).toFixed(2)}%</b><span style={{ fontSize: 10, color: '#7185a2' }}>{formatFare(event.current_fare)} · verified collection</span></div><span style={{ fontSize: 10, color: '#7185a2' }}>{fareMovement?.current_period ?? ''}</span></div>)}</div> : <div style={{ marginTop: 18, padding: '18px 12px', borderRadius: 10, background: '#fbfdff', border: '1px dashed #dbe7f2', textAlign: 'center' }}><TrendingDown size={20} color="#91a4bd" /><div style={{ marginTop: 8, color: '#526987', fontSize: 12, fontWeight: 700 }}>{fareMovement?.available ? 'No price drops in the latest collection' : 'Movement data is not available yet'}</div><div style={{ marginTop: 4, color: '#8194ad', fontSize: 11, lineHeight: 1.45 }}>{fareMovement?.message ?? 'A second verified collection is required before a price movement can be shown.'}</div></div>}<button onClick={() => setShowAccess(true)} style={{ width: '100%', marginTop: 10, padding: 10, border: 0, borderRadius: 9, background: '#eaf3ff', color: '#1265db', fontWeight: 800, cursor: 'pointer' }}>+ Set New Price Alert</button></div>
+      <div className="overview-analytics-card recent-alerts-card" style={{ background: '#fff', border: '1px solid #dbe7f2', borderRadius: 14, padding: 16, boxShadow: '0 5px 15px rgba(25,71,130,.05)' }}><div style={{ display: 'flex', justifyContent: 'space-between' }}><div><h2 style={{ margin: 0, fontSize: 18, color: '#102e70' }}>Recent Price Alerts</h2><p style={{ margin: '4px 0 0', fontSize: 11, color: '#7890ae' }}>Verified changes from the latest collection</p></div><button onClick={() => onNavigate('alerts')} style={{ border: 0, background: 'none', color: '#1265db', fontWeight: 800, cursor: 'pointer' }}>View All →</button></div>{priceDropEvents.length > 0 ? <div className="recent-alert-list" style={{ display: 'grid', gap: 9, marginTop: 13 }}>{priceDropEvents.slice(0, 3).map(event => <div className="recent-alert-row" key={event.route} style={{ display: 'grid', gridTemplateColumns: '20px 1fr auto', gap: 8, alignItems: 'center', padding: '7px 0', borderBottom: '1px solid #edf2f7' }}><TrendingDown size={18} color="#07875d" /><div><b style={{ display: 'block', fontSize: 11, color: '#173b78' }}>{event.route} fare dropped by {Math.abs(event.change_pct).toFixed(2)}%</b><span style={{ fontSize: 10, color: '#7185a2' }}>{formatFare(event.current_fare)} · verified collection</span></div><span style={{ fontSize: 10, color: '#7185a2' }}>{fareMovement?.current_period ?? ''}</span></div>)}</div> : <div style={{ marginTop: 18, padding: '18px 12px', borderRadius: 10, background: '#fbfdff', border: '1px dashed #dbe7f2', textAlign: 'center' }}><TrendingDown size={20} color="#91a4bd" /><div style={{ marginTop: 8, color: '#526987', fontSize: 12, fontWeight: 700 }}>{fareMovement?.available ? 'No price drops in the latest collection' : 'Movement data is not available yet'}</div><div style={{ marginTop: 4, color: '#8194ad', fontSize: 11, lineHeight: 1.45 }}>{fareMovement?.message ?? 'A second verified collection is required before a price movement can be shown.'}</div></div>}<button onClick={() => onNavigate('alerts')} style={{ width: '100%', marginTop: 10, padding: 10, border: 0, borderRadius: 9, background: '#eaf3ff', color: '#1265db', fontWeight: 800, cursor: 'pointer' }}>+ Set New Price Alert</button></div>
     </section>
-    {isFree && showAccess && <UpgradeModal feature="Price Alerts" featureKey="PRICE_ALERTS" onClose={() => setShowAccess(false)} />}
   </div>
 }

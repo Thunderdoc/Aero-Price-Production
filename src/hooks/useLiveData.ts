@@ -3,9 +3,13 @@
  *
  * Provenance contract:
  *   - isLive=true only when the API returns real (data_origin="REAL") observations.
- *   - connectionStatus="offline" when the backend is unreachable.
+ *   - connectionStatus="offline" ONLY when the backend is unreachable.
  *   - connectionStatus="live" when real data is available.
- *   - connectionStatus="delayed" when backend is up but no real observations exist yet.
+ *   - connectionStatus="delayed" when the backend is up but no data flows for
+ *     this user yet — that covers signed-out (no token), a dashboard endpoint
+ *     failing against a reachable backend (e.g. DB down), and genuinely no
+ *     live observations. "Offline" must never be shown for those: the backend
+ *     is reachable, the data is not.
  *
  * No synthetic price variance. No fake LIVE indicators.
  */
@@ -65,27 +69,43 @@ export function useLiveData(): UseLiveDataResult {
         setConnectionStatus('offline')
         return
       }
+      // Backend is reachable but the user is signed out: no data can flow,
+      // but the backend is NOT offline.
       if (!token) {
-        setConnectionStatus('offline')
+        setConnectionStatus('delayed')
         return
       }
-      const dash = await apiDashboard(token)
+      let dash
+      try {
+        dash = await apiDashboard(token)
+      } catch {
+        // Backend is up (isBackendAvailable passed) but the dashboard call
+        // failed — e.g. the database is down. That is "no data", not offline.
+        setConnectionStatus('delayed')
+        return
+      }
       setRealObservations(dash.real_observations ?? 0)
       setSourcesLive(dash.sources_live ?? 0)
       setIndexValue(dash.index_value ?? null)
       setLastUpdated(formatTimestamp())
       setConnectionStatus((dash.sources_live ?? 0) > 0 ? 'live' : 'delayed')
-      const flightResponse = await fetch(`${BASE_URL}/api/aviation/live?limit=150`, { signal: AbortSignal.timeout(8000) })
-      if (!flightResponse.ok) throw new Error('aviation feed unavailable')
-      const flightBody = await flightResponse.json() as { aircraft?: Array<Record<string, unknown>> }
-      const aircraft = (flightBody.aircraft ?? []).map((item, index) => ({
-        icao24: String(item.icao24 ?? item.registration ?? `live-${index}`),
-        callsign: String(item.callsign ?? item.registration ?? 'UNKNOWN').trim(),
-        lat: Number(item.latitude ?? item.lat), lng: Number(item.longitude ?? item.lng),
-        altitude: Number(item.altitude_ft ?? item.altitude ?? 0), velocity: Number(item.ground_speed_kts ?? item.velocity ?? 0),
-        heading: Number(item.track_deg ?? item.heading ?? 0), origin_country: String(item.origin_country ?? 'Unknown'),
-      })).filter(item => Number.isFinite(item.lat) && Number.isFinite(item.lng))
-      setLiveFlights(aircraft)
+      // The radar feed is independent of the fare dashboard: a radar failure
+      // must not flip the whole connection status to offline.
+      try {
+        const flightResponse = await fetch(`${BASE_URL}/api/aviation/live?limit=150`, { signal: AbortSignal.timeout(8000) })
+        if (!flightResponse.ok) throw new Error('aviation feed unavailable')
+        const flightBody = await flightResponse.json() as { aircraft?: Array<Record<string, unknown>> }
+        const aircraft = (flightBody.aircraft ?? []).map((item, index) => ({
+          icao24: String(item.icao24 ?? item.registration ?? `live-${index}`),
+          callsign: String(item.callsign ?? item.registration ?? 'UNKNOWN').trim(),
+          lat: Number(item.latitude ?? item.lat), lng: Number(item.longitude ?? item.lng),
+          altitude: Number(item.altitude_ft ?? item.altitude ?? 0), velocity: Number(item.ground_speed_kts ?? item.velocity ?? 0),
+          heading: Number(item.track_deg ?? item.heading ?? 0), origin_country: String(item.origin_country ?? 'Unknown'),
+        })).filter(item => Number.isFinite(item.lat) && Number.isFinite(item.lng))
+        setLiveFlights(aircraft)
+      } catch {
+        // Keep the last known positions; the fare status above stands.
+      }
     } catch {
       setConnectionStatus('offline')
     }

@@ -2,11 +2,12 @@ import { useState, useEffect, useRef, type ReactNode } from 'react'
 import {
   Home, Map, Plane, Building2, Database,
   Settings, Shield, Bell, BarChart2, BookOpen,
-  Download, Activity, LogOut, Table2, Search, X, TrendingUp, History,
-  LineChart, CalendarDays, AlertCircle, Landmark, Users, Globe, Bookmark, MessageSquare, Moon, Sun,
-  TowerControl, Route, CloudSun, Fuel, Radio, Menu
+  Download, Activity, LogOut, LogIn, Table2, Search, X, TrendingUp, History,
+  LineChart, CalendarDays, AlertCircle, Landmark, Users, Globe, MessageSquare, Moon, Sun,
+  TowerControl, Route, CloudSun, Fuel, Radio, Menu, Clock
 } from 'lucide-react'
 import DataStatusBanner from './DataStatusBanner'
+import { formatDateTimeIST } from '../lib/liveStatus'
 import { useAuth, canAccess, type UserRole, type UserPlan } from '../contexts/AuthContext'
 import { useGovData } from '../hooks/useGovData'
 import UserSupportModal from './UserSupportModal'
@@ -20,6 +21,7 @@ export type Page =
   | 'admin' | 'livefares' | 'anomalies' | 'forecast' | 'historicalfares'
   | 'airfareindex' | 'airlineexplorer' | 'bookingwindow'
   | 'aviationlive' | 'aviationflights' | 'aviationairports'
+  | 'recentsearches'
 
 // ── Portal definitions ─────────────────────────────────────────────────────
 export type Portal = 'gov' | 'admin' | 'aviation'
@@ -82,12 +84,24 @@ const aviationNav: NavItem[] = [
 
 const userNav: NavItem[] = [
   { page: 'overview', icon: Home, label: 'Dashboard', section: 'USER DASHBOARD' },
+  { page: 'livefares', icon: Table2, label: 'Live Fares' },
   { page: 'routes', icon: Plane, label: 'Route Explorer' },
+  { page: 'airfareindex', icon: BarChart2, label: 'Airfare Index' },
+  { page: 'airlineexplorer', icon: Globe, label: 'Airline Explorer' },
   { page: 'insights', icon: TrendingUp, label: 'Market Insights' },
   { page: 'map', icon: Map, label: 'GIS / India Map' },
+  { page: 'bookingwindow', icon: CalendarDays, label: 'Booking Windows' },
+  { page: 'forecast', icon: LineChart, label: 'Forecast' },
+  { page: 'anomalies', icon: AlertCircle, label: 'Anomalies' },
+  { page: 'historicalfares', icon: History, label: 'Historical Fares' },
+  { page: 'government', icon: Landmark, label: 'Gov Intelligence' },
   { page: 'alerts', icon: Bell, label: 'Price Alerts' },
-  { page: 'routes', icon: Bookmark, label: 'Saved Routes' },
-  { page: 'historicalfares', icon: History, label: 'Travel History' },
+  // 'Saved Routes' was a second link to Route Explorer with no saved-routes
+  // feature behind it (no storage, no API). Removed rather than renamed —
+  // renaming it 'Route Explorer' would only duplicate the row above.
+  { page: 'recentsearches', icon: Clock, label: 'Recent searches' },
+  { page: 'exports', icon: Download, label: 'Reports & Exports' },
+  { page: 'methodology', icon: BookOpen, label: 'Methodology' },
   // Settings is intentionally available from the global header gear only.
   { page: 'sources', icon: BookOpen, label: 'Help & FAQ', supportAction: 'help' },
   { page: 'sources', icon: MessageSquare, label: 'Feedback', supportAction: 'feedback' },
@@ -99,6 +113,7 @@ const ROLE_BADGE: Record<string, { label: string; bg: string; color: string; bor
   ANALYST:    { label: 'ANALYST',  bg: 'var(--color-info-bg)',          color: 'var(--color-info)',         border: 'rgba(3,105,161,0.3)' },
   SUBSCRIBER: { label: 'SUBSCRIBED', bg: 'var(--color-brand-muted)',    color: 'var(--color-brand-primary)', border: 'rgba(37,99,235,0.3)' },
   FREE:       { label: 'USER',     bg: 'var(--color-surface-secondary)',color: 'var(--color-text-tertiary)', border: 'var(--color-border-primary)' },
+  GUEST:      { label: 'GUEST',    bg: 'var(--color-surface-secondary)',color: 'var(--color-text-tertiary)', border: 'var(--color-border-primary)' },
 }
 
 function roleFromPlan(role: UserRole, plan: UserPlan): string {
@@ -117,6 +132,7 @@ function NavButton({ icon, label, active, badge, onClick }: NavButtonProps) {
   return (
     <button
       onClick={onClick}
+      aria-current={active ? 'page' : undefined}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
@@ -154,6 +170,10 @@ interface AppShellProps {
   currentPage: Page
   onNavigate: (page: Page) => void
   children: ReactNode
+  /** Guest browsing (Phase 3): no signed-in user — the shell shows a guest
+      identity and a Sign in action instead of account/sign-out controls. */
+  guest?: boolean
+  onSignIn?: () => void
 }
 
 const PAGE_TITLES: Record<Page, string> = {
@@ -162,7 +182,7 @@ const PAGE_TITLES: Record<Page, string> = {
   alerts: 'Price Alerts', sources: 'Data Sources', collection: 'Collection Jobs',
   methodology: 'Methodology', exports: 'Reports & Exports', admin: 'Admin Control Center',
   livefares: 'Live Fares', anomalies: 'Anomaly Detection', forecast: 'Forecast',
-  historicalfares: 'Historical Fares', airfareindex: 'Airfare Index',
+  historicalfares: 'Historical Fares', recentsearches: 'Recent searches', airfareindex: 'Airfare Index',
   airlineexplorer: 'Airline Explorer', bookingwindow: 'Booking Window Analysis',
   aviationlive: 'Live Flight Map', aviationflights: 'Flights', aviationairports: 'Airports',
 }
@@ -171,15 +191,13 @@ const PAGE_TITLES: Record<Page, string> = {
 const PAGE_PORTAL: Partial<Record<Page, Portal>> = {
   overview:'gov', airfareindex:'gov', livefares:'gov', routes:'gov',
   airlineexplorer:'gov', insights:'gov', map:'gov', bookingwindow:'gov',
-  forecast:'gov', anomalies:'gov', historicalfares:'gov', government:'gov',
+  forecast:'gov', anomalies:'gov', historicalfares:'gov', recentsearches:'gov', government:'gov',
   alerts:'gov', exports:'gov', methodology:'gov',
   admin:'admin', collection:'admin',
   aviationlive:'aviation', aviationflights:'aviation', aviationairports:'aviation',
 }
 
-const PUBLIC_USER_PAGES: Page[] = ['overview', 'routes', 'insights', 'map', 'alerts', 'historicalfares', 'sources']
-
-export default function AppShell({ currentPage, onNavigate, children }: AppShellProps) {
+export default function AppShell({ currentPage, onNavigate, children, guest = false, onSignIn }: AppShellProps) {
   const { user, token, logout } = useAuth()
   const isAviation = currentPage.startsWith('aviation')
   const radar = useAviationRadar(isAviation)
@@ -341,10 +359,15 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
   const role = user?.role ?? 'PUBLIC'
   const plan = user?.plan ?? 'FREE'
   const planKey = roleFromPlan(role, plan)
-  const roleBadge = ROLE_BADGE[planKey]
+  const roleBadge = guest ? ROLE_BADGE.GUEST : ROLE_BADGE[planKey]
 
-  // Nav items based on active portal
-  const activeNav = role === 'PUBLIC' && plan === 'FREE' ? userNav
+  // Nav items based on active portal. Since the 21 Nov 2026 access decision
+  // every read-only page is open to any signed-in user, so PUBLIC/FREE users
+  // get the full user nav (not a 7-page subset) and the aviation portal too.
+  // The old PUBLIC_USER_PAGES allowlist hid forecast/exports/government from
+  // the sidebar even though canAccess allowed them — undiscoverable pages.
+  const activeNav = role === 'PUBLIC' && plan === 'FREE'
+    ? (derivedPortal === 'aviation' ? aviationNav : userNav)
     : derivedPortal === 'admin' ? adminNav
     : derivedPortal === 'aviation' ? aviationNav
     : govNav
@@ -367,11 +390,13 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
   }
 
   function isVisible(item: NavItem): boolean {
-    if (role === 'PUBLIC' && plan === 'FREE' && !PUBLIC_USER_PAGES.includes(item.page)) return false
-    if (!item.minRole) return true
+    // canAccess is the single authority: anything it allows, the sidebar
+    // shows. The old per-role minRole gate hid read-only pages (forecast,
+    // exports, government, …) from PUBLIC/SUBSCRIBER users after the analyst
+    // gate was dropped — nav and access disagreed. Only ADMIN stays gated
+    // here, matching canAccess's adminOnly set.
+    if (!canAccess(role, plan, item.page)) return false
     if (item.minRole === 'ADMIN') return role === 'ADMIN'
-    if (item.minRole === 'ANALYST') return role === 'ANALYST' || role === 'ADMIN'
-    if (item.minRole === 'SUBSCRIBER') return plan !== 'FREE' || role === 'ANALYST' || role === 'ADMIN'
     return true
   }
 
@@ -386,9 +411,11 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
     onNavigate(page)
   }
 
-  const initials = user?.name
-    ? user.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
-    : 'U'
+  const initials = guest
+    ? 'G'
+    : user?.name
+      ? user.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
+      : 'U'
 
   return (
     <div className={`app-shell ${isAviation ? 'aviation-shell' : ''}`} style={{ display: 'flex', height: '100vh', overflow: 'hidden', fontFamily: 'var(--font-sans)', background: 'var(--color-surface-canvas)' }}>
@@ -436,15 +463,18 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
           <button className="mobile-menu-toggle" type="button" aria-label={mobileNavOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={mobileNavOpen} onClick={event => { event.stopPropagation(); setMobileNavOpen(value => !value) }}><Menu size={18} /></button>
         </div>
 
-        {/* ── Portal tabs ── */}
-        {!(role === 'PUBLIC' && plan === 'FREE') && <div className="app-sidebar-portal" style={{ borderBottom: '1px solid var(--color-border-primary)', padding: '6px 8px' }}>
+        {/* ── Portal tabs ──
+            Shown to every signed-in user (and guests): PUBLIC/FREE users get
+            USER + AVIATION — the aviation pages are read-only and open to
+            them since the 21 Nov 2026 access decision. ADMIN stays ADMIN-only
+            via the minRole filter. */}
+        <div className="app-sidebar-portal" style={{ borderBottom: '1px solid var(--color-border-primary)', padding: '6px 8px' }}>
           {[
             { id:'gov',      label: role === 'PUBLIC' && plan === 'FREE' ? 'USER' : 'GOV',      title: role === 'PUBLIC' && plan === 'FREE' ? 'User Dashboard' : 'Government Portal' },
             { id:'admin',    label:'ADMIN',     title:'Admin Control Center', minRole:'ADMIN' as const },
             { id:'aviation', label:'AVIATION',  title:'Aviation Intelligence' },
           ].filter(p => {
             if (p.minRole && role !== 'ADMIN') return false
-            if (p.id === 'aviation' && role === 'PUBLIC' && plan === 'FREE') return false
             return true
           }).map(p => (
             <button key={p.id} title={p.title}
@@ -459,11 +489,11 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
               {p.label}
             </button>
           ))}
-        </div>}
+        </div>
 
         {/* Nav */}
         <div ref={mobileNavRef} className={`app-sidebar-nav${mobileNavOpen ? ' is-open' : ''}`} style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
-          {!(role === 'PUBLIC' && plan === 'FREE') && (
+          {!((role === 'PUBLIC' && plan === 'FREE') && derivedPortal === 'gov') && (
             <div style={{ padding: '4px 14px 4px', marginTop: 4 }}>
               <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-text-tertiary)', letterSpacing: '0.12em' }}>
                 {derivedPortal === 'gov' ? 'GOVERNMENT PORTAL'
@@ -496,13 +526,26 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
                 }} />
             </div>
           ))}
+          {/* Mobile-only sign-out row (hidden on desktop via .app-mobile-signout;
+              the top-bar button is the desktop sign-out). Guests get Sign in. */}
+          <div className="app-mobile-signout" style={{ borderTop: '1px solid var(--color-border-primary)', marginTop: 8, paddingTop: 8 }}>
+            {guest ? (
+              <button type="button" onClick={() => { setAvatarOpen(false); setNotificationsOpen(false); onSignIn?.() }} style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', minHeight: 42, padding: '9px 12px', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--color-brand-primary)', fontFamily: 'var(--font-sans)', fontSize: 13, fontWeight: 600, textAlign: 'left' }}>
+                <LogIn size={17} strokeWidth={1.9} /> Sign in
+              </button>
+            ) : (
+              <button type="button" onClick={() => { setAvatarOpen(false); setNotificationsOpen(false); logout() }} style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', minHeight: 42, padding: '9px 12px', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--color-danger)', fontFamily: 'var(--font-sans)', fontSize: 13, fontWeight: 600, textAlign: 'left' }}>
+                <LogOut size={17} strokeWidth={1.9} /> Sign out
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Sidebar account identity; sign out lives in the global top bar. */}
         <div className="app-sidebar-footer" style={{ borderTop: '1px solid var(--color-border-primary)', padding: '10px 12px' }}>
           <div className="app-sidebar-profile">
             <div className="app-sidebar-profile-avatar">{initials}</div>
-            <div className="app-sidebar-profile-copy"><strong>{user?.name ?? 'User'}</strong><span>{user?.role === 'PUBLIC' ? 'USER' : user?.role ?? 'USER'} · {user?.plan === 'FREE' ? 'STANDARD' : user?.plan ?? 'STANDARD'}</span></div>
+            <div className="app-sidebar-profile-copy"><strong>{guest ? 'Guest' : user?.name ?? 'User'}</strong><span>{guest ? 'GUEST · PUBLIC BROWSING' : `${user?.role === 'PUBLIC' ? 'USER' : user?.role ?? 'USER'} · ${user?.plan === 'FREE' ? 'STANDARD' : user?.plan ?? 'STANDARD'}`}</span></div>
           </div>
         </div>
       </div>
@@ -531,7 +574,7 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
           <div ref={searchRef} className="global-search-stack" style={{ flex: 1, maxWidth: 300, position: 'relative', zIndex: 1000, isolation: 'isolate' }}>
             <Search size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-tertiary)', pointerEvents: 'none', zIndex: 1 }} />
             <input
-              type="text" value={searchQuery}
+              type="text" value={searchQuery} aria-label="Search routes, airports, airlines, or insights"
               onChange={e => { setSearchQuery(e.target.value); setSearchOpen(true); if (isAviation) { sessionStorage.setItem('aviation-search', e.target.value); window.dispatchEvent(new CustomEvent('aviation-search', { detail: e.target.value })) } }}
               onFocus={() => { setSearchFocused(true); setSearchOpen(true) }}
               onBlur={() => setSearchFocused(false)}
@@ -594,7 +637,7 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
 
           {/* Right status */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 'auto', flexShrink: 0 }}>
-            {isAviation ? <div className={`av-feed-status ${radar.status === 'connected' ? '' : 'pending'}`} aria-live="polite"><span><i/>{radar.status === 'connected' ? 'LIVE DATA FEEDS' : radar.status === 'cached' ? 'CACHED DATA' : radar.status === 'loading' ? 'CONNECTING' : 'RETRYING FEED'}{radar.retrievedAt ? ` · ${new Date(radar.retrievedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }).toUpperCase()} IST` : ''}</span><span><Radio size={10}/>{radar.status === 'connected' ? 'PROVIDER CONNECTED' : radar.status === 'cached' ? 'LAST VALID RESPONSE' : 'REFRESHING'}</span></div> : <DataStatusBanner
+            {isAviation ? <div className={`av-feed-status ${radar.status === 'connected' ? '' : 'pending'}`} aria-live="polite"><span><i/>{radar.status === 'connected' ? 'LIVE DATA FEEDS' : radar.status === 'cached' ? 'CACHED DATA' : radar.status === 'loading' ? 'CONNECTING' : 'RETRYING FEED'}{radar.retrievedAt ? ` · ${formatDateTimeIST(radar.retrievedAt)}` : ''}</span><span><Radio size={10}/>{radar.status === 'connected' ? 'PROVIDER CONNECTED' : radar.status === 'cached' ? 'LAST VALID RESPONSE' : 'REFRESHING'}</span></div> : <DataStatusBanner
               anyGovConnected={govData.anyConnected}
               fareFeedConnected={fareFeed.connected}
               fareFeedLive={fareFeed.live}
@@ -618,9 +661,13 @@ export default function AppShell({ currentPage, onNavigate, children }: AppShell
             </button>
             <div className="app-topbar-account" ref={accountRef}>
               <button onClick={() => setAvatarOpen(value => !value)} aria-label="Account details" aria-expanded={avatarOpen} aria-haspopup="dialog" title={user?.name ?? 'Account details'} className="app-topbar-avatar">{initials}</button>
-              {avatarOpen && <div className="app-account-popover" role="dialog" aria-label="Account details"><strong>{user?.name ?? 'User'}</strong><span>{user?.email}</span><small>{user?.role === 'PUBLIC' ? 'USER' : user?.role ?? 'USER'} · {user?.plan === 'FREE' ? 'STANDARD' : user?.plan ?? 'STANDARD'}</small></div>}
+              {avatarOpen && <div className="app-account-popover" role="dialog" aria-label="Account details">{guest ? <><strong>Guest</strong><span>Browsing public data — sign in for forecasts, exports and price alerts.</span><small>GUEST · PUBLIC BROWSING</small></> : <><strong>{user?.name ?? 'User'}</strong><span>{user?.email}</span><small>{user?.role === 'PUBLIC' ? 'USER' : user?.role ?? 'USER'} · {user?.plan === 'FREE' ? 'STANDARD' : user?.plan ?? 'STANDARD'}</small></>}</div>}
             </div>
-            <button type="button" className="app-signout-button" onClick={() => { setAvatarOpen(false); setNotificationsOpen(false); logout() }} aria-label="Sign out" title="Sign out"><LogOut size={16} /></button>
+            {guest ? (
+              <button type="button" className="app-signout-button" onClick={() => { setAvatarOpen(false); setNotificationsOpen(false); onSignIn?.() }} aria-label="Sign in" title="Sign in"><LogIn size={16} /></button>
+            ) : (
+              <button type="button" className="app-signout-button" onClick={() => { setAvatarOpen(false); setNotificationsOpen(false); logout() }} aria-label="Sign out" title="Sign out"><LogOut size={16} /></button>
+            )}
           </div>
         </div>
 

@@ -1,38 +1,5 @@
 // SVG-based lightweight charts (no external dependency)
 
-interface SparklineProps {
-  data: number[]
-  width?: number
-  height?: number
-  trend?: 'up' | 'down' | 'stable'
-  className?: string
-}
-
-export function Sparkline({ data, width = 80, height = 32, trend = 'stable', className = '' }: SparklineProps) {
-  if (data.length < 2) return null
-  const min = Math.min(...data)
-  const max = Math.max(...data)
-  const range = max - min || 1
-  const pts = data.map((v, i) => {
-    const x = (i / (data.length - 1)) * width
-    const y = height - ((v - min) / range) * (height - 4) - 2
-    return `${x},${y}`
-  })
-  const color = trend === 'up' ? 'var(--danger)' : trend === 'down' ? 'var(--success)' : 'var(--warning)'
-  return (
-    <svg width={width} height={height} className={className} aria-hidden="true">
-      <polyline
-        points={pts.join(' ')}
-        fill="none"
-        stroke={color}
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
-}
-
 interface BarChartProps {
   data: { label: string; value: number; low?: number; high?: number }[]
   width?: number
@@ -62,29 +29,29 @@ export function BarChart({ data, width = 400, height = 140, className = '' }: Ba
             {/* range band */}
             {d.low && d.high && (
               <rect x={x + bw / 2 - 1} y={yHigh} width={2} height={yLow - yHigh}
-                fill="var(--border-primary)" opacity={0.6} rx={1} />
+                fill="var(--color-border-primary)" opacity={0.6} rx={1} />
             )}
             {/* bar */}
             <rect x={x} y={yVal} width={bw} height={height - 24 - yVal}
-              fill="var(--brand-primary)" opacity={0.85} rx={2} />
+              fill="var(--color-brand-primary)" opacity={0.85} rx={2} />
             {/* label */}
             <text x={x + bw / 2} y={height - 8} textAnchor="middle"
-              fontSize={10} fill="var(--text-tertiary)" fontFamily="inherit">
+              fontSize={10} fill="var(--color-text-tertiary)" fontFamily="inherit">
               {d.label}
             </text>
             {/* value */}
             <text x={x + bw / 2} y={yVal - 4} textAnchor="middle"
-              fontSize={9} fill="var(--text-secondary)" fontFamily="inherit">
+              fontSize={9} fill="var(--color-text-secondary)" fontFamily="inherit">
               ₹{(d.value / 1000).toFixed(1)}k
             </text>
           </g>
         )
       })}
       {/* y-axis hint */}
-      <text x={36} y={10} textAnchor="end" fontSize={9} fill="var(--text-tertiary)" fontFamily="inherit">
+      <text x={36} y={10} textAnchor="end" fontSize={9} fill="var(--color-text-tertiary)" fontFamily="inherit">
         ₹{(max / 1000).toFixed(0)}k
       </text>
-      <text x={36} y={height - 24} textAnchor="end" fontSize={9} fill="var(--text-tertiary)" fontFamily="inherit">
+      <text x={36} y={height - 24} textAnchor="end" fontSize={9} fill="var(--color-text-tertiary)" fontFamily="inherit">
         ₹{(min / 1000).toFixed(0)}k
       </text>
     </svg>
@@ -92,7 +59,9 @@ export function BarChart({ data, width = 400, height = 140, className = '' }: Ba
 }
 
 interface LineChartProps {
-  series: { name: string; data: number[]; color: string }[]
+  // `null` points are missing days: the line breaks there instead of
+  // plunging to ₹0 (audit §2.11 — a chart must never invent a fare).
+  series: { name: string; data: Array<number | null>; color: string }[]
   labels: string[]
   width?: number
   height?: number
@@ -100,44 +69,51 @@ interface LineChartProps {
 }
 
 export function LineChart({ series, labels, width = 480, height = 160, className = '' }: LineChartProps) {
-  const allVals = series.flatMap(s => s.data)
-  const min = Math.min(...allVals) * 0.97
-  const max = Math.max(...allVals) * 1.02
-  const range = max - min
+  const allVals = series.flatMap(s => s.data).filter((v): v is number => v != null)
+  const min = (allVals.length ? Math.min(...allVals) : 0) * 0.97
+  const max = (allVals.length ? Math.max(...allVals) : 1) * 1.02
+  const range = max - min || 1
   const padL = 44, padR = 12, padT = 12, padB = 28
   const w = width - padL - padR
   const h = height - padT - padB
 
-  const toX = (i: number) => padL + (i / (labels.length - 1)) * w
+  const toX = (i: number) => padL + (i / Math.max(1, labels.length - 1)) * w
   const toY = (v: number) => padT + h - ((v - min) / range) * h
 
   return (
-    <svg width={width} height={height} className={className} aria-label="Line chart">
+    <svg width={width} height={height} className={className} role="img" aria-label="Line chart">
       {/* grid */}
       {[0, 0.25, 0.5, 0.75, 1].map((t, i) => {
         const y = padT + h * t
         const val = max - (max - min) * t
         return (
           <g key={i}>
-            <line x1={padL} y1={y} x2={padL + w} y2={y} stroke="var(--border-primary)" strokeWidth={0.5} />
-            <text x={padL - 4} y={y + 4} textAnchor="end" fontSize={9} fill="var(--text-tertiary)" fontFamily="inherit">
+            <line x1={padL} y1={y} x2={padL + w} y2={y} stroke="var(--color-border-primary)" strokeWidth={0.5} />
+            <text x={padL - 4} y={y + 4} textAnchor="end" fontSize={9} fill="var(--color-text-tertiary)" fontFamily="inherit">
               ₹{(val / 1000).toFixed(1)}k
             </text>
           </g>
         )
       })}
-      {/* series */}
+      {/* series — split into segments at null points so missing days break the line */}
       {series.map((s, si) => {
-        const pts = s.data.map((v, i) => `${toX(i)},${toY(v)}`).join(' ')
-        return (
-          <polyline key={si} points={pts} fill="none" stroke={s.color}
+        const segments: string[][] = [[]]
+        s.data.forEach((v, i) => {
+          if (v == null) {
+            if (segments[segments.length - 1].length) segments.push([])
+            return
+          }
+          segments[segments.length - 1].push(`${toX(i)},${toY(v)}`)
+        })
+        return segments.filter(seg => seg.length >= 2).map((seg, segi) => (
+          <polyline key={`${si}-${segi}`} points={seg.join(' ')} fill="none" stroke={s.color}
             strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
-        )
+        ))
       })}
       {/* x labels */}
       {labels.map((l, i) => (
         <text key={i} x={toX(i)} y={height - 6} textAnchor="middle"
-          fontSize={9} fill="var(--text-tertiary)" fontFamily="inherit">
+          fontSize={9} fill="var(--color-text-tertiary)" fontFamily="inherit">
           {l}
         </text>
       ))}

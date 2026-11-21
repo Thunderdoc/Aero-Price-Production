@@ -6,7 +6,7 @@ alembic==1.13.3
 aiosqlite==0.20.0
 asyncpg==0.30.0
 httpx==0.28.1
-python-jose[cryptography]==3.3.0
+PyJWT[crypto]==2.10.1
 passlib[bcrypt]==1.7.4
 python-multipart==0.0.12
 python-dotenv==1.0.1
@@ -23,6 +23,7 @@ statsmodels==0.14.3
 openpyxl==3.1.5
 pytest==8.3.3
 pytest-asyncio==0.24.0
+hypothesis==6.122.3
 fast-flights==3.0
 primp==2.0.1
 scrapling==0.4.15

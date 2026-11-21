@@ -20,7 +20,8 @@ def test_fast_flights_mapping_preserves_real_offer_fields():
     assert record.airline == "Air India"
     assert record.departure_time == "2026-10-16T05:00:00"
     assert record.arrival_time == "2026-10-16T07:25:00"
-    assert record.data_origin == "REAL"
+    # Scraped public-interface fares are PUBLIC_INTERFACE, never REAL.
+    assert record.data_origin == "PUBLIC_INTERFACE"
     assert record.raw_hash
 
 

@@ -19,10 +19,13 @@ import os
 import asyncio
 from unittest.mock import Mock, patch, AsyncMock
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select, func
 from datetime import datetime, timezone
 
+from app.core.auth import require_admin_or_local
 from app.core.config import Settings
+from app.core.database import get_db
 from app.models.user import User
 from app.models.fare import FareObservation
 from app.models.collection import SourceHealth
@@ -222,10 +225,16 @@ async def test_admin_users_without_firebase_returns_502(db):
                 "missing config properly."
             )
         
-        # Now test the full endpoint with TestClient
+        # Now test the full endpoint with an authenticated admin identity.
+        # NOTE (pre-existing test bug, fixed here): patching
+        # app.api.routes.admin.require_admin_or_local never worked — FastAPI's
+        # Depends() captured the original function at route decoration, so the
+        # patch never took effect and the request 401d. Use
+        # dependency_overrides (the supported seam) instead. The DB is
+        # overridden with the in-memory fixture so the test does not depend
+        # on the working-tree database file.
         from main import app
-        client = TestClient(app)
-        
+
         # Create a mock admin user in local database
         db.add(User(
             email="test@example.com",
@@ -234,35 +243,40 @@ async def test_admin_users_without_firebase_returns_502(db):
             name="Test Admin"
         ))
         await db.commit()
-        
-        # Mock authentication to bypass JWT requirement
-        with patch('app.api.routes.admin.require_admin_or_local') as mock_auth:
-            mock_auth.return_value = {
-                "email": "test@example.com",
-                "role": "ADMIN",
-                "plan": "FREE"
-            }
-            
-            # Make request to admin users endpoint
-            response = client.get("/api/admin/users")
-            
-            # Expected behavior after fix: Should return 200, not 502
-            # On unfixed code: Will return 502 with "Google sign-in is not configured"
-            if response.status_code == 502:
-                pytest.fail(
-                    f"EXPECTED FAILURE: /api/admin/users returned 502 error instead of "
-                    f"falling back to local database. Error: {response.json().get('detail', 'Unknown')}. "
-                    f"This confirms the Firebase fallback bug exists."
-                )
-            
-            assert response.status_code == 200, \
-                "After fix, /api/admin/users should return 200 even without Firebase"
-            
-            data = response.json()
-            assert "users" in data, "Response should contain users array"
-            assert "source" in data, "Response should indicate authentication source"
-            assert data["source"] in ["local_database", "demo"], \
-                "Source should be local_database or demo when Firebase not configured"
+
+        async def isolated_db():
+            yield db
+
+        async def mock_admin():
+            return {"email": "test@example.com", "role": "ADMIN", "plan": "FREE"}
+
+        app.dependency_overrides[get_db] = isolated_db
+        app.dependency_overrides[require_admin_or_local] = mock_admin
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                # Make request to admin users endpoint
+                response = await client.get("/api/admin/users")
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+            app.dependency_overrides.pop(require_admin_or_local, None)
+
+        # Expected behavior after fix: Should return 200, not 502
+        # On unfixed code: Will return 502 with "Google sign-in is not configured"
+        if response.status_code == 502:
+            pytest.fail(
+                f"EXPECTED FAILURE: /api/admin/users returned 502 error instead of "
+                f"falling back to local database. Error: {response.json().get('detail', 'Unknown')}. "
+                f"This confirms the Firebase fallback bug exists."
+            )
+
+        assert response.status_code == 200, \
+            "After fix, /api/admin/users should return 200 even without Firebase"
+
+        data = response.json()
+        assert "users" in data, "Response should contain users array"
+        assert "source" in data, "Response should indicate authentication source"
+        assert data["source"] in ["local_database", "demo"], \
+            "Source should be local_database or demo when Firebase not configured"
 
 
 # ──────────────────────────────────────────────────────────────────────────

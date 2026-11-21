@@ -11,6 +11,11 @@ from app.models.index import IndexObservation
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
+# Origins counted as genuine observations in dashboard aggregates: REAL and
+# OFFICIAL plus PUBLIC_INTERFACE (scraped Google Flights fares, honestly
+# labelled — the disclosed SIH-demo methodology; same set as the index).
+_LIVE_ORIGINS = ("REAL", "OFFICIAL", "PUBLIC_INTERFACE")
+
 AIRPORT_STATES = {
     "DEL": "Delhi",
     "BOM": "Maharashtra",
@@ -57,7 +62,7 @@ async def calculate_fare_movement(db: AsyncSession) -> dict:
             FareObservation.total_fare,
             FareObservation.collected_at,
         ).where(
-            FareObservation.data_origin.in_(["REAL", "OFFICIAL"]),
+            FareObservation.data_origin.in_(list(_LIVE_ORIGINS)),
             FareObservation.is_valid == True,
         ).order_by(FareObservation.collected_at.asc())
     )).all()
@@ -168,16 +173,25 @@ async def dashboard_summary(
 
     real_obs_total = await db.scalar(
         select(func.count()).select_from(FareObservation)
-        .where(FareObservation.data_origin.in_(["REAL", "OFFICIAL"]))
+        .where(FareObservation.data_origin.in_(list(_LIVE_ORIGINS)))
     ) or 0
 
     real_obs_24h = await db.scalar(
         select(func.count()).select_from(FareObservation)
         .where(and_(
-            FareObservation.data_origin.in_(["REAL", "OFFICIAL"]),
+            FareObservation.data_origin.in_(list(_LIVE_ORIGINS)),
             FareObservation.collected_at >= since_24h,
         ))
     ) or 0
+
+    # Honest per-origin breakdown so the dashboard never hides which origins
+    # make up the headline count.
+    origin_rows = (await db.execute(
+        select(FareObservation.data_origin, func.count())
+        .where(FareObservation.data_origin.in_(list(_LIVE_ORIGINS)))
+        .group_by(FareObservation.data_origin)
+    )).all()
+    observations_by_origin = {origin: count for origin, count in origin_rows}
 
     sources = await db.execute(select(SourceHealth))
     source_rows = sources.scalars().all()
@@ -210,14 +224,31 @@ async def dashboard_summary(
         .where(CollectionRun.started_at >= day_start)
         .where(CollectionRun.status.in_(["COMPLETED", "PARTIAL"]))
     ) or 0
-    current_fare_rate = await db.scalar(
-        select(func.avg(FareObservation.total_fare))
-        .where(FareObservation.data_origin.in_(["REAL", "OFFICIAL"]))
+    # "Current fare" is windowed to the LATEST collection day — never an
+    # all-time average (with a stale snapshot that was a September average
+    # presented as current). The period is returned alongside so the UI can
+    # label it honestly, and latest_collected_at carries the data age.
+    latest_day = await db.scalar(
+        select(func.max(func.date(FareObservation.collected_at)))
+        .where(FareObservation.data_origin.in_(list(_LIVE_ORIGINS)))
+        .where(FareObservation.is_valid == True)
+    )
+    current_fare_rate = None
+    if latest_day is not None:
+        current_fare_rate = await db.scalar(
+            select(func.avg(FareObservation.total_fare))
+            .where(FareObservation.data_origin.in_(list(_LIVE_ORIGINS)))
+            .where(FareObservation.is_valid == True)
+            .where(func.date(FareObservation.collected_at) == latest_day)
+        )
+    latest_collected_at = await db.scalar(
+        select(func.max(FareObservation.collected_at))
+        .where(FareObservation.data_origin.in_(list(_LIVE_ORIGINS)))
         .where(FareObservation.is_valid == True)
     )
     routes_tracked = await db.scalar(
         select(func.count(FareObservation.route.distinct()))
-        .where(FareObservation.data_origin.in_(["REAL", "OFFICIAL"]))
+        .where(FareObservation.data_origin.in_(list(_LIVE_ORIGINS)))
         .where(FareObservation.is_valid == True)
     ) or 0
     latest_cpi = await db.scalar(
@@ -246,6 +277,11 @@ async def dashboard_summary(
         "index_status": index_status,
         "index_value": index_value,
         "current_fare_rate": round(current_fare_rate, 2) if current_fare_rate is not None else None,
+        # The collection day the current fare is averaged over (YYYY-MM-DD),
+        # plus the newest observation timestamp so the UI can show data age.
+        "current_fare_period": str(latest_day) if latest_day is not None else None,
+        "latest_collected_at": latest_collected_at.isoformat() if latest_collected_at else None,
+        "observations_by_origin": observations_by_origin,
         "routes_tracked": routes_tracked,
         "price_drops": movement["price_drops"],
         "cpi_transport": latest_cpi.value if latest_cpi else None,
@@ -261,7 +297,7 @@ async def dashboard_summary(
         "observations": {
             "total_real": real_obs_total,
             "last_24h": real_obs_24h,
-            "data_status": "LIVE" if live_sources else "NO_LIVE_DATA",
+            "data_status": "LIVE" if live_sources else "STALE_DATA" if real_obs_total else "NO_LIVE_DATA",
         },
         "sources": {
             "live": len(live_sources),

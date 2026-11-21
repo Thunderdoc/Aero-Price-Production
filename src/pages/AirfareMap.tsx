@@ -429,7 +429,7 @@ function FlightsBadge({ count, connectionStatus }: FlightsBadgeProps) {
           letterSpacing: '0.05em',
         }}
       >
-        {connectionStatus === 'live' ? 'checked' : connectionStatus}
+        {connectionStatus === 'live' ? 'LIVE' : connectionStatus}
       </span>
     </div>
   )
@@ -788,15 +788,15 @@ export default function AirfareMap() {
               background: routesLoading || !corridors.length ? 'var(--color-warning)' : 'var(--color-success)',
               boxShadow: `0 0 6px ${routesLoading || !corridors.length ? 'var(--color-warning)' : 'var(--color-success)'}`,
             }} />
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, color: 'var(--color-success)', letterSpacing: '0.08em' }}>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, color: routesLoading || !corridors.length ? 'var(--color-warning)' : 'var(--color-success)', letterSpacing: '0.08em' }}>
               {routesLoading ? 'LOADING' : corridors.length ? 'BACKEND DATA' : 'NO ROUTE DATA'}
             </span>
           </div>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'rgba(255,255,255,0.45)', letterSpacing: '0.04em' }}>
             {apiStatus === 'REAL'
-              ? `${realFlightCount} provider rows (AviationStack)`
+              ? `${realFlightCount} live ADS-B positions`
               : apiStatus === 'loading'
-              ? 'Connecting to AviationStack…'
+              ? 'Connecting to live ADS-B feed…'
               : liveFlights.length > 0
               ? `${liveFlights.length} tracked flight positions`
               : 'No live aircraft positions'}

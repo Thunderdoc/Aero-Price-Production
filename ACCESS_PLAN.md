@@ -6,64 +6,61 @@ The safest approach is to separate public user access from privileged evaluator/
 
 ### 1. Public/User access
 
-- Use Firebase Google Authentication.
-- Anyone with Google sign-in can enter only the normal User workspace.
-- User role is `PUBLIC`.
-- User plan is `FREE` until a backend entitlement/subscription system grants more.
-- Public users cannot access Admin, Collection, System Config, Reports/Exports, Methodology, or TGC/DGCA-only pages.
+- Anyone may self-register with email + password, or sign in with Google (Firebase, when configured).
+- Self-registration creates role `PUBLIC`, plan `FREE` only.
+- **DGCA self-registration is CLOSED.** Registering with workspace `DGCA` is rejected by the backend (`POST /api/auth/register`); the ANALYST role is granted by an admin only. There is no way for a visitor to grant themselves analyst access.
+- Signed-in public users can VIEW all read-only surfaces: dashboard, map, fares, route explorer, forecast, anomalies, government intelligence, index history/basket, exports, collections reads and source-health. The analyst gate on those read-only endpoints was dropped on 21 Nov 2026; write/admin actions (collection trigger, anomaly-detection run, government refresh, all `/api/admin/*`) stay gated.
 
 ### 2. SIH evaluator access
 
-Create one temporary evaluator account and share it privately in the submission notes, not in the UI and not in GitHub screenshots.
+One evaluator account exists, created out of band by a seed script — never hardcoded in the app, never published in the repo.
 
-Recommended:
+- Email: `evaluator@aeroprice.in`
+- Role: `ANALYST`, plan: `GOVERNMENT`
+- Created by: `backend/app/seed/evaluator.py` (run with `EVALUATOR_PASSWORD` set in the environment — the seed refuses to run without one, and there is no default password)
+- The password is shared privately with judges in the submission notes, never in GitHub, the UI, screenshots, or slides.
 
-- `sih-reviewer@yourdomain.in`
-- role: `ANALYST`
-- plan: `GOVERNMENT`
-- allowed pages: dashboard, map, fares, route explorer, forecast, anomalies, government intelligence, methodology/reports if needed
-
-This gives reviewers enough weightage-visible access without exposing Admin controls.
+The evaluator sees the analyst workspace (forecast, government intelligence, exports, collections) with no admin controls.
 
 ### 3. Admin access
 
-Admin should be private only.
+Admin is private only.
 
 - Do not publish Admin email/password in GitHub README, UI, WhatsApp screenshots, or SIH presentation slides.
 - Give Admin credentials only to your own team.
-- Admin account must be backend-authorized.
-- Admin routes must remain protected by backend role checks.
+- The first admin is created out of band via `scripts/bootstrap_admin.py`.
+- Admin accounts are backend-authorized; admin routes remain protected by backend role checks.
+- **No demo credentials exist in the code.** The old hardcoded `DEMO_USERS` dict (including a full ADMIN account with a plaintext password) was deleted from `backend/app/core/auth.py` on 21 Nov 2026. Any document that still lists demo passwords (e.g. old plan files under `plans/`) is stale and must not be trusted. Note: the old credentials remain in git HISTORY until a history rewrite is approved and done — deletion from the working tree does not purge them. Treat them as compromised and never reuse them.
 
 ### 4. TGC / DGCA access
 
 Treat TGC/DGCA as invite-only.
 
-- Login tab is visible.
-- Access is granted only when the backend returns role `ANALYST`.
-- A normal Google user cannot become TGC/DGCA by clicking the tab.
+- The login screen no longer offers DGCA as a self-registration path.
+- Access is granted only when an admin assigns role `ANALYST` to an existing account.
+- A normal Google user cannot become TGC/DGCA by clicking anything.
 
 ## What not to do
 
 - Do not add visible demo credential buttons.
-- Do not hardcode Admin credentials in the frontend.
+- Do not hardcode Admin credentials in the frontend — or anywhere in the repo.
 - Do not let a frontend dropdown decide the role.
 - Do not publish Admin credentials in GitHub.
 - Do not use one shared Admin account for all reviewers.
+- Do not re-introduce demo users into app code. Test fixtures belong in `backend/tests/` only.
 
 ## For SIH submission
 
 Submit:
 
-1. Public URL.
-2. User access: "Use Google sign-in."
-3. Evaluator access: one private reviewer credential with analyst/TGC permission.
+1. Public URL: https://aero-price-production.vercel.app
+2. User access: "Self-register, or use Google sign-in."
+3. Evaluator access: the `evaluator@aeroprice.in` credential, shared privately.
 4. Admin access: "Available on request for live demonstration by team only."
 
 ## Current implementation
 
-- Role tabs are only workspace selectors.
-- The real role comes from Firebase/backend authentication.
+- The real role comes from backend authentication (JWT claims overridden by the persisted DB role on every request).
 - Google sign-in creates normal User access only.
-- Google sign-in creates Admin access only when the email is explicitly listed in `VITE_FIREBASE_ADMIN_EMAILS`.
-- TGC/Admin require approved backend credentials.
-- If a user selects Admin/TGC but signs in with a normal user account, the app logs them out and shows a role mismatch error.
+- TGC/Analyst and Admin require backend-authorized accounts (admin-granted).
+- Read-only endpoints (forecast, index history/basket, exports, collections reads, source-health) are open to any signed-in user; write/admin endpoints require ANALYST or ADMIN as documented on each route.

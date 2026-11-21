@@ -12,7 +12,10 @@ MAX_FARE_INR = 100_000
 
 VALID_CABINS = {"ECONOMY", "BUSINESS", "FIRST", "PREMIUM_ECONOMY"}
 VALID_ADVANCE_WINDOWS = {1, 7, 15, 30, 45}
-VALID_DATA_ORIGINS = {"REAL", "OFFICIAL", "DERIVED", "GENERATED_TEST", "HISTORICAL_PUBLIC", "CACHED", "NEAR_LIVE", "COMMUNITY_DATA"}
+# PUBLIC_INTERFACE = scraped fares (fast-flights/SerpApi/worker), honestly
+# labelled. SANDBOX_TEST = test-environment responses. UNKNOWN is deliberately
+# absent: it means "provenance never assigned" and is hard-rejected below.
+VALID_DATA_ORIGINS = {"REAL", "OFFICIAL", "DERIVED", "GENERATED_TEST", "HISTORICAL_PUBLIC", "CACHED", "NEAR_LIVE", "COMMUNITY_DATA", "SANDBOX_TEST", "PUBLIC_INTERFACE"}
 
 
 def validate_record(record: FareRecord) -> tuple[bool, list[str]]:
@@ -45,6 +48,12 @@ def validate_record(record: FareRecord) -> tuple[bool, list[str]]:
     # Hard: missing travel date
     if not record.travel_date:
         flags.append("MISSING_TRAVEL_DATE")
+        hard_fail = True
+
+    # Hard: provenance never assigned. Fail closed — a record that forgets its
+    # origin must never reach the database as a "real" fare.
+    if not record.data_origin or record.data_origin == "UNKNOWN":
+        flags.append("UNKNOWN_ORIGIN")
         hard_fail = True
 
     # Soft: cabin not in known set

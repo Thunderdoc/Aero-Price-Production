@@ -6,33 +6,43 @@
 
 AeroPrice is an **SIH 2026 prototype for problem statement SIH26056**. It turns airfare observations and aviation data into a fast, role-aware intelligence workspace for public users, analysts, government stakeholders, and administrators.
 
-> **Status: prototype — no public deployment is listed.** No live demo URL is named anywhere in this repository, so none is claimed here. To run it, follow [Quick start](#quick-start) below. See [Deployment](#deployment) for how a hosted instance is put together.
+> **Status: prototype — live at https://aero-price-production.vercel.app.** One Vercel deployment serves the React SPA and the FastAPI backend (same-origin `/api`). To run it locally, follow [Quick start](#quick-start) below. See [Deployment](#deployment) for how the hosted instance is put together.
 
 > **Not an official Government of India service.** Government, DGCA, and MoSPI references in this project are data-source and methodology references only.
 
 ## Screenshots
 
-Captured from a local run of this exact repository: the Vite frontend (`npm run dev`, port 8443) against the FastAPI backend on a fresh local database, signed in with locally created test accounts. There is no live deployment, so these are local-run screenshots, not a hosted demo. Because no authorized fare provider is configured in that run, the data panels honestly show the app's empty states ("Data unavailable", "0 routes with stored quotes", "0/6 sources responding") rather than populated figures.
+Captured 21 Nov 2026 from a verified local run of this exact repository (the
+Vite frontend against the FastAPI backend on a fresh local database, 542+
+real PUBLIC_INTERFACE fares collected live from Google Flights during the
+run). Screenshots are re-captured from a local run whenever the UI changes
+materially. The pre-21-Nov screenshots were removed because their files were
+never committed to the repo and every link was broken.
 
-![AeroPrice sign-in screen with User, DGCA, and Admin workspace tabs](docs/images/01-login.png)
+![Sign-in page with the SIH evaluator demo card](docs/images/01-login.png)
+*Sign-in — the SIH evaluator demo card offers one-click sign-in when the
+deployer set `VITE_EVALUATOR_PASSWORD` at build time.*
 
-**Sign-in** — the workspace gate: User, DGCA, and Admin tabs over the airport login artwork, with the Ministry of Civil Aviation badge and the SIH Prototype mark.
+![Dashboard with verified routes, observations and popular-route medians](docs/images/02-dashboard.png)
+*Dashboard — 15 verified routes, 778 verified observations, popular-route
+medians from the latest collection.*
 
-![AeroPrice user dashboard with hero banner, stat cards, popular routes, and India fare movement map](docs/images/02-dashboard.png)
+![Airfare Index page with the frequency toggle and the equal-weights basket card](docs/images/03-airfare-index.png)
+*Airfare Index — Daily/Weekly/Monthly views, and the "Configured Route
+Basket — Not DGCA Weights" card stating the equal-weights limitation.*
 
-**User dashboard (Overview)** — hero brief, stat cards (verified routes, verified observations, price drops, active alerts, airfare index), popular routes, and the India fare-movement map. With no provider configured, routes read "Data unavailable — No verified observation for this route yet."
+![Route Explorer showing DEL–BOM with a verified median fare](docs/images/04-route-explorer.png)
+*Route Explorer — DEL→BOM, ₹9,754 observed median, 55 verified records.*
 
-![AeroPrice GIS India map with airport markers and no-route-data notice](docs/images/03-india-map.png)
+![Government Intelligence with the Route Fare Matrix heatmap](docs/images/05-gov-intelligence.png)
+*Government Intelligence — the Route Fare Matrix heatmap renders real median
+fares per corridor × advance window; blank cells have no verified
+observations. Government feeds (DGCA/MoSPI/PPAC) stay honestly marked
+unavailable when they do not respond.*
 
-**GIS / India Map** — Leaflet map of India with airport markers. The run shows the honest degraded state: "No verified route observations are available for the map", "0 routes with stored quotes", and "0 flight positions over India — OFFLINE".
-
-![AeroPrice Route Explorer for DEL to BOM showing Data unavailable](docs/images/04-route-explorer.png)
-
-**Route Explorer (DEL → BOM)** — verified fare observations by corridor, with travel-date search. Here it reports "No verified fare records are available for DEL-BOM" and 0 observations, rather than inventing a fare.
-
-![AeroPrice Government Intelligence page showing 0 of 6 sources responding](docs/images/05-gov-intelligence.png)
-
-**Government Intelligence (analyst workspace)** — official-source records kept separate from AeroPrice fare observations. This run shows "0/6 sources responding", "DGCA monthly 0 · DGCA circulars 0 · MoSPI CPI 0 · PPAC ATF 0", and "Index not published".
+Two further verified captures live in `docs/images/` but are not embedded
+here: `06b-route-analysis.png` (Market Insights route list) and
+`06c-elasticity.png` (lead-time elasticity curve, DEL–HYD, real data).
 
 ## What AeroPrice helps you do
 
@@ -76,16 +86,15 @@ The visual system follows the AeroPrice mark: aviation blue, electric cyan accen
 | Maps | Leaflet / React-Leaflet |
 | Auth (user-facing) | Firebase Google Authentication |
 | Auth (privileged workspaces) | Backend JWT auth for analyst and admin work |
-| Alerts persistence | Supabase client support for user-facing price alerts |
 | Backend | FastAPI (Python) |
 | Prototype storage | SQLite; Postgres recommended for production durability |
-| Analysis | pandas, NumPy, scikit-learn, statsmodels |
+| Analysis | Hand-rolled pure-Python engines: Jevons matched-sample index, Holt-Winters forecast, z-score anomaly detection (pandas/NumPy/scikit-learn/statsmodels are pinned in requirements but not imported by app code) |
 
 The repository is split in two parts: the Vite frontend at the repository root, and the FastAPI backend in `backend/` (entrypoint `backend/main.py`).
 
 ## Architecture
 
-The frontend is a single-page app with state-based page switching (no router library): `src/App.tsx` renders one page at a time inside `src/components/AppShell.tsx`. It talks to the FastAPI backend over `/api`, and only to Firebase and Supabase where those integrations are actually wired.
+The frontend is a single-page app with client-side routing (`react-router-dom`): `src/App.tsx` renders one page at a time inside `src/components/AppShell.tsx`, and every authenticated page is a `React.lazy` chunk behind `Suspense`, so the first paint ships only the shell + login. Heavy vendor libraries (Leaflet, jsPDF, Firebase) ride in their own chunks via `manualChunks` in `vite.config.ts`. It talks to the FastAPI backend over `/api`, and to Firebase only where that integration is actually wired.
 
 ```mermaid
 flowchart TD
@@ -93,10 +102,9 @@ flowchart TD
     SPA["React 19 + Vite + TypeScript SPA<br/>src/App.tsx + src/components/AppShell.tsx<br/>state-based pages: Overview, Route Explorer,<br/>India Map, Gov Intelligence, and more"]
     API["FastAPI backend<br/>backend/main.py — /api routers:<br/>auth, health, fares, index, dashboard,<br/>government, aviation, forecasts, anomalies,<br/>exports, admin, routes basket, compare,<br/>sources, collections, historical, maps"]
     Firebase["Firebase Auth — opt-in only<br/>src/services/firebase.ts<br/>Google sign-in when VITE_AUTH_MODE=firebase"]
-    Supabase["Supabase client — optional<br/>src/services/supabase.ts<br/>user-facing price alerts"]
     DB["Prototype storage: SQLite<br/>backend/app/core/config.py default<br/>Postgres recommended for production"]
-    Scheduler["APScheduler jobs in backend lifespan<br/>collection + government refresh"]
-    Collector["Collector + gov fetcher<br/>backend/app/services/<br/>authorized providers only;<br/>unavailable feeds report no data"]
+    Scheduler["GitHub Actions worker<br/>.github/workflows/collect.yml<br/>daily chunked collection"]
+    Collector["Collector + gov fetcher<br/>backend/app/services/<br/>fast-flights public-interface fares<br/>(PUBLIC_INTERFACE) + authorized APIs;<br/>unavailable feeds report no data"]
     GovFeeds["Official feeds: DGCA, MoSPI,<br/>PPAC ATF, data.gov.in"]
     Aviation["Live aviation: ADSB.lol primary,<br/>AvioADSB, OpenSky fallback<br/>backend/app/api/routes/aviation.py"]
     Maps["Leaflet + India state GeoJSON<br/>public/maps/india-states-*.geojson"]
@@ -104,7 +112,6 @@ flowchart TD
     Browser --> SPA
     SPA -->|"REST /api"| API
     SPA -->|"Google sign-in, only if configured"| Firebase
-    SPA -->|"price alerts, only if configured"| Supabase
     SPA --> Maps
     API --> DB
     Scheduler --> Collector
@@ -112,7 +119,15 @@ flowchart TD
     API --> Aviation
 ```
 
-Notes on what is *not* in the diagram: no component is drawn that was not verified in code. The backend issues backend JWT auth by default (`VITE_AUTH_MODE` anything other than `firebase` selects backend auth in `src/contexts/AuthContext.tsx`); Firebase is the opt-in path, not the default. Supabase is client-side and inert when its URL/key are unset.
+Notes on what is *not* in the diagram: no component is drawn that was not verified in code. The backend issues backend JWT auth by default (`VITE_AUTH_MODE` anything other than `firebase` selects backend auth in `src/contexts/AuthContext.tsx`); Firebase is the opt-in path, not the default. There is no Supabase integration — the dead Supabase client module was deleted on 21 Nov 2026, and price alerts persist server-side via the backend (`price_alerts` table).
+
+## Index methodology
+
+- **Formula:** matched-sample Jevons index, `P_t = Π (p_it / p_i0)^(1/n)`, base value 100.0, published only with ≥10 matched corridors × ≥3 observations each (`backend/app/services/index_engine.py`). Daily, weekly (ISO week) and monthly (calendar month) views are served by `/api/index/history?frequency=`.
+- **Base period:** the first verified collection day for the deployment — documented in the engine (`BASE_PERIOD_POLICY`) and returned as `base_period_note` on `/api/index/current`. Values are comparable within one deployment only, until a shared DGCA reference period is adopted.
+- **Weights — stated limitation:** every route carries equal weight 1.0. DGCA route-level passenger-traffic weights are **unavailable** (the DGCA monthly feed carries total domestic passengers only, with no per-route breakdown), so this is not a DGCA-weighted index. See `backend/app/config/weights.py` for the documented config and how to replace it when DGCA route-level data is obtained. The limitation is shown on the Airfare Index page, not hidden.
+- **Data origins:** `REAL`/`OFFICIAL` fares plus `PUBLIC_INTERFACE` fares — real fares collected from the Google Flights public interface via `fast-flights`, honestly labelled, feeding the index under the disclosed SIH-demo methodology (never "GDS fare"). `SANDBOX_TEST` (Amadeus/Duffel test environments) and `GENERATED_TEST` are permanently excluded.
+- **Backtest:** the method is implemented in `backend/app/analytics/backtest.py` (monthly Jevons series vs DGCA monthly average fares, with coverage reporting) and exposed at `GET /api/index/backtest`. No DGCA average-fare dataset has been downloaded into the project yet, so the endpoint honestly reports `NO_DGCA_DATA` until one is supplied — see that module for the CSV format.
 
 ## Quick start
 
@@ -137,12 +152,14 @@ cd backend
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+# SECRET_KEY is required — the app refuses to boot without one:
+export SECRET_KEY=$(python -c "import secrets; print(secrets.token_hex(32))")
 python -m uvicorn main:app --reload --port 8000
 ```
 
 On Windows, activate with `.venv\Scripts\activate` instead of `source .venv/bin/activate`.
 
-The backend API then serves on port 8000. Point the frontend at it with `VITE_API_URL` (see [Environment](#environment)).
+The backend API then serves on port 8000. The Vite dev server talks to it at `http://localhost:8000` by default; set `VITE_API_URL` only if the backend runs on a different host/port (see [Environment](#environment)). In production the frontend uses same-origin `/api` and `VITE_API_URL` is ignored.
 
 ## Environment
 
@@ -151,9 +168,8 @@ The backend API then serves on port 8000. Point the frontend at it with `VITE_AP
 Set these in your deployment environment (or a local `.env.local`) as needed:
 
 ```bash
-VITE_API_URL=https://YOUR_BACKEND_HOST
-VITE_SUPABASE_URL=https://YOUR_SUPABASE_PROJECT.supabase.co
-VITE_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
+# Dev only — the production build uses same-origin /api and ignores this:
+VITE_API_URL=http://localhost:8000
 VITE_FIREBASE_API_KEY=YOUR_FIREBASE_API_KEY
 VITE_FIREBASE_AUTH_DOMAIN=YOUR_FIREBASE_AUTH_DOMAIN
 VITE_FIREBASE_PROJECT_ID=YOUR_FIREBASE_PROJECT_ID
@@ -179,13 +195,15 @@ For local development, the backend validates CORS through `ALLOWED_ORIGINS`, e.g
 
 ### Security
 
-Firebase web configuration values are public client identifiers. Never commit service-account JSON, backend passwords, provider secrets, or Supabase service-role keys.
+Firebase web configuration values are public client identifiers. Never commit service-account JSON, backend passwords, provider secrets, or any credential. `SECRET_KEY` has no default — it must come from the environment in every deployment.
 
 ## Roles and access
 
-- **User** — Firebase Google sign-in creates normal user access.
-- **Admin (frontend)** — only for emails listed in `VITE_FIREBASE_ADMIN_EMAILS`.
-- **Analyst / Admin (privileged workspaces)** — require backend-authorized accounts via backend JWT auth.
+- **User** — self-registration (email + password) or Firebase Google sign-in creates normal user access (role `PUBLIC`, plan `FREE`).
+- **Analyst / DGCA** — admin-granted only. DGCA self-registration is closed; there is no way for a visitor to grant themselves the ANALYST role.
+- **Admin** — backend-authorized accounts only, created out of band (`scripts/bootstrap_admin.py`).
+- **SIH evaluator** — one seeded account (`evaluator@aeroprice.in`, ANALYST role) created by `backend/app/seed/evaluator.py` with a password from the environment; shared privately with judges, never published.
+- **Read vs write:** any signed-in user can view read-only surfaces (forecast, index history/basket, exports, collections reads, source-health). Write/admin actions (collection trigger, anomaly-detection run, government refresh, all `/api/admin/*`) stay gated. See [ACCESS_PLAN.md](./ACCESS_PLAN.md).
 
 ## Verification
 
@@ -206,11 +224,11 @@ python -m pytest -q
 
 ## Performance notes
 
-The one-second goal applies to the first meaningful frontend view, not an unconditional promise about every backend response. Measure frontend bundle startup, first render, and backend/API cold start separately. Planned optimizations include route-level code splitting, cached dashboard snapshots, parallel refreshes, independent timeouts for optional feeds, and production-build measurements on a cold browser cache.
+The one-second goal applies to the first meaningful frontend view, not an unconditional promise about every backend response. Measure frontend bundle startup, first render, and backend/API cold start separately. Route-level code splitting is implemented (React.lazy pages + vendor manualChunks, landed 21 Nov 2026). Remaining optimizations include cached dashboard snapshots, parallel refreshes, independent timeouts for optional feeds, and production-build measurements on a cold browser cache.
 
 ## Deployment
 
-See [DEPLOYMENT.md](./DEPLOYMENT.md) for full deployment guidance: deploying the Vite frontend and the FastAPI backend separately (Vercel/Netlify for the frontend, a FastAPI host for `backend/`), pointing the frontend at the backend with `VITE_API_URL`, Firebase authorized domains, and CORS.
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for full deployment guidance: one Vercel deployment serving the Vite frontend and the FastAPI backend together (same-origin `/api`, no separate backend host), the hosted-Postgres requirement, the GitHub Actions collection worker, Firebase authorized domains, and CORS.
 
 ---
 

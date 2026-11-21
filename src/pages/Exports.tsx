@@ -1,9 +1,11 @@
 import { useState } from 'react'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
-import { Download, FileText, Table, Code, RefreshCw } from 'lucide-react'
+import { Download, FileText, Table, Code, RefreshCw, ShieldAlert } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
-import { apiDownload } from '../services/api'
+import { apiCreateAccessRequest, apiDownload, isForbiddenError } from '../services/api'
+import LiveBadge from '../components/LiveBadge'
+import type { LiveCheck } from '../lib/liveStatus'
 
 type ExportStatus = 'idle' | 'downloading' | 'done' | 'error'
 
@@ -58,6 +60,33 @@ export default function Exports() {
   const { token } = useAuth()
   const [statuses, setStatuses] = useState<Record<string, ExportStatus>>({})
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
+  // A 403 is an access problem, not a broken export: say so and offer the
+  // access-request flow instead of telling the user to "check backend logs".
+  const [forbidden, setForbidden] = useState<Record<string, boolean>>({})
+  const [requestState, setRequestState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
+  const anyForbidden = Object.values(forbidden).some(Boolean)
+  // The header badge is green ONLY after a successful download in this
+  // session — nothing has verified the export endpoints before that.
+  const [exportSucceededAt, setExportSucceededAt] = useState<Date | null>(null)
+  const [exportFailed, setExportFailed] = useState(false)
+  const anyDownloading = Object.values(statuses).some(s => s === 'downloading')
+  const exportCheck: LiveCheck = {
+    ok: exportSucceededAt != null,
+    checkedAt: exportSucceededAt,
+    loading: anyDownloading,
+    failed: exportFailed && exportSucceededAt == null,
+  }
+
+  async function requestAccess() {
+    if (!token || requestState === 'sending' || requestState === 'sent') return
+    setRequestState('sending')
+    try {
+      await apiCreateAccessRequest('EXPORTS', 'Data Export', token, 'Export access was denied for this account.')
+      setRequestState('sent')
+    } catch {
+      setRequestState('error')
+    }
+  }
 
   function showSuccess(msg: string) {
     setSuccessMsg(msg)
@@ -66,6 +95,7 @@ export default function Exports() {
 
   async function handleDownload(entry: ExportEntry) {
     setStatuses(s => ({ ...s, [entry.id]: 'downloading' }))
+    setForbidden(s => ({ ...s, [entry.id]: false }))
     try {
       const path = entry.id === 'csv'
         ? '/api/exports/fares?fmt=csv'
@@ -75,13 +105,18 @@ export default function Exports() {
       const blob = await apiDownload(path, token ?? undefined)
       const extension = entry.id === 'json' ? 'json' : 'csv'
       downloadBlob(`aeroprice-${entry.id}-export.${extension}`, blob)
+      setExportSucceededAt(new Date())
+      setExportFailed(false)
       setStatuses(s => ({ ...s, [entry.id]: 'done' }))
       setTimeout(() => setStatuses(s => ({ ...s, [entry.id]: 'idle' })), 3000)
       showSuccess(`${entry.label} downloaded successfully.`)
     } catch (err) {
       console.error('Export failed:', err)
+      setExportFailed(true)
+      setForbidden(s => ({ ...s, [entry.id]: isForbiddenError(err) }))
       setStatuses(s => ({ ...s, [entry.id]: 'error' }))
-      setTimeout(() => setStatuses(s => ({ ...s, [entry.id]: 'idle' })), 4000)
+      // Error states stay visible at least 5s (audit §2.11).
+      setTimeout(() => setStatuses(s => ({ ...s, [entry.id]: 'idle' })), 5000)
     }
   }
 
@@ -111,18 +146,30 @@ export default function Exports() {
               Fare observations, index history &amp; government statistics with full provenance metadata
             </p>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', background: 'rgba(22,163,74,0.15)', borderRadius: 99, border: '1px solid rgba(22,163,74,0.3)' }}>
-            <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--color-success)', animation: 'pulse-dot 2s ease-in-out infinite' }} />
-            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-success)', letterSpacing: '0.08em', fontFamily: 'var(--font-mono)' }}>
-              BACKEND EXPORTS
-            </span>
-          </div>
+          <LiveBadge check={exportCheck} label="BACKEND EXPORTS" />
         </div>
       </div>
 
       {successMsg && (
         <div style={{ padding: '10px 14px', borderRadius: 'var(--radius-md)', background: 'var(--color-success-bg)', border: '1px solid rgba(22,163,74,0.25)', fontSize: 12, color: 'var(--color-success)', fontFamily: 'var(--font-sans)' }}>
           {successMsg}
+        </div>
+      )}
+
+      {anyForbidden && (
+        <div style={{ padding: '16px 18px', borderRadius: 12, border: '1px solid var(--color-warning)', background: 'var(--color-warning-bg)', display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          <ShieldAlert size={20} style={{ color: 'var(--color-warning)', flexShrink: 0, marginTop: 2 }} />
+          <div style={{ flex: 1, minWidth: 240 }}>
+            <strong style={{ display: 'block', color: 'var(--color-text-primary)', fontSize: 14 }}>Analyst access required</strong>
+            <span style={{ color: 'var(--color-text-secondary)', fontSize: 13 }}>Your account does not have access to exports. Request access and an administrator will review it.</span>
+            <div style={{ marginTop: 12, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <Button onClick={requestAccess} disabled={!token || requestState === 'sending' || requestState === 'sent'}>
+                {requestState === 'sent' ? 'Request sent' : requestState === 'sending' ? 'Sending…' : 'Request access'}
+              </Button>
+              {requestState === 'error' && <span style={{ fontSize: 12, color: 'var(--color-danger)' }}>The request could not be sent. Please try again.</span>}
+              {!token && <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>Sign in to request access.</span>}
+            </div>
+          </div>
         </div>
       )}
 
@@ -148,7 +195,9 @@ export default function Exports() {
                     <p style={{ fontSize: 'var(--text-body-size)', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', margin: 0, lineHeight: 1.6 }}>{entry.description}</p>
                     {st === 'error' && (
                       <p style={{ fontSize: 12, color: 'var(--color-danger)', fontFamily: 'var(--font-sans)', marginTop: 'var(--space-xs)' }}>
-                        Export failed — check backend logs.
+                        {forbidden[entry.id]
+                          ? 'Analyst access required — request access below.'
+                          : 'Export failed — please try again.'}
                       </p>
                     )}
                     {st === 'done' && (

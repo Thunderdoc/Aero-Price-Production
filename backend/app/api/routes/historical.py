@@ -24,10 +24,10 @@ CITY_CODES = {
     "Bangalore": "BLR", "Kolkata": "CCU", "Chennai": "MAA", "Cochin": "COK",
     "Hyderabad": "HYD",
 }
-WORKBOOK = Path(__file__).resolve().parents[4] / "src" / "imports" / "Data_Train.xlsx"
+WORKBOOK = Path(__file__).resolve().parents[3] / "data" / "historical" / "Data_Train.xlsx"
 SOURCE = "kaggle-flight-fare-prediction-mh"
 ORIGIN = "HISTORICAL_PUBLIC"
-LIVE_ORIGINS = ("REAL", "OFFICIAL")
+LIVE_ORIGINS = ("REAL", "OFFICIAL", "PUBLIC_INTERFACE")
 
 
 def _date(value) -> str:
@@ -69,7 +69,7 @@ async def historical_summary(
     ).where(origin_filter))).one()
     return {
         "status": "READY", "records": total, "source": source,
-        "data_origin": "REAL/OFFICIAL" if source != SOURCE else ORIGIN,
+        "data_origin": "REAL/OFFICIAL/PUBLIC_INTERFACE" if source != SOURCE else ORIGIN,
         "period_start": stats[0], "period_end": stats[1],
         "average_fare": round(float(stats[2]), 2), "min_fare": float(stats[3]), "max_fare": float(stats[4]),
         "note": note,

@@ -1,15 +1,16 @@
 import { useState, useEffect } from 'react'
-import { AlertTriangle, CheckCircle2, Globe, RefreshCw, Server, Shield, XCircle, Zap, ShieldCheck, Database } from 'lucide-react'
-import StatusBadge from '../components/StatusBadge'
+import { CheckCircle2, Globe, RefreshCw, Server, Zap, ShieldCheck } from 'lucide-react'
 import { GovSourceCard } from '../components/SourceCard'
 import { useGovData } from '../hooks/useGovData'
 import { apiSources } from '../services/api'
 import type { AirfareSource } from '../types/observation'
 import { useAuth } from '../contexts/AuthContext'
+import EmptyState from '../components/EmptyState'
+import { formatDateTimeIST } from '../lib/liveStatus'
 
 function isoTimestamp(iso: string | null | undefined): string {
   if (!iso) return 'Never'
-  return new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST'
+  return formatDateTimeIST(iso)
 }
 
 export default function DataSources() {
@@ -58,10 +59,15 @@ export default function DataSources() {
   const connectedAirfare = displaySources.filter(s => ['LIVE', 'CONNECTED', 'HEALTHY'].includes(s.status as string)).length
   const govConnected = datasets.filter(d => ['CONNECTED', 'HEALTHY', 'STALE'].includes(d.status)).length
   const totalRecords = displaySources.reduce((acc, s) => acc + (s.records_received ?? 0), 0)
+  // Summary dots are green ONLY when at least one source is connected after a
+  // completed load — 0/N or still-loading is grey (audit §7.1).
+  const airfareDot = !airfareLoading && connectedAirfare > 0 ? 'var(--color-success)' : 'var(--color-text-tertiary)'
+  const govDot = !isLoading && govConnected > 0 ? 'var(--color-success)' : 'var(--color-text-tertiary)'
+  const checksDone = !airfareLoading && !isLoading
 
   const summaryItems = [
-    { label: 'AIRFARE FEEDS', value: `${connectedAirfare}/${displaySources.length}`, color: 'var(--color-success)', dot: 'var(--color-success)' },
-    { label: 'GOV REGISTRIES', value: `${govConnected}/${datasets.length}`, color: 'var(--color-success)', dot: 'var(--color-success)' },
+    { label: 'AIRFARE FEEDS', value: airfareLoading ? '—' : `${connectedAirfare}/${displaySources.length}`, color: airfareDot, dot: airfareDot },
+    { label: 'GOV REGISTRIES', value: isLoading ? '—' : `${govConnected}/${datasets.length}`, color: govDot, dot: govDot },
     { label: 'SYSTEM LATENCY', value: '—', color: 'var(--color-text-tertiary)', dot: null },
     { label: 'SOURCE-REPORTED RECORDS', value: totalRecords.toLocaleString('en-IN'), color: 'var(--color-text-primary)', dot: null },
     { label: 'PIPELINE UPTIME', value: '—', color: 'var(--color-text-tertiary)', dot: null },
@@ -123,7 +129,7 @@ export default function DataSources() {
               >
                 Data Pipeline Registry
               </h1>
-              <span className="ap-badge ap-badge-official">SYSTEM CHECKED · VERIFY SOURCES</span>
+              <span className={checksDone ? 'ap-badge ap-badge-official' : 'ap-badge ap-badge-gen'}>{checksDone ? 'SYSTEM CHECKED · VERIFY SOURCES' : 'CHECKING SOURCES…'}</span>
             </div>
             <p
               style={{
@@ -254,12 +260,13 @@ export default function DataSources() {
         ))}
       </div>
 
-      {/* Reassuring Live Status Notice */}
+      {/* Source policy notice — neutral info styling: this is an explainer,
+          not a live status, so it must not render green (audit §7.1). */}
       <div
         style={{
-          background: 'rgba(22, 163, 74, 0.08)',
-          border: '1px solid rgba(22, 163, 74, 0.25)',
-          borderLeft: '4px solid #16a34a',
+          background: 'var(--color-info-bg)',
+          border: '1px solid rgba(3, 105, 161, 0.25)',
+          borderLeft: '4px solid var(--color-info)',
           borderRadius: 'var(--radius-lg)',
           padding: 'var(--space-lg) var(--space-xl)',
           display: 'flex',
@@ -267,13 +274,13 @@ export default function DataSources() {
           alignItems: 'center',
         }}
       >
-        <Zap size={20} style={{ color: '#16a34a', flexShrink: 0 }} />
+        <Zap size={20} style={{ color: 'var(--color-info)', flexShrink: 0 }} />
         <div>
           <div
             style={{
               fontSize: 12,
               fontWeight: 800,
-              color: '#15803d',
+              color: 'var(--color-info)',
               letterSpacing: '0.06em',
               fontFamily: 'var(--font-sans)',
               marginBottom: 3,
@@ -296,7 +303,7 @@ export default function DataSources() {
       </div>
 
       {/* Tab Selector */}
-      <div style={{ display: 'flex', gap: 'var(--space-sm)', borderBottom: '1px solid var(--color-border-primary)', paddingBottom: 0 }}>
+      <div role="tablist" aria-label="Source registry tabs" style={{ display: 'flex', gap: 'var(--space-sm)', borderBottom: '1px solid var(--color-border-primary)', paddingBottom: 0 }}>
         {[
           { key: 'airfare', label: `Airfare & Airline Pipelines (${displaySources.length})`, icon: Globe },
           { key: 'government', label: `Government Portals & Registries (${datasets.length})`, icon: Server },
@@ -305,6 +312,8 @@ export default function DataSources() {
           return (
             <button
               key={t.key}
+              role="tab"
+              aria-selected={tab === t.key}
               onClick={() => setTab(t.key as 'airfare' | 'government')}
               style={{
                 padding: 'var(--space-md) var(--space-lg)',
@@ -337,11 +346,15 @@ export default function DataSources() {
               Loading source status from the backend…
             </div>
           ) : displaySources.length === 0 ? (
-            <div className="ap-card" style={{ padding: 24, color: 'var(--color-text-secondary)' }}>
-              The backend returned no airfare source registry records.
+            <div className="ap-card" style={{ padding: 8 }}>
+              <EmptyState title="NO AIRFARE SOURCE REGISTRY" detail="The backend returned no airfare source registry records for this session." />
             </div>
           ) : displaySources.map(s => {
             const hovered = hoveredSourceId === s.id
+            const isConnected = ['LIVE', 'CONNECTED', 'HEALTHY'].includes(s.status as string)
+            // The status dot is green ONLY for a connected status from the
+            // backend — never hardcoded green for every row (audit §7.1).
+            const dotColor = isConnected ? '#16a34a' : 'var(--color-text-tertiary)'
             return (
               <div
                 key={s.id}
@@ -350,7 +363,7 @@ export default function DataSources() {
                 style={{
                   background: 'var(--color-surface-bg)',
                   border: `1px solid ${hovered ? 'var(--color-border-secondary)' : 'var(--color-border-primary)'}`,
-                  borderLeft: `4px solid ${['LIVE', 'CONNECTED', 'HEALTHY'].includes(s.status as string) ? '#16a34a' : '#94a3b8'}`,
+                  borderLeft: `4px solid ${isConnected ? '#16a34a' : '#94a3b8'}`,
                   borderRadius: 'var(--radius-lg)',
                   padding: 'var(--space-xl)',
                   boxShadow: hovered ? 'var(--shadow-md)' : 'var(--shadow-sm)',
@@ -365,9 +378,10 @@ export default function DataSources() {
                         width: 9,
                         height: 9,
                         borderRadius: '50%',
-                        background: '#16a34a',
+                        background: dotColor,
                         display: 'inline-block',
-                        boxShadow: '0 0 8px #22c55e',
+                        boxShadow: isConnected ? '0 0 8px #22c55e' : 'none',
+                        flexShrink: 0,
                       }}
                     />
                     <div>
@@ -375,7 +389,7 @@ export default function DataSources() {
                         <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}>
                           {s.name}
                         </span>
-                        <span className={`ap-badge ${['LIVE', 'CONNECTED', 'HEALTHY'].includes(s.status as string) ? 'ap-badge-real' : 'ap-badge-sandbox'}`}>{s.status}</span>
+                        <span className={`ap-badge ${isConnected ? 'ap-badge-real' : 'ap-badge-sandbox'}`}>{s.status}</span>
                       </div>
                       <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>
                         {s.organization}
@@ -384,7 +398,7 @@ export default function DataSources() {
                   </div>
 
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <div style={{ padding: '4px 10px', borderRadius: 6, background: 'rgba(22,163,74,0.1)', color: '#15803d', fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
+                    <div style={{ padding: '4px 10px', borderRadius: 6, background: s.last_attempt ? 'rgba(22,163,74,0.1)' : 'var(--color-surface-secondary)', color: s.last_attempt ? '#15803d' : 'var(--color-text-tertiary)', fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
                       {s.last_attempt ? `LAST: ${isoTimestamp(s.last_attempt)}` : 'NOT CHECKED'}
                     </div>
                     <div style={{ padding: '4px 10px', borderRadius: 6, background: 'var(--color-surface-secondary)', color: 'var(--color-text-secondary)', fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
@@ -440,7 +454,7 @@ export default function DataSources() {
                     <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>
                       API CAPABILITY
                     </div>
-                    <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: '#16a34a', marginTop: 2, fontWeight: 700 }}>
+                    <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: s.api_available ? '#16a34a' : 'var(--color-text-tertiary)', marginTop: 2, fontWeight: 700 }}>
                       {s.api_available ? 'SUPPORTED' : 'NOT LISTED'}
                     </div>
                   </div>
@@ -476,6 +490,11 @@ export default function DataSources() {
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+            {datasets.length === 0 && !isLoading && (
+              <div className="ap-card" style={{ padding: 8 }}>
+                <EmptyState title="NO GOVERNMENT REGISTRIES RETURNED" detail="The backend returned no government source records for this session." />
+              </div>
+            )}
             {datasets.map(d => (
               <div
                 key={d.id}

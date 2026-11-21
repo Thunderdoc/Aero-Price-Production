@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Button } from '../components/ui/Button'
-import { Play, RefreshCw, Database, CheckCircle, Clock, Zap, Activity, ShieldCheck } from 'lucide-react'
+import { Play, RefreshCw, Database, Clock, Activity, ShieldCheck } from 'lucide-react'
 import { apiCollections, apiTriggerCollection, apiSourceHealth, isBackendAvailable } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
+import { formatDateTimeIST } from '../lib/liveStatus'
 
 interface CollectionRun {
   run_id: string
@@ -35,6 +36,28 @@ function relativeTime(iso: string | null | undefined): string {
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`
   return `${Math.floor(diff / 86_400_000)}d ago`
+}
+
+// Run/source status colours. A FAILED run must NEVER render green (audit
+// §2.8) — the old pill hardcoded the success treatment for every status.
+function statusColor(status: string | undefined): { bg: string; fg: string; border: string } {
+  switch ((status ?? '').toUpperCase()) {
+    case 'COMPLETED':
+    case 'LIVE':
+    case 'HEALTHY':
+    case 'CONNECTED':
+      return { bg: 'var(--color-success-bg)', fg: 'var(--color-success)', border: 'rgba(22,163,74,0.3)' }
+    case 'FAILED':
+    case 'ERROR':
+    case 'DOWN':
+    case 'CANCELLED':
+      return { bg: 'var(--color-danger-bg)', fg: 'var(--color-danger)', border: 'rgba(220,38,38,0.3)' }
+    case 'RUNNING':
+    case 'IN_PROGRESS':
+      return { bg: 'var(--color-info-bg)', fg: 'var(--color-info)', border: 'rgba(3,105,161,0.3)' }
+    default:
+      return { bg: 'var(--color-warning-bg)', fg: 'var(--color-warning)', border: 'rgba(217,119,6,0.3)' }
+  }
 }
 
 export default function Collection() {
@@ -118,7 +141,7 @@ export default function Collection() {
                 </div>
               </div>
               <p style={{ margin: 0, fontSize: 12, color: 'rgba(255,255,255,0.7)', maxWidth: 520, lineHeight: 1.6 }}>
-                Real-time scraping, GDS direct queries, and government statistical feeds feeding into the AeroPrice Jevons Matched-Sample index engine.
+                Scheduled collection sweeps, GDS direct queries, and government statistical feeds feeding into the AeroPrice Jevons Matched-Sample index engine.
               </p>
             </div>
 
@@ -152,17 +175,18 @@ export default function Collection() {
       {/* Summary stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 'var(--space-md)' }}>
         {[
-          { label: 'SOURCES LIVE', value: `${liveCount} / ${sourceHealth.length}`, color: liveCount ? 'var(--color-success)' : 'var(--color-warning)', icon: ShieldCheck },
-          { label: 'TOTAL OBSERVATIONS', value: totalObs.toLocaleString('en-IN'), color: 'var(--color-brand-primary)', icon: Database },
-          { label: 'LAST COLLECTION', value: lastRun ? relativeTime(lastRun.started_at) : '—', color: 'var(--color-text-secondary)', icon: Clock },
-          { label: 'COLLECTION STATUS', value: lastRun?.status ?? 'NO RUNS', color: lastRun?.status === 'COMPLETED' ? 'var(--color-success)' : 'var(--color-warning)', icon: Activity },
-        ].map(({ label, value, color, icon: Icon }) => (
+          { label: 'SOURCES LIVE', value: sourceHealth.length ? `${liveCount} / ${sourceHealth.length}` : '—', sub: null as string | null, color: sourceHealth.length ? (liveCount ? 'var(--color-success)' : 'var(--color-warning)') : 'var(--color-text-tertiary)', icon: ShieldCheck },
+          { label: 'TOTAL OBSERVATIONS', value: totalObs.toLocaleString('en-IN'), sub: null, color: 'var(--color-brand-primary)', icon: Database },
+          { label: 'LAST COLLECTION', value: lastRun ? formatDateTimeIST(lastRun.started_at) : '—', sub: lastRun ? relativeTime(lastRun.started_at) : null, color: 'var(--color-text-secondary)', icon: Clock },
+          { label: 'COLLECTION STATUS', value: lastRun?.status ?? 'NO RUNS', sub: null, color: lastRun ? statusColor(lastRun.status).fg : 'var(--color-text-tertiary)', icon: Activity },
+        ].map(({ label, value, sub, color, icon: Icon }) => (
           <div key={label} className="ap-card" style={{ padding: 'var(--space-lg)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)', marginBottom: 'var(--space-sm)' }}>
               <Icon size={13} style={{ color: 'var(--color-text-tertiary)' }} />
               <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.07em', color: 'var(--color-text-tertiary)' }}>{label}</span>
             </div>
-            <span style={{ fontSize: '1.25rem', fontWeight: 800, color, fontFamily: 'var(--font-mono)' }}>{value}</span>
+            <span style={{ fontSize: label === 'LAST COLLECTION' ? '0.95rem' : '1.25rem', fontWeight: 800, color, fontFamily: 'var(--font-mono)' }}>{value}</span>
+            {sub && <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 2 }}>{sub}</div>}
           </div>
         ))}
       </div>
@@ -190,9 +214,9 @@ export default function Collection() {
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ fontSize: 9, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>LATENCY</div>
-                  <div style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--color-brand-primary)', fontWeight: 600 }}>{s.latency_ms_avg} ms</div>
+                  <div style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--color-brand-primary)', fontWeight: 600 }}>{s.latency_ms_avg != null ? `${s.latency_ms_avg} ms` : '—'}</div>
                 </div>
-                <span style={{ fontSize: 9, fontWeight: 700, padding: '3px 8px', borderRadius: 99, background: s.status === 'LIVE' ? 'var(--color-success-bg)' : 'var(--color-warning-bg)', color: s.status === 'LIVE' ? 'var(--color-success)' : 'var(--color-warning)', border: `1px solid ${s.status === 'LIVE' ? 'rgba(22,163,74,0.3)' : 'rgba(217,119,6,0.3)'}` }}>
+                <span style={{ fontSize: 9, fontWeight: 700, padding: '3px 8px', borderRadius: 99, background: statusColor(s.status).bg, color: statusColor(s.status).fg, border: `1px solid ${statusColor(s.status).border}` }}>
                   {s.status}
                 </span>
               </div>
@@ -225,9 +249,13 @@ export default function Collection() {
                 <td style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>{r.triggered_by}</td>
                 <td style={{ fontFamily: 'var(--font-mono)' }}>{r.routes_done} / {r.routes_planned}</td>
                 <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{r.observations_collected?.toLocaleString('en-IN')}</td>
-                <td style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{relativeTime(r.ended_at)}</td>
+                <td style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+                  <div style={{ fontFamily: 'var(--font-mono)' }}>{r.ended_at ? formatDateTimeIST(r.ended_at) : '—'}</div>
+                  {r.ended_at && <div style={{ fontSize: 10, marginTop: 2 }}>{relativeTime(r.ended_at)}</div>}
+                  {r.status === 'FAILED' && r.error_summary && <div style={{ color: 'var(--color-danger)', marginTop: 4, maxWidth: 320, whiteSpace: 'normal' }}>{r.error_summary}</div>}
+                </td>
                 <td>
-                  <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 99, background: 'var(--color-success-bg)', color: 'var(--color-success)', border: '1px solid rgba(22,163,74,0.3)' }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 99, background: statusColor(r.status).bg, color: statusColor(r.status).fg, border: `1px solid ${statusColor(r.status).border}` }}>
                     {r.status}
                   </span>
                 </td>

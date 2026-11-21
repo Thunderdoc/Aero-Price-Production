@@ -11,6 +11,7 @@ from app.core.database import get_db
 from app.core.auth import require_analyst, get_current_user
 from app.models.fare import FareObservation
 from app.services.anomaly_detector import get_anomaly_summary, detect_anomalies
+from app.services.index_engine import INDEX_ELIGIBLE_ORIGINS
 
 router = APIRouter()
 
@@ -25,7 +26,7 @@ async def list_anomalies(
     """Return fare observations flagged as anomalies (quality_flags contains OUTLIER)."""
     filters = [
         FareObservation.quality_flags.like('%OUTLIER%'),
-        FareObservation.data_origin.in_(["REAL", "OFFICIAL"]),
+        FareObservation.data_origin.in_(list(INDEX_ELIGIBLE_ORIGINS)),
     ]
     if route:
         filters.append(FareObservation.route == route.upper())

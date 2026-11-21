@@ -10,6 +10,13 @@ where:
 
 Only published when n >= MIN_CORRIDORS_TO_PUBLISH.
 Never calculated from GENERATED_TEST data in production mode.
+
+Eligible origins: REAL, OFFICIAL and PUBLIC_INTERFACE. PUBLIC_INTERFACE is
+the disclosed SIH-demo methodology: fares collected from the Google Flights
+public interface via fast-flights (the only free path to real Indian LCC
+fares). They are real observed fares, honestly labelled — never GDS fares,
+never "official". SANDBOX_TEST (Amadeus synthetic) and GENERATED_TEST are
+permanently excluded.
 """
 import math
 import uuid
@@ -29,6 +36,29 @@ METHOD = "JEVONS_MATCHED_SAMPLE"
 MIN_CORRIDORS_TO_PUBLISH = 10
 MIN_OBS_PER_CORRIDOR = 3
 
+# Origins that may feed the index. PUBLIC_INTERFACE (scraped Google Flights
+# fares, honestly labelled) is included as the disclosed SIH-demo methodology
+# — see the module docstring. SANDBOX_TEST and GENERATED_TEST are excluded.
+INDEX_ELIGIBLE_ORIGINS = ("REAL", "OFFICIAL", "PUBLIC_INTERFACE")
+
+# Base-period policy (documented for SIH review — see also the /index/current
+# `base_period_note` field). The base period is NOT a fixed calendar date:
+# it is the first verified collection day for this deployment — the earliest
+# day on which REAL/OFFICIAL fares were collected. The index for that day is
+# 100.0 by construction, and every later day is measured against it. This is
+# self-baselining: a deployment whose first collection day differs has a
+# different base, so index values are only comparable within one deployment
+# (or after re-basing onto a shared reference month, which the backtest module
+# supports via its base-month parameter). A fixed reference period (e.g. a
+# DGCA-published month) requires a DGCA average-fare dataset that this project
+# does not yet have — see backend/app/analytics/backtest.py.
+BASE_PERIOD_POLICY = (
+    "Base period = the first verified collection day for this deployment "
+    "(earliest day with REAL/OFFICIAL fares). That day's index is 100.0 by "
+    "construction. Values are comparable within one deployment only, until a "
+    "shared DGCA reference period is adopted."
+)
+
 
 async def _get_median_fare(
     db: AsyncSession,
@@ -36,13 +66,15 @@ async def _get_median_fare(
     period_start: str,
     period_end: str,
 ) -> Optional[float]:
-    """Get median total_fare for a route in a date range. REAL and OFFICIAL only.
-    SANDBOX_TEST (Amadeus synthetic) and GENERATED_TEST are permanently excluded."""
+    """Get median total_fare for a route in a date range. Index-eligible
+    origins only (REAL, OFFICIAL, PUBLIC_INTERFACE — the disclosed demo
+    methodology). SANDBOX_TEST (Amadeus synthetic) and GENERATED_TEST are
+    permanently excluded."""
     rows = await db.execute(
         select(FareObservation.total_fare)
         .where(and_(
             FareObservation.route == route,
-            FareObservation.data_origin.in_(["REAL", "OFFICIAL"]),
+            FareObservation.data_origin.in_(list(INDEX_ELIGIBLE_ORIGINS)),
             FareObservation.is_valid == True,
             FareObservation.collected_at >= period_start,
             FareObservation.collected_at <= period_end,
@@ -75,7 +107,7 @@ async def calculate_index(
     # day becomes the 100-point baseline for this local deployment.
     first_observation = await db.scalar(
         select(FareObservation.collected_at)
-        .where(FareObservation.data_origin.in_(["REAL", "OFFICIAL"]))
+        .where(FareObservation.data_origin.in_(list(INDEX_ELIGIBLE_ORIGINS)))
         .where(FareObservation.is_valid == True)
         .order_by(FareObservation.collected_at.asc()).limit(1)
     )
@@ -88,6 +120,7 @@ async def calculate_index(
     base_end = datetime.fromisoformat(f"{base_date}T23:59:59")
 
     ratios = []
+    weights = []
     covered_routes = []
     missing_routes = []
 
@@ -101,8 +134,8 @@ async def calculate_index(
             continue
 
         ratio = current_median / base_median
-        weighted_ratio = ratio ** route_info.get("weight", 1.0)
-        ratios.append(weighted_ratio)
+        ratios.append(ratio)
+        weights.append(route_info.get("weight", 1.0))
         covered_routes.append(route)
 
     n = len(ratios)
@@ -117,15 +150,23 @@ async def calculate_index(
             "message": f"Requires ≥{MIN_CORRIDORS_TO_PUBLISH} matched corridors. Have {n}.",
         }
 
-    # Jevons: geometric mean of weighted ratios
-    product = math.prod(ratios)
-    jevons = (product ** (1.0 / n)) * BASE_VALUE
+    # Weighted Jevons: geometric mean of ratios with normalised weights,
+    # P = Π (ratio_i ^ (w_i / Σw)) * 100. Under the current equal-weight
+    # regime (every w_i = 1.0) this is exactly the unweighted Jevons formula
+    # Π ratio^(1/n) * 100; when DGCA traffic weights arrive, the same code
+    # weights corridors by their traffic share without an engine change.
+    total_weight = sum(weights)
+    log_sum = sum(
+        (w / total_weight) * math.log(ratio) for ratio, w in zip(ratios, weights)
+    )
+    jevons = math.exp(log_sum) * BASE_VALUE
 
     return {
         "status": "CALCULATED",
         "index_value": round(jevons, 2),
         "base_value": BASE_VALUE,
         "base_period": base_date,
+        "base_period_note": BASE_PERIOD_POLICY,
         "n": n,
         "covered_routes": covered_routes,
         "missing_routes": missing_routes,
@@ -133,6 +174,7 @@ async def calculate_index(
         "method": METHOD,
         "version": INDEX_VERSION,
         "data_origin": "DERIVED",
+        "origins_included": list(INDEX_ELIGIBLE_ORIGINS),
     }
 
 
@@ -157,7 +199,7 @@ async def publish_index(db: AsyncSession, observation_period: str, routes: list[
     day_end = datetime.fromisoformat(f"{observation_period}T23:59:59")
     observation_count = await db.scalar(
         select(func.count()).select_from(FareObservation)
-        .where(FareObservation.data_origin.in_(["REAL", "OFFICIAL"]))
+        .where(FareObservation.data_origin.in_(list(INDEX_ELIGIBLE_ORIGINS)))
         .where(FareObservation.is_valid == True)
         .where(FareObservation.collected_at >= day_start)
         .where(FareObservation.collected_at <= day_end)

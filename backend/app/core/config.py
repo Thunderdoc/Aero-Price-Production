@@ -9,7 +9,11 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite+aiosqlite:///./aeroprice.db"
 
     # Auth
-    SECRET_KEY: str = "local-development-only-change-me"
+    # SECRET_KEY has NO default: it must come from the environment. Startup
+    # fails if it is absent or shorter than 32 characters, in EVERY
+    # environment — a publicly-known fallback key let anyone forge an ADMIN
+    # JWT whenever ENVIRONMENT was not exactly "production" (S1/L3).
+    SECRET_KEY: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
     ALGORITHM: str = "HS256"
 
@@ -99,6 +103,12 @@ class Settings(BaseSettings):
     GOOGLEFLIGHTS_WORKER_COMMAND: str = ""
     SCRAPLING_ENABLED: bool = True
     SCRAPLING_HEADLESS: bool = True
+    # Minimum gap between fast-flights (Google Flights public interface)
+    # calls from one process, in seconds. Ethical-scraping throttle: the SIH
+    # statement requires scraping, but the public interface must not be
+    # hammered. 0 disables the in-process throttle (the chunked scheduler
+    # still sleeps between chunks). Tests set this to 0.
+    FAST_FLIGHTS_MIN_INTERVAL_SECONDS: float = 2.0
 
     # Data mode
     # live = only real collected/official data returned
@@ -168,8 +178,14 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_security(self):
-        if self.is_production and (len(self.SECRET_KEY) < 32 or self.SECRET_KEY == "local-development-only-change-me"):
-            raise ValueError("SECRET_KEY must be a non-default value of at least 32 characters in production")
+        # Fail closed in EVERY environment, not just production: the old
+        # default placeholder is exactly 32 characters long, so a length
+        # check alone would not reject it — reject the known value too.
+        if len(self.SECRET_KEY) < 32 or self.SECRET_KEY == "local-development-only-change-me":
+            raise ValueError(
+                "SECRET_KEY must be set from the environment to a random value "
+                "of at least 32 characters (never the old committed default)"
+            )
         if "*" in self.ALLOWED_ORIGINS:
             raise ValueError("Wildcard CORS origins are not allowed")
         return self

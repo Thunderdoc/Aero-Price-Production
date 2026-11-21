@@ -4,6 +4,7 @@ import { Button } from "../components/ui/Button"
 import { Badge } from "../components/ui/Badge"
 import { Modal } from "../components/ui/Modal"
 import { useAuth } from "../contexts/AuthContext"
+import { formatDateTimeIST } from "../lib/liveStatus"
 import {
   apiAdminAccessRequests,
   apiAdminAccessRequestDetails,
@@ -66,14 +67,6 @@ import {
   normalizeAuditRecord,
   type AuditRecord,
 } from "../components/admin/auditTrailModel"
-
-const AIRFARE_SOURCES_ADMIN: Array<{
-  id: string
-  name: string
-  status: string
-  enabled: boolean
-  obs: string
-}> = []
 
 const INITIAL_AUDIT: AuditRecord[] = []
 
@@ -332,10 +325,17 @@ export default function AdminDashboard() {
   const [auditLoaded, setAuditLoaded] = useState(false)
   const [auditError, setAuditError] = useState<string | null>(null)
   const [auditRefreshKey, setAuditRefreshKey] = useState(0)
-  const [auditQuery, setAuditQuery] = useState("")
-  const [auditAction, setAuditAction] = useState("ALL")
-  const [auditPage, setAuditPage] = useState(1)
-  const [sources, setSources] = useState(AIRFARE_SOURCES_ADMIN)
+  // Audit filtering/pagination/export live inside the AuditTrail component;
+  // the dashboard only owns the raw records + load state. (The old inline
+  // audit table and its query/action/page state were dead code behind a
+  // `false &&` gate and were removed.)
+  const [sources, setSources] = useState<Array<{
+    id: string
+    name: string
+    status: string
+    enabled: boolean
+    obs: string
+  }>>([])
 
   const [systemParameters, setSystemParameters] =
     useState<SystemParametersResponse | null>(null)
@@ -446,36 +446,6 @@ export default function AdminDashboard() {
   const [resetSentEmail, setResetSentEmail] = useState<string | null>(null)
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const appliedSnapshotEmailRef = useRef<string | null>(null)
-  const auditPageSize = 20
-  const filteredAudit = audit.filter((entry) => {
-    const matchesAction = auditAction === "ALL" || entry.action === auditAction
-    const query = auditQuery.trim().toLowerCase()
-    return (
-      matchesAction &&
-      (!query ||
-        `${entry.actor} ${entry.action} ${entry.detail}`
-          .toLowerCase()
-          .includes(query))
-    )
-  })
-  const auditPageCount = Math.max(
-    1,
-    Math.ceil(filteredAudit.length / auditPageSize),
-  )
-  const visibleAudit = filteredAudit.slice(
-    (auditPage - 1) * auditPageSize,
-    auditPage * auditPageSize,
-  )
-  const auditActorCount = new Set(
-    audit.map((entry) => entry.actor).filter(Boolean),
-  ).size
-  const auditActionCount = new Set(
-    audit.map((entry) => entry.action).filter(Boolean),
-  ).size
-  const auditRecentCount = audit.filter((entry) => {
-    const age = Date.now() - new Date(entry.ts).getTime()
-    return Number.isFinite(age) && age >= 0 && age < 24 * 60 * 60 * 1000
-  }).length
   const filteredManagedUsers = managedUsers.filter((entry) => {
     const query = userQuery.trim().toLowerCase()
     const matchesQuery =
@@ -624,12 +594,21 @@ export default function AdminDashboard() {
     void loadPipelineData()
   }, [tab, token])
 
+  // Health is loaded by an explicit function, not only by the effect: the
+  // Refresh button calls it directly instead of clearing state and hoping
+  // the effect re-fires (it would not, if healthData was already set).
+  async function loadHealth() {
+    try {
+      setHealthData(await apiHealth())
+    } catch {
+      showToast("Unable to load system health from the backend.")
+    }
+  }
+
   useEffect(() => {
     if (tab !== "health" || healthData) return
 
-    void apiHealth()
-      .then(setHealthData)
-      .catch(() => showToast("Unable to load system health from the backend."))
+    void loadHealth()
   }, [tab, healthData])
 
   useEffect(() => {
@@ -665,7 +644,31 @@ export default function AdminDashboard() {
     return () => window.removeEventListener("admin-tab", onAdminTab)
   }, [])
 
-  function showToast(msg: string, duration = 3000) {
+  // In-page tab switch: mirrors the sidebar admin-nav click so the sidebar
+  // highlight, sessionStorage and the admin-tab listeners all stay in sync.
+  const ADMIN_TABS: Array<{ id: Tab; label: string }> = [
+    { id: "overview", label: "Overview" },
+    { id: "pipeline", label: "Data Pipelines" },
+    { id: "users", label: "User Management" },
+    { id: "access", label: "Access Requests" },
+    { id: "feedback", label: "Feedback" },
+    { id: "audit", label: "Audit Trail" },
+    { id: "config", label: "System Parameters" },
+    { id: "health", label: "System Health" },
+  ]
+
+  function switchTab(next: Tab) {
+    const label = ADMIN_TABS.find((entry) => entry.id === next)?.label ?? next
+    setTab(next)
+    sessionStorage.setItem("admin-tab", next)
+    sessionStorage.setItem("admin-nav-key", label)
+    window.dispatchEvent(new CustomEvent("admin-tab", { detail: next }))
+    window.dispatchEvent(new CustomEvent("admin-nav", { detail: label }))
+  }
+
+  // Toasts stay up 5s minimum — error toasts at 3s were unreadable
+  // (audit §2.11). Callers may still pass a longer duration.
+  function showToast(msg: string, duration = 5000) {
     if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current)
 
     setToast(msg)
@@ -1449,10 +1452,6 @@ export default function AdminDashboard() {
   }, [tab, token, auditRefreshKey])
 
   useEffect(() => {
-    setAuditPage(1)
-  }, [auditQuery, auditAction])
-
-  useEffect(() => {
     const timeout = window.setTimeout(() => setDebouncedAccessQuery(accessQuery), 250)
     return () => window.clearTimeout(timeout)
   }, [accessQuery])
@@ -1582,30 +1581,6 @@ export default function AdminDashboard() {
     }
   }, [tab, token, feedbackRefreshKey])
 
-  function downloadAuditCSV() {
-    const csvCell = (value: string) => `"${value.replace(/"/g, '""')}"`
-    const rows = [
-      ["Timestamp", "Actor", "Action", "Detail"],
-      ...filteredAudit.map((a) => [a.ts, a.actor, a.action, a.detail]),
-    ]
-    const csv = rows.map((r) => r.map(csvCell).join(",")).join("\n")
-    const blob = new Blob([csv], { type: "text/csv" })
-
-    const url = URL.createObjectURL(blob)
-
-    const el = document.createElement("a")
-
-    el.href = url
-
-    el.download = `aeroprice-audit-${new Date().toISOString().slice(0, 10)}.csv`
-
-    el.click()
-
-    URL.revokeObjectURL(url)
-
-    showToast("Audit log downloaded")
-  }
-
   function formatLastActive(value: string) {
     if (
       !value ||
@@ -1639,6 +1614,22 @@ export default function AdminDashboard() {
           {toast}
         </div>
       )}
+
+      {/* In-page tab bar — tabs were reachable only from the sidebar, which
+          on mobile is a drawer that must be reopened for every switch. */}
+      <div className="ap-tabbar" role="tablist" aria-label="Admin sections">
+        {ADMIN_TABS.map((entry) => (
+          <button
+            key={entry.id}
+            type="button"
+            role="tab"
+            aria-selected={tab === entry.id}
+            onClick={() => switchTab(entry.id)}
+          >
+            {entry.label}
+          </button>
+        ))}
+      </div>
 
       <Modal
         isOpen={Boolean(accessEditor)}
@@ -2490,9 +2481,7 @@ export default function AdminDashboard() {
                       {dashboardData.collection_runs_today ?? "—"} runs
                     </span>
                     <span>
-                      {new Date(dashboardData.last_collection).toLocaleString(
-                        "en-IN",
-                      )}
+                      {dashboardData.last_collection ? formatDateTimeIST(dashboardData.last_collection) : "—"}
                     </span>
                   </div>
                 ) : (
@@ -2559,10 +2548,7 @@ export default function AdminDashboard() {
                       <small>{entry.detail}</small>
                     </div>
                     <time>
-                      {new Date(entry.ts).toLocaleTimeString("en-IN", {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
+                      {formatDateTimeIST(entry.ts)}
                     </time>
                   </div>
                 ))}
@@ -2788,8 +2774,8 @@ export default function AdminDashboard() {
               <button
                 type="button"
                 onClick={() => {
-                  setHealthData(null)
                   showToast("Refreshing system health…")
+                  void loadHealth()
                 }}
               >
                 Refresh
@@ -2831,9 +2817,7 @@ export default function AdminDashboard() {
                   }}
                 >
                   {healthData?.last_collection
-                    ? new Date(healthData.last_collection).toLocaleString(
-                        "en-IN",
-                      )
+                    ? formatDateTimeIST(healthData.last_collection)
                     : "—"}
                 </strong>
               </div>
@@ -3047,13 +3031,15 @@ export default function AdminDashboard() {
             <span className="admin-users-result-count">
               {accessHasVerifiedSnapshot ? `${filteredAccessRequests.length} of ${accessRequests.length}` : "—"} requests
             </span>
+            {/* Refresh stays enabled while loading: re-clicking just bumps
+                the refresh key and the load effect re-runs (idempotent).
+                Button's `loading` prop disables the button, so the spinner
+                is the icon itself, not the loading state. */}
             <Button
               size="xs"
               variant="neutral"
               onClick={() => setAccessRefreshKey((value) => value + 1)}
-              disabled={accessLoading}
-              loading={accessLoading}
-              iconStart={<RefreshCw size={13} />}
+              iconStart={<RefreshCw size={13} className={accessLoading ? 'spin' : undefined} />}
             >
               {accessLoading ? "Refreshing…" : "Refresh"}
             </Button>
@@ -3083,7 +3069,6 @@ export default function AdminDashboard() {
                 size="xs"
                 variant="neutral"
                 onClick={() => setAccessRefreshKey((value) => value + 1)}
-                disabled={accessLoading}
               >
                 Try again
               </Button>
@@ -3548,8 +3533,7 @@ export default function AdminDashboard() {
                 setUsersError(null)
                 setUsersLoaded(false)
               }}
-              disabled={usersLoading}
-              iconStart={<RefreshCw size={13} />}
+              iconStart={<RefreshCw size={13} className={usersLoading ? 'spin' : undefined} />}
             >
               {usersLoading ? "Syncing…" : "Refresh"}
             </Button>
@@ -4051,9 +4035,7 @@ export default function AdminDashboard() {
               size="xs"
               variant="neutral"
               onClick={() => setFeedbackRefreshKey((value) => value + 1)}
-              disabled={feedbackLoading}
-              loading={feedbackLoading}
-              iconStart={<RefreshCw size={13} />}
+              iconStart={<RefreshCw size={13} className={feedbackLoading ? 'spin' : undefined} />}
             >
               {feedbackLoading ? "Refreshing…" : "Refresh"}
             </Button>
@@ -4571,243 +4553,6 @@ export default function AdminDashboard() {
           error={auditError}
           onRefresh={() => setAuditRefreshKey((value) => value + 1)}
         />
-      )}
-      {false && tab === "audit" && (
-        <div
-          className="admin-tab-surface"
-          style={{
-            background: "var(--color-surface-bg)",
-            borderRadius: "var(--radius-xl)",
-            border: "1px solid var(--color-border-primary)",
-            overflow: "hidden",
-          }}
-        >
-          <div className="admin-section-banner compact">
-            <div>
-              <span>ADMIN CONTROL CENTER · GOVERNANCE</span>
-              <h1>Audit Trail</h1>
-              <p>
-                Trace administrator changes with clear timestamps, actors, and
-                affected accounts.
-              </p>
-            </div>
-            <div className="admin-section-count">
-              <strong>{auditTotal}</strong>
-              <span>Recorded events</span>
-            </div>
-          </div>
-          <div className="admin-audit-stats">
-            <div>
-              <span>LAST 24 HOURS</span>
-              <strong>{auditRecentCount}</strong>
-            </div>
-            <div>
-              <span>UNIQUE ACTORS</span>
-              <strong>{auditActorCount}</strong>
-            </div>
-            <div>
-              <span>ACTION TYPES</span>
-              <strong>{auditActionCount}</strong>
-            </div>
-          </div>
-          {audit.length > 0 && auditTotal > audit.length && (
-            <div className="admin-audit-retention-note">
-              Showing the latest {audit.length} of {auditTotal} events. Search,
-              filters, and export apply to the events currently loaded.
-            </div>
-          )}
-          <div className="admin-tab-toolbar admin-audit-toolbar">
-            <div className="admin-audit-filters">
-              <label className="admin-users-search">
-                <Search size={16} aria-hidden="true" />
-                <input
-                  value={auditQuery}
-                  onChange={(event) => setAuditQuery(event.target.value)}
-                  placeholder="Search actor, action, or detail"
-                  aria-label="Search audit log"
-                />
-              </label>
-              <select
-                className="ap-input admin-users-filter"
-                value={auditAction}
-                onChange={(event) => setAuditAction(event.target.value)}
-                aria-label="Filter audit action"
-              >
-                <option value="ALL">All actions</option>
-                {Array.from(new Set(audit.map((entry) => entry.action)))
-                  .sort()
-                  .map((action) => (
-                    <option key={action} value={action}>
-                      {ACTION_LABEL[action] || action.replace(/_/g, " ")}
-                    </option>
-                  ))}
-              </select>
-            </div>
-            <div className="admin-audit-actions">
-              <Button
-                size="xs"
-                variant="neutral"
-                onClick={() => setAuditRefreshKey((value) => value + 1)}
-                disabled={auditLoading}
-                loading={auditLoading}
-                iconStart={<RefreshCw size={13} />}
-              >
-                {auditLoading ? "Refreshing…" : "Refresh"}
-              </Button>
-              <Button
-                size="xs"
-                variant="neutral"
-                onClick={downloadAuditCSV}
-                disabled={filteredAudit.length === 0}
-                iconStart={<Download size={13} />}
-              >
-                Export{" "}
-                {filteredAudit.length
-                  ? `${filteredAudit.length} events`
-                  : "CSV"}
-              </Button>
-            </div>
-          </div>
-          {auditError && (
-            <div className="admin-data-error" role="alert">
-              <div>
-                <strong>Audit trail could not be loaded</strong>
-                <span>{auditError}</span>
-              </div>
-              <Button
-                size="xs"
-                variant="neutral"
-                onClick={() => setAuditRefreshKey((value) => value + 1)}
-                disabled={auditLoading}
-              >
-                Try again
-              </Button>
-            </div>
-          )}
-          {auditLoading && audit.length > 0 && (
-            <div className="admin-directory-sync" role="status">
-              <RefreshCw size={13} className="spin" /> Refreshing audit events…
-            </div>
-          )}
-          {auditLoading && audit.length === 0 ? (
-            <div className="admin-empty-state">
-              <RefreshCw size={18} className="spin" />
-              <strong>Loading audit trail…</strong>
-              <span>Retrieving the latest administrator activity.</span>
-            </div>
-          ) : !auditLoaded ? (
-            <div className="admin-empty-state">
-              <RefreshCw size={18} className="spin" />
-              <strong>Preparing audit trail…</strong>
-            </div>
-          ) : auditError && audit.length === 0 ? (
-            <div className="admin-empty-state">
-              <AlertTriangle size={22} />
-              <strong>Audit events unavailable</strong>
-              <span>
-                Use “Try again” above to reload activity from the backend.
-              </span>
-            </div>
-          ) : audit.length === 0 && !auditError ? (
-            <div className="admin-empty-state">
-              <ShieldCheck size={22} />
-              <strong>No audit events recorded yet</strong>
-              <span>
-                Account, access, and feedback changes will be recorded here when
-                performed.
-              </span>
-            </div>
-          ) : filteredAudit.length === 0 && !auditError ? (
-            <div className="admin-empty-state">
-              <Search size={20} />
-              <strong>No matching events</strong>
-              <span>Try another search or choose a different action.</span>
-            </div>
-          ) : (
-            <div className="admin-table-scroll admin-audit-table-wrap">
-              <table className="ap-table admin-audit-table">
-                <thead>
-                  <tr>
-                    {["Timestamp", "Actor", "Action", "Detail"].map((h) => (
-                      <th key={h}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleAudit.map((entry) => {
-                    const timestamp = new Date(entry.ts)
-                    const timestampLabel = Number.isFinite(timestamp.getTime())
-                      ? timestamp.toLocaleString("en-IN", {
-                          dateStyle: "medium",
-                          timeStyle: "short",
-                        })
-                      : "Timestamp unavailable"
-                    return (
-                      <tr
-                        key={`${entry.ts}-${entry.actor}-${entry.action}-${entry.detail}`}
-                      >
-                        <td
-                          data-label="Timestamp"
-                          className="admin-audit-timestamp"
-                        >
-                          {timestampLabel}
-                        </td>
-                        <td data-label="Actor" className="admin-audit-actor">
-                          {entry.actor}
-                        </td>
-                        <td data-label="Action">
-                          <span
-                            className="admin-audit-action"
-                            style={{
-                              color:
-                                ACTION_COLOR[entry.action] ??
-                                "var(--color-text-secondary)",
-                            }}
-                          >
-                            {ACTION_LABEL[entry.action] ||
-                              entry.action.replace(/_/g, " ")}
-                          </span>
-                        </td>
-                        <td data-label="Detail" className="admin-audit-detail">
-                          {formatAuditDetails(entry.detail)}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-          {filteredAudit.length > 0 && (
-            <div className="admin-audit-pagination">
-              <span>
-                {filteredAudit.length} matching loaded event
-                {filteredAudit.length === 1 ? "" : "s"} · Page {auditPage} of{" "}
-                {auditPageCount}
-              </span>
-              <div style={{ display: "flex", gap: 8 }}>
-                <Button
-                  size="xs"
-                  variant="subtle"
-                  disabled={auditPage <= 1}
-                  onClick={() => setAuditPage((page) => Math.max(1, page - 1))}
-                >
-                  Previous
-                </Button>
-                <Button
-                  size="xs"
-                  variant="subtle"
-                  disabled={auditPage >= auditPageCount}
-                  onClick={() =>
-                    setAuditPage((page) => Math.min(auditPageCount, page + 1))
-                  }
-                >
-                  Next
-                </Button>
-              </div>
-            </div>
-          )}
-        </div>
       )}
 
       {/* Tab: Config */}

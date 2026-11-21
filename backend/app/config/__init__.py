@@ -1,0 +1,1 @@
+"""Index weight configuration package."""

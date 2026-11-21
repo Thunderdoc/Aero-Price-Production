@@ -10,6 +10,7 @@ from typing import List
 from app.core.database import get_db
 from app.core.auth import get_current_user
 from app.models.fare import FareObservation
+from app.services.index_engine import INDEX_ELIGIBLE_ORIGINS
 
 router = APIRouter()
 
@@ -26,7 +27,8 @@ async def compare_routes(
 ):
     """
     Compare fare statistics across multiple routes for the same advance window.
-    Only real (non-GENERATED_TEST) observations are included.
+    Only index-eligible (REAL/OFFICIAL/PUBLIC_INTERFACE) observations are
+    included — GENERATED_TEST and SANDBOX_TEST never feed a comparison.
     """
     route_list = [r.strip().upper() for r in routes.split(",") if r.strip()]
     if not route_list:
@@ -37,17 +39,20 @@ async def compare_routes(
 
     for route in route_list:
         rows = await db.execute(
-            select(FareObservation.total_fare)
+            select(FareObservation.total_fare, FareObservation.data_origin)
             .where(and_(
                 FareObservation.route == route,
                 FareObservation.advance_days == advance_days,
-                FareObservation.data_origin.in_(["REAL", "OFFICIAL"]),
+                FareObservation.data_origin.in_(list(INDEX_ELIGIBLE_ORIGINS)),
                 FareObservation.is_valid == True,
                 FareObservation.collected_at >= since,
             ))
             .order_by(FareObservation.total_fare)
         )
-        fares = [r[0] for r in rows.fetchall() if r[0] is not None]
+        fetched = rows.fetchall()
+        fares = [r[0] for r in fetched if r[0] is not None]
+        origins = sorted({r[1] for r in fetched if r[1]})
+        origin_label = origins[0] if len(origins) == 1 else "MIXED" if origins else "NO_DATA"
 
         if fares:
             n = len(fares)
@@ -60,7 +65,7 @@ async def compare_routes(
                 "max": float(fares[-1]),
                 "median": float(median),
                 "mean": round(sum(fares) / n, 2),
-                "data_origin": "REAL",
+                "data_origin": origin_label,
                 "status": "AVAILABLE",
             })
         else:

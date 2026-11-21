@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { Calendar, TrendingDown, TrendingUp, Info } from 'lucide-react'
 import { apiFares, type FareObservationApi } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
+import LiveBadge from '../components/LiveBadge'
+import DataFreshness from '../components/DataFreshness'
+import { median, type LiveCheck } from '../lib/liveStatus'
 
 const WINDOWS = [
   { label:'T+1 day',  key:'1d',  advanceDays: 1,  description:'Last-minute', color:'var(--color-danger)' },
@@ -20,22 +23,39 @@ export default function BookingWindow() {
   const [observations, setObservations] = useState<FareObservationApi[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [fetchOk, setFetchOk] = useState(false)
+  const [fetchFailed, setFetchFailed] = useState(false)
+  const [checkedAt, setCheckedAt] = useState<Date | null>(null)
 
   useEffect(() => {
     let active = true
     setLoading(true)
     setError(null)
+    setFetchFailed(false)
     apiFares({ route: activeRoute, data_origin: 'REAL', limit: 1000 }, token ?? undefined)
-      .then(result => { if (active) setObservations(result.observations ?? []) })
-      .catch(() => { if (active) { setObservations([]); setError('Verified fare data is unavailable for this route.') } })
+      .then(result => {
+        if (!active) return
+        setObservations(result.observations ?? [])
+        setFetchOk(true)
+        setCheckedAt(new Date())
+      })
+      .catch(() => { if (active) { setObservations([]); setFetchOk(false); setFetchFailed(true); setError('Verified fare data is unavailable for this route.') } })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [activeRoute, token])
 
+  // "VERIFIED" is true only when the fetch succeeded AND observations exist.
+  const feedCheck: LiveCheck = { ok: fetchOk && observations.length > 0, checkedAt, loading, failed: fetchFailed }
+  const newestCollectedAt = observations.length
+    ? observations.reduce((latest, row) => row.collected_at > latest ? row.collected_at : latest, observations[0].collected_at)
+    : null
+
   const windowData = useMemo(() => WINDOWS.map(window => {
     const values = observations.filter(item => item.advance_days === window.advanceDays).map(item => Number(item.total_fare)).filter(Number.isFinite).sort((a, b) => a - b)
-    const median = values.length ? values[Math.floor(values.length / 2)] : null
-    return { ...window, median, count: values.length }
+    // Shared median (average of two middle values) — this page previously
+    // used the upper median, so the same route showed a different "median"
+    // here than everywhere else (audit §1.7).
+    return { ...window, median: median(values), count: values.length }
   }), [observations])
   const baseRef = windowData[0]?.median ?? null
   function getMultiplier(windowIdx: number) {
@@ -52,10 +72,7 @@ export default function BookingWindow() {
           <h1 style={{ margin:0, fontSize:20, fontWeight:700, color:'var(--color-text-primary)', letterSpacing:'-0.01em' }}>
             Booking Window Analysis
           </h1>
-          <span style={{ padding:'2px 8px', borderRadius:99, fontSize:9, fontWeight:700, letterSpacing:'0.12em',
-            background:'var(--color-success-bg)', color:'var(--color-success)', border:'1px solid rgba(22,163,74,0.3)' }}>
-            VERIFIED ROUTE OBSERVATIONS
-          </span>
+          <LiveBadge check={feedCheck} label={feedCheck.ok ? 'VERIFIED ROUTE OBSERVATIONS' : undefined} />
         </div>
         <p style={{ margin:0, fontSize:12, color:'var(--color-text-secondary)' }}>
           Advance-purchase fare comparison from stored REAL observations for the selected route.
@@ -64,13 +81,14 @@ export default function BookingWindow() {
 
       <div style={{ flex:1, overflowY:'auto', padding:'20px 28px 28px' }}>
 
-        {/* Data source note */}
+        {/* Data source note — colour follows the fetch state, not a hardcoded green */}
         <div style={{ display:'flex', alignItems:'flex-start', gap:10, padding:'12px 14px', marginBottom:20,
-          background:'var(--color-success-bg)', border:'1px solid rgba(22,163,74,0.22)', borderRadius:10 }}>
-          <Info size={14} style={{ color:'var(--color-success)', flexShrink:0, marginTop:1 }}/>
+          background: error ? 'var(--color-warning-bg)' : feedCheck.ok ? 'var(--color-success-bg)' : 'var(--color-surface-secondary)',
+          border: `1px solid ${error ? 'rgba(217,119,6,0.35)' : feedCheck.ok ? 'rgba(22,163,74,0.22)' : 'var(--color-border-primary)'}`, borderRadius:10 }}>
+          <Info size={14} style={{ color: error ? 'var(--color-warning)' : feedCheck.ok ? 'var(--color-success)' : 'var(--color-text-tertiary)', flexShrink:0, marginTop:1 }}/>
           <div style={{ fontSize:12, color:'var(--color-text-primary)', lineHeight:1.6 }}>
             <strong style={{ color: 'var(--color-brand-primary)' }}>BACKEND-REPORTED FARE DATA.</strong>{' '}
-            Values below are calculated only from verified REAL observations returned for {activeRoute}. Missing booking windows remain unavailable; no estimates are inserted.
+            {error ?? `Values below are calculated only from verified REAL observations returned for ${activeRoute}. Missing booking windows remain unavailable; no estimates are inserted.`}
           </div>
         </div>
 
@@ -88,12 +106,13 @@ export default function BookingWindow() {
             </button>
           ))}
         </div>
-        <div style={{ marginBottom: 16, padding: '10px 12px', borderRadius: 9, background: loading ? 'var(--color-info-bg)' : error ? 'var(--color-warning-bg)' : 'var(--color-surface-secondary)', color: error ? 'var(--color-warning)' : 'var(--color-text-secondary)', fontSize: 11 }}>
-          {loading ? 'Loading verified route observations…' : error ?? `${observations.length.toLocaleString('en-IN')} verified REAL observations loaded for ${activeRoute}.`}
+        <div style={{ marginBottom: 16, padding: '10px 12px', borderRadius: 9, background: loading ? 'var(--color-info-bg)' : error ? 'var(--color-warning-bg)' : 'var(--color-surface-secondary)', color: error ? 'var(--color-warning)' : 'var(--color-text-secondary)', fontSize: 11, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span>{loading ? 'Loading verified route observations…' : error ?? `${observations.length.toLocaleString('en-IN')} verified REAL observations loaded for ${activeRoute}.`}</span>
+          {newestCollectedAt && <DataFreshness minutesAgo={Math.max(0, Math.floor((Date.now() - new Date(newestCollectedAt).getTime()) / 60000))} />}
         </div>
 
         {/* Window cards */}
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12, marginBottom:24 }}>
+        <div className="cards-grid-3" style={{ marginBottom: 24 }}>
           {WINDOWS.map((w, wi) => {
             const isHovered = hoveredWindow === w.key
             const mult = getMultiplier(wi)
@@ -168,7 +187,7 @@ export default function BookingWindow() {
           </div>
 
           {/* SVG line chart — benchmark curve */}
-          <svg width="100%" height="160" viewBox="0 0 700 160" style={{ overflow:'visible' }}>
+          <svg width="100%" height="160" viewBox="0 0 700 160" style={{ overflow:'visible' }} role="img" aria-label={`Advance-purchase elasticity curve for ${activeRoute}`}>
             <defs>
               <linearGradient id="bw-grad" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="var(--color-brand-primary)" stopOpacity="0.25"/>

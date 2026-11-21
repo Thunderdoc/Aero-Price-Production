@@ -99,7 +99,20 @@ function tokenSubject(token?: string): string {
   }
 }
 
-// ── Auth ───────────────────────────────────────────────────────────────────
+// Errors from apiFetch/apiDownload carry the HTTP status on `.status` so
+// pages can tell "no permission" (403) from "no data" instead of collapsing
+// every failure into a data error.
+export function apiErrorStatus(error: unknown): number | null {
+  if (error && typeof error === 'object' && 'status' in error) {
+    const status = Number((error as { status?: unknown }).status)
+    return Number.isFinite(status) ? status : null
+  }
+  return null
+}
+
+export function isForbiddenError(error: unknown): boolean {
+  return apiErrorStatus(error) === 403
+}
 
 export interface ApiUser {
   email: string
@@ -218,7 +231,10 @@ async function fetchWithAuthRefresh(url: string, token?: string, init?: RequestI
         })
       }
     }
-    if (response.status === 401 && typeof window !== 'undefined') {
+    if (response.status === 401 && token && typeof window !== 'undefined') {
+      // Only a request that actually sent a credential can expire a session.
+      // A guest (token-less) 401 is "sign-in required", not an expiry, and
+      // must not clear a session that does not exist.
       window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { token } }))
     }
     return response
@@ -258,7 +274,11 @@ async function apiFetch<T>(path: string, token?: string, init?: RequestInit, for
   if (!resp.ok) {
     const text = await resp.text().catch(() => resp.statusText)
     if (resp.status === 401) {
-      throw new Error('Your session has expired. Please sign in again.')
+      // A request with no credential never had a session to expire.
+      throw Object.assign(
+        new Error(token ? 'Your session has expired. Please sign in again.' : 'Sign in to view this data.'),
+        { status: 401 },
+      )
     }
     let detail = ''
     try { detail = (JSON.parse(text) as { detail?: string }).detail || '' } catch { /* Keep the original API error. */ }
@@ -290,7 +310,7 @@ export interface HealthResponse {
   live_sources: number
   total_sources: number
   last_collection: string | null
-  data_status: 'LIVE' | 'NO_LIVE_DATA'
+  data_status: 'LIVE' | 'STALE_DATA' | 'NO_LIVE_DATA' | 'CACHED_SNAPSHOT'
   timestamp: string
 }
 
@@ -302,7 +322,15 @@ export async function apiDownload(path: string, token?: string): Promise<Blob> {
   const resp = await fetchWithAuthRefresh(`${BASE_URL}${path}`, token)
   if (!resp.ok) {
     const text = await resp.text().catch(() => resp.statusText)
-    throw new Error(`API ${path}: ${resp.status} ${text}`)
+    let detail = ''
+    try { detail = (JSON.parse(text) as { detail?: string }).detail || '' } catch { /* Keep the original API error. */ }
+    if (resp.status === 401) {
+      throw Object.assign(
+        new Error(token ? 'Your session has expired. Please sign in again.' : 'Sign in to download this export.'),
+        { status: 401 },
+      )
+    }
+    throw Object.assign(new Error(detail || `API ${path}: ${resp.status} ${text}`), { status: resp.status })
   }
   return resp.blob()
 }
@@ -362,7 +390,9 @@ export async function apiFareMovement(token?: string): Promise<FareMovementRespo
 }
 
 export interface IndexHistoryResponse {
-  observations: Array<{ period: string; value: number | null; status: string; route_count: number; observation_count: number; data_origin: string }>
+  frequency?: 'daily' | 'weekly' | 'monthly'
+  count?: number
+  observations: Array<{ period: string; value: number | null; status: string; route_count: number; observation_count: number; data_origin: string; period_end?: string }>
 }
 
 // ── Fares ──────────────────────────────────────────────────────────────────
@@ -530,6 +560,8 @@ export interface IndexResponse {
   index_value: number | null
   base_value?: number
   base_period?: string
+  base_period_note?: string
+  weights?: { weight_source?: string; weights_version?: string; dgca_weights_status?: string; dgca_weights_note?: string; weight_source_note?: string }
   n?: number
   required?: number
   covered_routes?: string[]
@@ -558,15 +590,21 @@ export interface IndexBasketResponse {
   routes: IndexBasketRoute[]
   total: number
   weight_source_note?: string
+  weight_source?: string
+  weights_version?: string
+  dgca_weights_status?: string
+  dgca_weights_note?: string
   min_corridors_to_publish?: number
 }
+
+export type IndexFrequency = 'daily' | 'weekly' | 'monthly'
 
 export async function apiIndexCurrent(token?: string): Promise<IndexResponse> {
   return apiFetch('/api/index/current', token)
 }
 
-export async function apiIndexHistory(token?: string) {
-  return apiFetch('/api/index/history', token)
+export async function apiIndexHistory(token?: string, frequency: IndexFrequency = 'daily') {
+  return apiFetch(`/api/index/history?frequency=${frequency}`, token)
 }
 
 export async function apiIndexBasket(token?: string): Promise<IndexBasketResponse> {
@@ -720,6 +758,27 @@ export async function apiDeleteAdminUser(email: string, firebaseUid?: string, to
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ firebase_uid: firebaseUid || null }),
   })
+}
+
+export async function apiAdminResetPassword(email: string, newPassword: string, token?: string): Promise<{ email: string; status: string; note?: string }> {
+  return apiFetch(`/api/admin/users/${encodeURIComponent(email)}/reset-password`, token, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ new_password: newPassword }),
+  })
+}
+
+export interface AuthConfigResponse {
+  environment: string
+  backend_auth: { enabled: boolean; password_login: boolean; self_registration: string; password_reset: string; demo_accounts_in_code: boolean }
+  firebase: { project_id_configured: boolean; service_account_configured: boolean; admin_emails_configured: boolean; analyst_emails_configured: boolean }
+  jwt: { secret_is_default: boolean; secret_required_from_env: boolean; expiry_minutes: number; algorithm: string }
+  cors: { allowed_origins: string[]; wildcard_vercel_allowed: boolean }
+  rate_limits: { auth_bucket: string; session_snapshot: string }
+}
+
+export async function apiAdminAuthConfig(token?: string): Promise<AuthConfigResponse> {
+  return apiFetch('/api/admin/auth-config', token, undefined, true)
 }
 
 export type FeedbackStatus = 'NEW' | 'IN_PROGRESS' | 'REVIEWED' | 'RESOLVED'

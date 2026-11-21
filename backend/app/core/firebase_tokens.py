@@ -10,7 +10,7 @@ import logging
 import httpx
 from fastapi import HTTPException
 from google.auth import jwt as google_jwt
-from jose import jwt
+import jwt
 from app.core.config import settings
 
 from app.core.firebase_admin import service_account_info

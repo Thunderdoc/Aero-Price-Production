@@ -10,11 +10,12 @@ from sqlalchemy import delete, select, func
 from sqlalchemy.orm import defer
 from datetime import datetime, timezone
 import logging
+import os
 import secrets
 import base64
 import binascii
 from app.core.database import get_db
-from app.core.auth import require_admin, get_current_user, require_admin_or_local, oauth2_optional_scheme
+from app.core.auth import require_admin, get_current_user, get_password_hash, require_admin_or_local, oauth2_optional_scheme
 from app.core.config import settings
 from app.models.user import AuditLog, User
 from app.models.auth_account import AuthAccount
@@ -23,6 +24,7 @@ from app.models.collection import SourceHealth
 from app.models.feedback import UserFeedback, FeedbackDetails
 from app.models.access import FeatureAccessRequest, UserFeatureAccess, UserNotification, PriceAlert
 from app.services.anomaly_detector import detect_anomalies, get_anomaly_summary
+from app.services.index_engine import INDEX_ELIGIBLE_ORIGINS
 from app.services.price_alerts import evaluate_price_alerts
 from app.services.whatsapp import notify_admins
 
@@ -87,6 +89,12 @@ class UserStatusUpdate(BaseModel):
 
 class UserDeleteRequest(BaseModel):
     firebase_uid: str | None = Field(default=None, max_length=128)
+
+
+class UserPasswordReset(BaseModel):
+    # Same minimum as self-registration (6); admins should still choose a
+    # strong temporary password and tell the user to change it after sign-in.
+    new_password: str = Field(min_length=6, max_length=128)
 
 
 async def _ensure_user_record(current_user: dict, db: AsyncSession) -> None:
@@ -576,6 +584,107 @@ async def delete_managed_user(
     return {"status": "DELETED", "email": normalized, "firebase_deleted": firebase_deleted}
 
 
+@router.post("/admin/users/{email}/reset-password")
+async def reset_user_password(
+    email: str,
+    payload: UserPasswordReset,
+    current_user=Depends(require_admin_or_local),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin-initiated password reset for a backend (email/password) account.
+
+    There is no email sender configured, so there is no self-service email
+    reset: an admin sets a new password here and shares it with the user
+    out of band. Firebase/Google-only identities have no backend password
+    and cannot be reset through this endpoint.
+    """
+    normalized = email.strip().lower()
+    auth_account = await db.scalar(select(AuthAccount).where(AuthAccount.email == normalized))
+    if not auth_account:
+        user = await db.scalar(select(User).where(User.email == normalized))
+        if user:
+            raise HTTPException(
+                status_code=404,
+                detail="This account signs in with Firebase/Google and has no backend password to reset. Use the Firebase password reset for this email.",
+            )
+        raise HTTPException(status_code=404, detail="No account exists for this email.")
+    auth_account.password_hash = get_password_hash(payload.new_password)
+    db.add(AuditLog(
+        user_email=current_user.get("email"),
+        action="PASSWORD_RESET",
+        resource_type="user",
+        resource_id=normalized,
+        details={"target_email": normalized, "reset_by": current_user.get("email")},
+    ))
+    await db.flush()
+    return {
+        "email": normalized,
+        "status": "PASSWORD_RESET",
+        "note": "Share the new password with the user out of band. Existing sessions stay valid until they expire.",
+    }
+
+
+@router.get("/admin/auth-config")
+async def auth_config(current_user=Depends(require_admin_or_local)):
+    """Admin-only snapshot of which auth paths are actually configured.
+
+    Reports booleans and names only — never secret values. Use this after a
+    deploy to confirm the live auth configuration instead of guessing from
+    code: Firebase project/service-account presence, the JWT secret state,
+    CORS origins, and the reset/registration modes.
+    """
+    from app.core.firebase_admin import service_account_info
+
+    try:
+        from app.core.auth import DEMO_USERS as _demo_users
+
+        demo_accounts_in_code = bool(_demo_users)
+    except ImportError:
+        demo_accounts_in_code = False
+    try:
+        service_account_configured = service_account_info() is not None
+    except Exception:
+        service_account_configured = False
+    return {
+        "environment": settings.ENVIRONMENT,
+        "backend_auth": {
+            "enabled": True,
+            "password_login": True,
+            "self_registration": "PUBLIC only — DGCA analyst and admin accounts are granted by an administrator",
+            "password_reset": "admin-initiated only — no email sender is configured",
+            "demo_accounts_in_code": demo_accounts_in_code,
+        },
+        "firebase": {
+            "project_id_configured": bool(
+                os.getenv("FIREBASE_PROJECT_ID") or os.getenv("VITE_FIREBASE_PROJECT_ID") or settings.FIREBASE_PROJECT_ID
+            ),
+            "service_account_configured": service_account_configured,
+            "admin_emails_configured": bool(settings.FIREBASE_ADMIN_EMAILS.strip()),
+            "analyst_emails_configured": bool(settings.FIREBASE_ANALYST_EMAILS.strip()),
+        },
+        "jwt": {
+            # The old committed default is rejected at startup in every
+            # environment (fail-closed), so this is False whenever the app
+            # is running at all — it answers "is live using the public
+            # default key?" directly.
+            "secret_is_default": settings.SECRET_KEY == "local-development-only-change-me",
+            "secret_required_from_env": True,
+            "expiry_minutes": settings.ACCESS_TOKEN_EXPIRE_MINUTES,
+            "algorithm": settings.ALGORITHM,
+        },
+        "cors": {
+            "allowed_origins": list(dict.fromkeys(settings.allowed_origins_list + [
+                "https://aero-price-production.vercel.app",
+            ])),
+            "wildcard_vercel_allowed": False,
+        },
+        "rate_limits": {
+            "auth_bucket": "60 requests / 15 min per IP (login and registration)",
+            "session_snapshot": "GET /api/auth/me is exempt from the auth bucket (240 requests / 60 s per IP)",
+        },
+    }
+
+
 @router.post("/admin/feedback")
 async def create_feedback(
     payload: FeedbackCreate,
@@ -985,22 +1094,20 @@ async def list_my_access_requests(
 
 
 async def _require_price_alert_access(current_user: dict, db: AsyncSession) -> str:
-    """Authorize the Premium feature with the live, revocable server grant."""
-    email = current_user["email"].strip().lower()
-    grant = await db.scalar(select(UserFeatureAccess).where(
-        UserFeatureAccess.user_email == email,
-        UserFeatureAccess.feature_key == "PRICE_ALERTS",
-    ))
-    if not grant:
-        raise HTTPException(status_code=403, detail="Premium Price Alerts access is required. Request access and wait for administrator approval.")
-    return email
+    """Price Alerts are unlocked for every signed-in user (21 Nov 2026
+    access decision, matching the frontend paywall removal). The old
+    Premium grant check (UserFeatureAccess PRICE_ALERTS row) 403'd signed-in
+    users without a grant, showing them a "request access" panel instead of
+    the feature. The grant table remains for audit/history, but it no longer
+    gates access. `db` is kept for call-site compatibility."""
+    return current_user["email"].strip().lower()
 
 
 async def _price_alert_dict(alert: PriceAlert, db: AsyncSession) -> dict:
     current_query = select(func.min(FareObservation.total_fare)).where(
         FareObservation.route == alert.route,
         FareObservation.is_valid == True,
-        FareObservation.data_origin.in_(("REAL", "OFFICIAL")),
+        FareObservation.data_origin.in_(list(INDEX_ELIGIBLE_ORIGINS)),
     )
     if alert.travel_date:
         current_query = current_query.where(FareObservation.travel_date == alert.travel_date)
@@ -1338,7 +1445,7 @@ async def system_metrics(
 ):
     obs_count = await db.scalar(
         select(func.count()).select_from(FareObservation)
-        .where(FareObservation.data_origin.in_(["REAL", "OFFICIAL"]))
+        .where(FareObservation.data_origin.in_(list(INDEX_ELIGIBLE_ORIGINS)))
     )
     source_count = await db.scalar(
         select(func.count()).select_from(SourceHealth)

@@ -8,7 +8,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 from fastapi import HTTPException
-from jose import jwt
+import jwt
 
 from app.core import firebase_tokens
 from app.core.auth import get_current_user

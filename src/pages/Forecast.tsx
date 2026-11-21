@@ -1,7 +1,9 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
-import { TrendingUp, RefreshCw, Download, CheckCircle2, Sliders, Calendar, Activity } from 'lucide-react'
+import { TrendingUp, RefreshCw, Download, CheckCircle2, Sliders, Calendar, Activity, ShieldAlert } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
-import { apiForecast, type ForecastResponse } from '../services/api'
+import { apiCreateAccessRequest, apiForecast, isForbiddenError, type ForecastResponse } from '../services/api'
+import EmptyState from '../components/EmptyState'
+import { formatDateIST, formatDateTimeIST } from '../lib/liveStatus'
 
 const routes = [
   'DEL-BOM', 'DEL-BLR', 'BOM-BLR', 'DEL-CCU', 'DEL-HYD', 'DEL-MAA',
@@ -24,10 +26,17 @@ export default function Forecast() {
   const [forecasts, setForecasts] = useState<HorizonForecast[]>([])
   const [metrics, setMetrics] = useState<ForecastResponse['metrics']>(null)
   const [message, setMessage] = useState<string | null>(null)
+  // A 403 is an access problem, not a data problem: never render it as
+  // "forecast unavailable". (Since the read gate was dropped, a signed-in
+  // user rarely sees this — it covers the remaining gated actions.)
+  const [accessDenied, setAccessDenied] = useState(false)
+  const [requestState, setRequestState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
   // The first request starts on mount; avoid rendering an unavailable state
   // during the serverless/authentication cold start.
   const [loading, setLoading] = useState(true)
-  const [lastUpdated, setLastUpdated] = useState<string | null>(null)
+  // Set ONLY on a successful backend response — a failed check must not
+  // stamp the page as freshly checked (audit §2.2).
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const requestSeq = useRef(0)
 
   async function load() {
@@ -35,10 +44,12 @@ export default function Forecast() {
     requestSeq.current = requestId
     setLoading(true)
     setMessage(null)
+    setAccessDenied(false)
     setMetrics(null)
     try {
       const resp = await apiForecast(route, windowDays, token ?? undefined)
       if (requestSeq.current !== requestId) return
+      setLastUpdated(new Date())
       if (resp && resp.status === 'FORECAST' && resp.forecasts?.length) {
         const baseDate = resp.metrics?.trained_at ? new Date(resp.metrics.trained_at) : new Date()
         setForecasts(
@@ -55,22 +66,34 @@ export default function Forecast() {
         setForecasts([])
         setMessage(resp?.message ?? 'Forecast requires sufficient verified fare observations for this route and booking window.')
       }
-    } catch {
+    } catch (error) {
       if (requestSeq.current !== requestId) return
       setForecasts([])
+      if (isForbiddenError(error)) {
+        setAccessDenied(true)
+        return
+      }
       setMessage('Forecast data is unavailable because the backend did not return a verified model result.')
     } finally {
       if (requestSeq.current !== requestId) return
       setLoading(false)
-      setLastUpdated(
-        new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST'
-      )
     }
   }
 
   useEffect(() => {
     void load()
   }, [route, windowDays, token])
+
+  async function requestAccess() {
+    if (!token || requestState === 'sending' || requestState === 'sent') return
+    setRequestState('sending')
+    try {
+      await apiCreateAccessRequest('FORECAST', 'Forecast', token, 'Forecast access was denied for this account.')
+      setRequestState('sent')
+    } catch {
+      setRequestState('error')
+    }
+  }
 
   function exportCsv() {
     if (!forecasts.length) return
@@ -233,18 +256,12 @@ export default function Forecast() {
         </label>
 
         <div style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>
-          Model: {metrics?.model_version ?? '—'} · Checked {lastUpdated ?? '—'}
+          Model: {metrics?.model_version ?? '—'} · Checked {lastUpdated ? formatDateTimeIST(lastUpdated) : 'Not checked yet'}
         </div>
       </div>
 
       {/* ── Model Accuracy & Forecast Chart ── */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: '1fr 340px',
-          gap: 20,
-        }}
-      >
+      <div className="forecast-layout" style={{ gap: 20 }}>
         {/* SVG Chart Panel */}
         <div
           className="ap-card"
@@ -273,7 +290,27 @@ export default function Forecast() {
             </div>
           </div>
 
-          {!loading && message && (
+          {!loading && accessDenied && (
+            <div style={{ padding: '28px 16px 24px', color: 'var(--color-text-secondary)', fontSize: 13, textAlign: 'center' }}>
+              <div style={{ width: 42, height: 42, margin: '0 auto 12px', display: 'grid', placeItems: 'center', borderRadius: 12, background: 'var(--color-warning-bg)', color: 'var(--color-warning)' }}><ShieldAlert size={20} /></div>
+              <strong style={{ display: 'block', color: 'var(--color-text-primary)', fontSize: 14, marginBottom: 7 }}>Analyst access required</strong>
+              <span>Your account does not have access to this forecast. Request access and an administrator will review it.</span>
+              <div style={{ marginTop: 16 }}>
+                <button
+                  onClick={requestAccess}
+                  disabled={!token || requestState === 'sending' || requestState === 'sent'}
+                  className="ap-button ap-button-primary"
+                  style={{ padding: '8px 18px', fontSize: 12 }}
+                >
+                  {requestState === 'sent' ? 'Request sent' : requestState === 'sending' ? 'Sending…' : 'Request access'}
+                </button>
+                {requestState === 'error' && <div style={{ marginTop: 8, fontSize: 11, color: 'var(--color-danger)' }}>The request could not be sent. Please try again.</div>}
+                {!token && <div style={{ marginTop: 8, fontSize: 11 }}>Sign in to request access.</div>}
+              </div>
+            </div>
+          )}
+
+          {!loading && !accessDenied && message && (
             <div style={{ padding: '28px 16px 24px', color: 'var(--color-text-secondary)', fontSize: 13, textAlign: 'center' }}>
               <div style={{ width: 42, height: 42, margin: '0 auto 12px', display: 'grid', placeItems: 'center', borderRadius: 12, background: 'var(--color-info-bg)', color: 'var(--color-brand-primary)' }}><Activity size={20} /></div>
               <strong style={{ display: 'block', color: 'var(--color-text-primary)', fontSize: 14, marginBottom: 7 }}>Forecast is building verified history</strong>
@@ -289,7 +326,7 @@ export default function Forecast() {
 
           {svgData && (
             <div style={{ position: 'relative', width: '100%', height: 200 }}>
-              <svg viewBox={`0 0 ${svgData.w} ${svgData.h}`} style={{ width: '100%', height: '100%', overflow: 'visible' }}>
+              <svg viewBox={`0 0 ${svgData.w} ${svgData.h}`} style={{ width: '100%', height: '100%', overflow: 'visible' }} role="img" aria-label={`Forecast price trajectory for ${route} at booking window T+${windowDays}`}>
                 <defs>
                   <linearGradient id="fore-grad" x1="0%" y1="0%" x2="0%" y2="100%">
                     <stop offset="0%" stopColor="rgba(37,99,235,0.28)" />
@@ -385,7 +422,7 @@ export default function Forecast() {
             {forecasts.map(f => (
               <tr key={f.horizon_days}>
                 <td style={{ fontWeight: 800, fontFamily: 'var(--font-mono)' }}>+{f.horizon_days} Days Out</td>
-                <td style={{ fontFamily: 'var(--font-mono)' }}>{f.target_date}</td>
+                <td style={{ fontFamily: 'var(--font-mono)' }}>{formatDateIST(f.target_date)}</td>
                 <td style={{ fontSize: 15, fontWeight: 900, fontFamily: 'var(--font-mono)', color: 'var(--color-brand-primary)' }}>
                   ₹{f.forecast_fare.toLocaleString('en-IN')}
                 </td>
@@ -400,6 +437,9 @@ export default function Forecast() {
             ))}
           </tbody>
         </table>
+        {!loading && !accessDenied && forecasts.length === 0 && (
+          <EmptyState title="NO FORECAST HORIZONS" detail={message ?? 'No forecast horizons are available for this route and booking window.'} />
+        )}
       </div>
     </div>
   )

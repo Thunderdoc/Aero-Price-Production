@@ -24,3 +24,7 @@ __pycache__/
 # beside it.
 /.plugins/
 /.opencode-skills/
+
+# The example env file is a committed template with placeholder values only;
+# the real .env files ignored above stay ignored.
+!.env.example

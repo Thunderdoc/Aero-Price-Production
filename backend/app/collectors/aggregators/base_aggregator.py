@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from typing import Optional
 import httpx
 
-from app.collectors.base import FareSourceAdapter, FareRecord, CollectionResult
+from app.collectors.base import FareSourceAdapter, FareRecord, CollectionResult, redact_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -145,5 +145,7 @@ class AggregatorAdapter(FareSourceAdapter):
             status="SUCCESS" if records else "PARTIAL",
             records=records,
             records_rejected=rejected,
+            # Real provider response (credential-stripped) for the audit trail.
+            raw_response=redact_credentials(json.dumps(raw_response, default=str)),
             latency_ms=latency_ms,
         )

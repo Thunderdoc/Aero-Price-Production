@@ -5,17 +5,13 @@ import { Modal } from '../components/ui/Modal'
 import { BarChart, LineChart } from '../components/MiniChart'
 import { apiAnomalies, apiFares, apiLiveFares, apiForecast, isBackendAvailable, type AnomalyResponse, type FareObservationApi, type ForecastResponse } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
+import DataFreshness from '../components/DataFreshness'
+import { buildDailyMedianSeries, collectionDays } from '../lib/fareSeries'
+import { formatDateIST, formatDateTimeIST, median } from '../lib/liveStatus'
 
 const card: React.CSSProperties = { background: 'var(--color-surface-bg)', borderRadius: 'var(--radius-xl)', padding: 'var(--space-xl)', boxShadow: 'var(--shadow-sm)', border: '1px solid var(--color-border-primary)' }
 const TABS = ['Overview', 'Price History', 'Booking Windows', 'Forecast', 'Anomalies', 'Sources'] as const
 type Tab = typeof TABS[number]
-
-function median(values: number[]) {
-  if (!values.length) return null
-  const sorted = [...values].sort((a, b) => a - b)
-  const middle = Math.floor(sorted.length / 2)
-  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2
-}
 
 function formatFare(value: number | null) {
   return value == null ? 'Data unavailable' : `₹${value.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`
@@ -49,9 +45,9 @@ export default function RouteExplorer() {
   const [forecast, setForecast] = useState<ForecastResponse | null>(null)
   const [anomalies, setAnomalies] = useState<AnomalyResponse | null>(null)
 
-  const verifiedRows = useMemo(() => rows.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL'), [rows])
+  const verifiedRows = useMemo(() => rows.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL' || row.data_origin === 'PUBLIC_INTERFACE'), [rows])
   const routeOptions = useMemo(() => {
-    const available = [...new Set(allRows.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL').map(row => row.route))].sort()
+    const available = [...new Set(allRows.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL' || row.data_origin === 'PUBLIC_INTERFACE').map(row => row.route))].sort()
     return available.length ? available : [route]
   }, [allRows, route])
   const [from, to] = route.split('-')
@@ -61,13 +57,13 @@ export default function RouteExplorer() {
     setMessage(null)
     try {
       const response = await apiLiveFares(route, date ?? searchDate, token ?? undefined)
-      let next = response.observations.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL')
+      let next = response.observations.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL' || row.data_origin === 'PUBLIC_INTERFACE')
       // The on-demand provider can temporarily fail or time out even while
       // the verified snapshot is healthy. Keep the route usable by falling
-      // back to persisted REAL/OFFICIAL rows and label the result honestly.
+      // back to persisted index-eligible rows and label the result honestly.
       if (!next.length) {
-        const cached = await apiFares({ route, data_origin: 'REAL', limit: 200 }, token ?? undefined)
-        next = cached.observations.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL')
+        const cached = await apiFares({ route, limit: 200 }, token ?? undefined)
+        next = cached.observations.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL' || row.data_origin === 'PUBLIC_INTERFACE')
         setFilteredToDate(false)
         if (next.length) setMessage('Live fare source is temporarily unavailable; showing cached verified observations.')
       }
@@ -85,8 +81,8 @@ export default function RouteExplorer() {
       if (!next.length) setMessage(date ? `No verified fare records are available for ${route} on ${date}.` : `No verified fare records are available for ${route}.`)
     } catch {
       try {
-        const cached = await apiFares({ route, data_origin: 'REAL', limit: 200 }, token ?? undefined)
-        const next = cached.observations.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL')
+        const cached = await apiFares({ route, limit: 200 }, token ?? undefined)
+        const next = cached.observations.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL' || row.data_origin === 'PUBLIC_INTERFACE')
         setRows(next)
         setFilteredToDate(false)
         setMessage(next.length ? 'Live fare source is temporarily unavailable; showing cached verified observations.' : 'No verified fare records are available for this route.')
@@ -124,7 +120,11 @@ export default function RouteExplorer() {
   const carriers = [...new Set(verifiedRows.map(row => row.airline).filter(Boolean))]
   const sources = [...new Set(verifiedRows.map(row => row.source).filter(Boolean))]
   const latestCollectedAt = verifiedRows.map(row => row.collected_at).sort().at(-1) ?? null
-  const dailyHistory = [...new Set(verifiedRows.map(row => row.collected_at.slice(0, 10)))].sort().map(day => ({ day, value: median(verifiedRows.filter(row => row.collected_at.startsWith(day)).map(row => row.total_fare)) ?? 0 })).filter(point => point.value > 0)
+  // Missing days are null in the series — the line breaks there instead of
+  // plotting ₹0 or silently compressing the time axis (audit §2.11).
+  const historyDays = collectionDays(verifiedRows)
+  const dailyHistory = buildDailyMedianSeries(verifiedRows, [route], historyDays)[0]?.data ?? []
+  const dailyHistoryPoints = dailyHistory.filter((value): value is number => value != null).length
   const bookingWindows = [...new Set(verifiedRows.map(row => row.advance_days))].sort((a, b) => a - b).map(days => ({ label: `${days}d`, value: median(verifiedRows.filter(row => row.advance_days === days).map(row => row.total_fare)) ?? 0 })).filter(point => point.value > 0)
   const sourceRows = sources.map(source => ({ source, count: verifiedRows.filter(row => row.source === source).length, latest: verifiedRows.filter(row => row.source === source).map(row => row.collected_at).sort().at(-1) }))
 
@@ -138,7 +138,7 @@ export default function RouteExplorer() {
       <div><h1 className="text-title text-primary">Route Explorer</h1><p className="text-body text-secondary" style={{ marginTop: 'var(--space-xs)' }}>Verified fare observations by Indian corridor.</p></div>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
         <div><label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: 'var(--color-text-tertiary)', marginBottom: 4 }}>FROM</label><select value={from} onChange={event => setRouteFromCodes(event.target.value, to)} style={{ padding: '10px 14px', minWidth: 90, fontFamily: 'var(--font-mono)', fontWeight: 700, border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-md)', background: 'var(--color-surface-bg)' }}>{[...new Set(routeOptions.map(item => item.split('-')[0]))].map(code => <option key={code}>{code}</option>)}</select></div>
-        <button onClick={() => setRouteFromCodes(to, from)} title="Swap route" style={{ padding: 10, border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-md)', background: 'var(--color-surface-secondary)', color: 'var(--color-text-secondary)', cursor: 'pointer' }}><ArrowLeftRight size={16} /></button>
+        <button onClick={() => setRouteFromCodes(to, from)} title="Swap route" aria-label="Swap origin and destination" style={{ padding: 10, border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-md)', background: 'var(--color-surface-secondary)', color: 'var(--color-text-secondary)', cursor: 'pointer' }}><ArrowLeftRight size={16} /></button>
         <div><label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: 'var(--color-text-tertiary)', marginBottom: 4 }}>TO</label><select value={to} onChange={event => setRouteFromCodes(from, event.target.value)} style={{ padding: '10px 14px', minWidth: 90, fontFamily: 'var(--font-mono)', fontWeight: 700, border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-md)', background: 'var(--color-surface-bg)' }}>{[...new Set(routeOptions.map(item => item.split('-')[1]))].map(code => <option key={code}>{code}</option>)}</select></div>
       </div>
     </div>
@@ -149,6 +149,7 @@ export default function RouteExplorer() {
       <div><label style={{ display: 'block', fontSize: 9, fontWeight: 700, letterSpacing: '.08em', color: 'var(--color-text-tertiary)', marginBottom: 3 }}>TRAVEL DATE</label><input type="date" value={searchDate} onChange={event => setSearchDate(event.target.value)} style={{ padding: '7px 10px', fontSize: 12, fontFamily: 'var(--font-mono)', border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-sm)', background: 'var(--color-surface-secondary)' }} /></div>
       <button onClick={() => void loadRoute(searchDate)} disabled={loading} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 16px', border: 0, borderRadius: 'var(--radius-md)', background: 'var(--color-brand-primary)', color: '#fff', fontWeight: 700, cursor: loading ? 'wait' : 'pointer', opacity: loading ? .7 : 1 }}><RefreshCw size={13} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />{loading ? 'Loading…' : 'Search Verified Fares'}</button>
       <span style={{ fontSize: 11, color: verifiedRows.length ? 'var(--color-success)' : 'var(--color-text-tertiary)', fontWeight: 650 }}>{verifiedRows.length ? `${verifiedRows.length} verified records loaded` : 'No verified records loaded'}</span>
+      {latestCollectedAt && <DataFreshness minutesAgo={Math.max(0, Math.floor((Date.now() - new Date(latestCollectedAt).getTime()) / 60000))} />}
       {filteredToDate && <button onClick={() => void loadRoute()} style={{ border: 0, background: 'transparent', color: 'var(--color-brand-primary)', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>Clear date filter</button>}
     </div>
 
@@ -161,24 +162,24 @@ export default function RouteExplorer() {
     </div>
 
     <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
-      <div className="flex overflow-x-auto" style={{ borderBottom: '1px solid var(--color-border-primary)' }}>{TABS.map(item => <button key={item} onClick={() => setTab(item)} style={{ padding: '14px 20px', border: 0, borderBottom: `2px solid ${tab === item ? 'var(--color-brand-primary)' : 'transparent'}`, background: 'transparent', color: tab === item ? 'var(--color-brand-primary)' : 'var(--color-text-secondary)', fontWeight: tab === item ? 700 : 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>{item}</button>)}</div>
+      <div className="flex overflow-x-auto" role="tablist" aria-label="Route detail tabs" style={{ borderBottom: '1px solid var(--color-border-primary)' }}>{TABS.map(item => <button key={item} role="tab" aria-selected={tab === item} onClick={() => setTab(item)} style={{ padding: '14px 20px', border: 0, borderBottom: `2px solid ${tab === item ? 'var(--color-brand-primary)' : 'transparent'}`, background: 'transparent', color: tab === item ? 'var(--color-brand-primary)' : 'var(--color-text-secondary)', fontWeight: tab === item ? 700 : 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>{item}</button>)}</div>
       <div style={{ padding: 'var(--space-xl)' }}>
         {tab === 'Overview' && <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))', gap: 14 }}>{[
           ['Current Fare', formatFare(currentFare), 'Observed median'], ['Observed Range', minFare == null ? 'Data unavailable' : `${formatFare(minFare)} – ${formatFare(maxFare)}`, 'Minimum–maximum'], ['Collection Change', collectionChange == null ? 'Data unavailable' : `${collectionChange > 0 ? '+' : ''}${collectionChange.toFixed(2)}%`, 'Latest comparison'], ['Observations', verifiedRows.length.toLocaleString('en-IN'), 'Verified records'], ['Airlines', carriers.length.toLocaleString('en-IN'), 'Observed carriers'], ['Sources', sources.length.toLocaleString('en-IN'), 'Recorded sources'],
         ].map(([label, value, sub]) => <div key={label} style={{ padding: 14, borderRadius: 'var(--radius-md)', background: 'var(--color-surface-secondary)' }}><div className="text-caption text-tertiary">{label}</div><div className="text-label text-primary" style={{ marginTop: 5, fontWeight: 700 }}>{value}</div><div className="text-caption text-tertiary">{sub}</div></div>)}</div>}
 
-        {tab === 'Price History' && (dailyHistory.length >= 2 ? <div><h3 className="text-label text-primary" style={{ fontWeight: 700 }}>Verified collection history</h3><p className="text-caption text-secondary" style={{ marginTop: 4 }}>Each point is the actual route median recorded on that collection day.</p><div style={{ marginTop: 18, overflowX: 'auto' }}><LineChart series={[{ name: route, data: dailyHistory.map(point => point.value), color: 'var(--color-brand-primary)' }]} labels={dailyHistory.map(point => point.day)} width={720} height={220} /></div></div> : <p className="text-body text-secondary">At least two verified collection days are required to draw a history chart.</p>)}
+        {tab === 'Price History' && (dailyHistoryPoints >= 2 ? <div><h3 className="text-label text-primary" style={{ fontWeight: 700 }}>Verified collection history</h3><p className="text-caption text-secondary" style={{ marginTop: 4 }}>Each point is the actual route median recorded on that collection day. Days with no observation break the line.</p><div style={{ marginTop: 18, overflowX: 'auto' }}><LineChart series={[{ name: route, data: dailyHistory, color: 'var(--color-brand-primary)' }]} labels={historyDays} width={720} height={220} /></div></div> : <p className="text-body text-secondary">At least two verified collection days are required to draw a history chart.</p>)}
 
         {tab === 'Booking Windows' && (bookingWindows.length ? <div><h3 className="text-label text-primary" style={{ fontWeight: 700 }}>Observed advance-purchase windows</h3><p className="text-caption text-secondary" style={{ marginTop: 4 }}>Medians are calculated only from the fare records currently stored for this route.</p><div style={{ marginTop: 18, overflowX: 'auto' }}><BarChart data={bookingWindows} width={620} height={190} /></div></div> : <p className="text-body text-secondary">No verified booking-window records are available for this route.</p>)}
 
         {tab === 'Forecast' && (forecast?.status === 'FORECAST' && forecast.forecasts.length ? <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14 }}>{forecast.forecasts.map(item => <div key={item.horizon_days} style={{ padding: 15, borderRadius: 'var(--radius-md)', background: 'var(--color-surface-secondary)' }}><div className="text-caption text-tertiary">{item.horizon_days}-day outlook</div><div className="text-label text-primary" style={{ marginTop: 7, fontWeight: 750 }}>{formatFare(item.forecast_fare)}</div><div className="text-caption text-tertiary">Range {formatFare(item.lower_bound)} – {formatFare(item.upper_bound)}</div></div>)}</div> : <div style={{ padding: 14, borderRadius: 'var(--radius-md)', background: 'var(--color-warning-bg)', color: 'var(--color-text-secondary)', fontSize: 12 }}><AlertTriangle size={14} style={{ verticalAlign: 'middle', marginRight: 6 }} />{forecast?.message ?? 'A forecast needs more verified history before it can be produced.'}</div>)}
 
-        {tab === 'Anomalies' && (anomalies?.anomalies?.length ? <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}><thead><tr>{['Route', 'Airline', 'Fare', 'Collected'].map(item => <th key={item} style={{ textAlign: 'left', padding: 9, color: 'var(--color-text-tertiary)', fontSize: 10 }}>{item}</th>)}</tr></thead><tbody>{anomalies.anomalies.filter(item => item.route === route).map(item => <tr key={item.observation_id} style={{ borderTop: '1px solid var(--color-border-primary)' }}><td style={{ padding: 9 }}>{item.route}</td><td style={{ padding: 9 }}>{item.airline}</td><td style={{ padding: 9 }}>{formatFare(item.total_fare)}</td><td style={{ padding: 9 }}>{item.collected_at.slice(0, 10)}</td></tr>)}</tbody></table></div> : <p className="text-body text-secondary">No verified anomaly records are available for this route.</p>)}
+        {tab === 'Anomalies' && (anomalies?.anomalies?.length ? <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}><thead><tr>{['Route', 'Airline', 'Fare', 'Collected'].map(item => <th key={item} style={{ textAlign: 'left', padding: 9, color: 'var(--color-text-tertiary)', fontSize: 10 }}>{item}</th>)}</tr></thead><tbody>{anomalies.anomalies.filter(item => item.route === route).map(item => <tr key={item.observation_id} style={{ borderTop: '1px solid var(--color-border-primary)' }}><td style={{ padding: 9 }}>{item.route}</td><td style={{ padding: 9 }}>{item.airline}</td><td style={{ padding: 9 }}>{formatFare(item.total_fare)}</td><td style={{ padding: 9 }}>{formatDateIST(item.collected_at)}</td></tr>)}</tbody></table></div> : <p className="text-body text-secondary">No verified anomaly records are available for this route.</p>)}
 
-        {tab === 'Sources' && (sourceRows.length ? <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}><thead><tr>{['Source', 'Status', 'Verified records', 'Latest collection'].map(item => <th key={item} style={{ textAlign: 'left', padding: 9, color: 'var(--color-text-tertiary)', fontSize: 10 }}>{item}</th>)}</tr></thead><tbody>{sourceRows.map(item => <tr key={item.source} style={{ borderTop: '1px solid var(--color-border-primary)' }}><td style={{ padding: 9 }}>{item.source}</td><td style={{ padding: 9, color: 'var(--color-success)', fontWeight: 700 }}>VERIFIED</td><td style={{ padding: 9 }}>{item.count}</td><td style={{ padding: 9 }}>{item.latest?.slice(0, 16).replace('T', ' ') ?? '—'}</td></tr>)}</tbody></table></div> : <p className="text-body text-secondary">No verified source records are available for this route.</p>)}
+        {tab === 'Sources' && (sourceRows.length ? <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}><thead><tr>{['Source', 'Status', 'Verified records', 'Latest collection'].map(item => <th key={item} style={{ textAlign: 'left', padding: 9, color: 'var(--color-text-tertiary)', fontSize: 10 }}>{item}</th>)}</tr></thead><tbody>{sourceRows.map(item => <tr key={item.source} style={{ borderTop: '1px solid var(--color-border-primary)' }}><td style={{ padding: 9 }}>{item.source}</td><td style={{ padding: 9, color: 'var(--color-success)', fontWeight: 700 }}>VERIFIED</td><td style={{ padding: 9 }}>{item.count}</td><td style={{ padding: 9 }}>{item.latest ? formatDateTimeIST(item.latest) : '—'}</td></tr>)}</tbody></table></div> : <p className="text-body text-secondary">No verified source records are available for this route.</p>)}
       </div>
     </div>
 
-    <Modal isOpen={showProv} onClose={() => setShowProv(false)} title="Data Provenance" footer={<Button variant="neutral" onClick={() => setShowProv(false)}>Close</Button>}><div className="flex flex-col" style={{ gap: 12, fontSize: 13 }}><div><b>Route:</b> {route}</div><div><b>Origin:</b> REAL / OFFICIAL fare observations only</div><div><b>Verified records:</b> {verifiedRows.length}</div><div><b>Latest collection:</b> {latestCollectedAt?.replace('T', ' ') ?? 'Unavailable'}</div><div><b>Recorded sources:</b> {sources.join(', ') || 'Unavailable'}</div></div></Modal>
+    <Modal isOpen={showProv} onClose={() => setShowProv(false)} title="Data Provenance" footer={<Button variant="neutral" onClick={() => setShowProv(false)}>Close</Button>}><div className="flex flex-col" style={{ gap: 12, fontSize: 13 }}><div><b>Route:</b> {route}</div><div><b>Origin:</b> REAL / OFFICIAL fare observations only</div><div><b>Verified records:</b> {verifiedRows.length}</div><div><b>Latest collection:</b> {latestCollectedAt ? formatDateTimeIST(latestCollectedAt) : 'Unavailable'}</div><div><b>Recorded sources:</b> {sources.join(', ') || 'Unavailable'}</div></div></Modal>
   </div>
 }

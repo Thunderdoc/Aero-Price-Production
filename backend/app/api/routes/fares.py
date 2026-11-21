@@ -6,6 +6,7 @@ from datetime import datetime, timezone, date, timedelta
 import uuid
 from app.core.database import get_db
 from app.core.config import settings
+from app.core.rate_limit import rate_limited_user
 from app.models.fare import FareObservation
 from app.collectors.aggregators.fast_flights import FastFlightsAdapter
 from app.processing.quality import validate_batch
@@ -14,8 +15,11 @@ router = APIRouter(prefix="/fares", tags=["fares"])
 
 ADVANCE_WINDOWS = [1, 7, 15, 30, 45]
 
-# Origins that may appear in the live fares listing
-_LIVE_ORIGINS = ("REAL", "OFFICIAL")
+# Origins that may appear in the live fares listing. PUBLIC_INTERFACE (scraped
+# Google Flights fares, honestly labelled) is included as the disclosed
+# SIH-demo methodology — same set as the index. Every record still carries its
+# true data_origin in the response; nothing is promoted to REAL.
+_LIVE_ORIGINS = ("REAL", "OFFICIAL", "PUBLIC_INTERFACE")
 # Origins excluded from the live listing regardless of filter (synthetic / test)
 _ALWAYS_EXCLUDED = ("GENERATED_TEST", "HISTORICAL_SNAPSHOT")
 
@@ -27,7 +31,7 @@ def _base_query(data_mode: str, requested_origin: Optional[str]):
     live mode:
       - GENERATED_TEST always excluded
       - SANDBOX_TEST always excluded (synthetic Amadeus data, not real fares)
-      - only REAL and OFFICIAL returned
+      - only REAL, OFFICIAL and PUBLIC_INTERFACE returned
       - caller may narrow further with data_origin filter
 
     demo mode:
@@ -101,6 +105,7 @@ async def list_fares(
     obs = rows.scalars().all()
 
     has_real = any(o.data_origin == "REAL" for o in obs)
+    has_public = any(o.data_origin == "PUBLIC_INTERFACE" for o in obs)
     has_sandbox = any(o.data_origin == "SANDBOX_TEST" for o in obs)
 
     return {
@@ -110,23 +115,31 @@ async def list_fares(
         "data_mode": settings.DATA_MODE,
         "data_origin_summary": (
             "REAL" if has_real
+            else "PUBLIC_INTERFACE" if has_public
             else "SANDBOX_TEST" if has_sandbox
             else "NO_DATA"
         ),
         "observations": [_fare_dict(o) for o in obs],
         "status": (
             "STORED_REAL" if has_real
+            else "STORED_PUBLIC_INTERFACE" if has_public
             else "SANDBOX_TEST_ONLY" if has_sandbox
             else "NO_LIVE_OBSERVATIONS"
         ),
         "message": (
             "These are stored observations, not a guarantee of currently available prices." if has_real
             else (
-                "Amadeus sandbox data available — configure AMADEUS_ENV=production "
-                "with production credentials for real fare observations."
-                if has_sandbox
-                else
-                "No real airfare observations are stored. Check provider status and trigger a collection run."
+                "Fares collected from the Google Flights public interface (labelled "
+                "PUBLIC_INTERFACE) — real observed fares, not GDS fares. Stored "
+                "observations, not a guarantee of currently available prices."
+                if has_public
+                else (
+                    "Amadeus sandbox data available — configure AMADEUS_ENV=production "
+                    "with production credentials for real fare observations."
+                    if has_sandbox
+                    else
+                    "No real airfare observations are stored. Check provider status and trigger a collection run."
+                )
             )
         ),
     }
@@ -139,8 +152,9 @@ async def airline_fare_summary(
 ):
     """Observed airline fares, not airline market share or flight frequency.
 
-    Aggregate only valid INR economy observations from real or official
-    sources. Every count is a count of stored quotes, not passengers or flights.
+    Aggregate only valid INR economy observations from index-eligible
+    sources (REAL/OFFICIAL/PUBLIC_INTERFACE). Every count is a count of
+    stored quotes, not passengers or flights.
     """
     filters = (
         FareObservation.data_origin.in_(list(_LIVE_ORIGINS)),
@@ -236,7 +250,10 @@ async def live_fares(
     route: str,
     travel_date: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: dict | None = None,
+    # Auth + per-user rate limit (S4): this endpoint triggers a live Google
+    # Flights scrape (up to 45 s) on every call. Unauthenticated scraping
+    # per call is closed — 401 without a token, 429 past 10/min per user.
+    current_user: dict = Depends(rate_limited_user("fares_live", 10, 60)),
 ):
     """Query the no-key public fare interface on demand.
 
@@ -261,12 +278,27 @@ async def live_fares(
         "route": normalized_route,
         "travel_date": travel,
         "source": result.source_id,
-        "data_origin": "REAL" if valid else "NO_DATA",
+        # The records' own provenance — PUBLIC_INTERFACE for this public-interface
+        # scrape, never a hardcoded REAL.
+        "data_origin": valid[0].data_origin if valid else "NO_DATA",
         "observations": [_fare_record_dict(record) for record in valid],
         "rejected_count": rejected_count,
         "error": result.error,
         "latency_ms": result.latency_ms,
     }
+
+
+def _origins_label(rows) -> str:
+    """Honest data_origin label for a summary bucket: the single origin when
+    all rows share one, MIXED when they don't, NO_DATA when empty. Never
+    hardcodes REAL — the buckets below feed from _LIVE_ORIGINS, which
+    includes PUBLIC_INTERFACE (scraped Google Flights fares)."""
+    origins = sorted({row.data_origin for row in rows})
+    if not origins:
+        return "NO_DATA"
+    if len(origins) == 1:
+        return origins[0]
+    return "MIXED"
 
 
 @router.get("/summary/{route}")
@@ -277,8 +309,10 @@ async def route_fare_summary(
 ):
     """
     Booking-window fare summary for a route.
-    Only REAL and OFFICIAL records feed this summary — SANDBOX_TEST is excluded
-    because synthetic Amadeus fares would produce meaningless statistics.
+    Index-eligible records (REAL/OFFICIAL/PUBLIC_INTERFACE) feed this
+    summary — SANDBOX_TEST is excluded because synthetic Amadeus fares
+    would produce meaningless statistics. Each bucket reports the actual
+    origin(s) of its rows, never a hardcoded REAL.
     """
     eligible = (
         FareObservation.route == route.upper(),
@@ -311,7 +345,7 @@ async def route_fare_summary(
         "last_collected_at": max(
             (row.collected_at for row in latest_rows if row.collected_at), default=None
         ),
-        "data_origin": "REAL" if latest_fares else "NO_DATA",
+        "data_origin": _origins_label(latest_rows),
         "status": "STORED_OBSERVATIONS" if latest_fares else "INSUFFICIENT_DATA",
     }
     if overall["last_collected_at"]:
@@ -337,7 +371,7 @@ async def route_fare_summary(
                 "min": min(fares),
                 "max": max(fares),
                 "count": len(fares),
-                "data_origin": "REAL",
+                "data_origin": _origins_label(obs),
                 "status": "AVAILABLE",
             }
         else:

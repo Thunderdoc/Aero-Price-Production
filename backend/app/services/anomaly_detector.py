@@ -9,6 +9,7 @@ from datetime import datetime, timezone, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func
 from app.models.fare import FareObservation
+from app.services.index_engine import INDEX_ELIGIBLE_ORIGINS
 
 logger = logging.getLogger(__name__)
 
@@ -25,11 +26,11 @@ async def detect_anomalies(db: AsyncSession, lookback_days: int = 30) -> dict:
     """
     since = datetime.now(timezone.utc) - timedelta(days=lookback_days)
 
-    # Get all non-generated observations in lookback window
+    # Get all index-eligible observations in lookback window
     rows = await db.execute(
         select(FareObservation)
         .where(and_(
-            FareObservation.data_origin.in_(["REAL", "OFFICIAL"]),
+            FareObservation.data_origin.in_(list(INDEX_ELIGIBLE_ORIGINS)),
             FareObservation.is_valid == True,
             FareObservation.collected_at >= since,
         ))
@@ -103,14 +104,14 @@ async def get_anomaly_summary(db: AsyncSession) -> dict:
     """Quick summary of flagged observations for the API."""
     total = await db.scalar(
         select(func.count()).select_from(FareObservation)
-        .where(FareObservation.data_origin.in_(["REAL", "OFFICIAL"]))
+        .where(FareObservation.data_origin.in_(list(INDEX_ELIGIBLE_ORIGINS)))
     )
     # SQLite JSON array column check — filter by quality_flags containing OUTLIER
     # Using a simple LIKE since SQLite doesn't have JSON_CONTAINS
     flagged = await db.scalar(
         select(func.count()).select_from(FareObservation)
         .where(
-            FareObservation.data_origin.in_(["REAL", "OFFICIAL"]),
+            FareObservation.data_origin.in_(list(INDEX_ELIGIBLE_ORIGINS)),
             FareObservation.quality_flags.like('%OUTLIER%')
         )
     )

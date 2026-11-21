@@ -9,7 +9,7 @@
   "functions": {
     "api/index.py": {
       "maxDuration": 60,
-      "excludeFiles": "{backend/tests/**,integrations/**,src/imports/**,**/*.test.py,**/test_*.py,**/__pycache__/**}"
+      "excludeFiles": "{backend/tests/**,integrations/**,**/*.test.py,**/test_*.py,**/__pycache__/**}"
     }
   },
   "rewrites": [

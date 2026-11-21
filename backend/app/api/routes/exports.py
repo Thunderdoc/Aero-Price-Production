@@ -1,6 +1,7 @@
 """
 Exports API — CSV and JSON data exports.
-Requires ANALYST or ADMIN role.
+Requires any signed-in user (read-only; analyst gate dropped per the
+21 Nov 2026 access decision — write/admin actions stay gated).
 Never exports GENERATED_TEST data.
 """
 import csv
@@ -12,7 +13,7 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 from app.core.database import get_db
-from app.core.auth import require_analyst
+from app.core.auth import get_current_user
 from app.models.fare import FareObservation
 from app.models.government import DgcaMonthlyRecord, MospiCpiRecord, DgcaCircular
 from app.models.index import IndexObservation
@@ -34,7 +35,7 @@ async def export_fares(
     advance_days: int = Query(default=None),
     cabin: str = Query(default=None),
     fmt: str = Query(default="csv", pattern="^(csv|json)$"),
-    current_user=Depends(require_analyst),
+    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -144,7 +145,7 @@ async def export_fares(
 @router.get("/exports/index-history")
 async def export_index_history(
     fmt: str = Query(default="csv", pattern="^(csv|json)$"),
-    current_user=Depends(require_analyst),
+    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     rows = await db.execute(
@@ -185,7 +186,7 @@ async def export_index_history(
 @router.get("/exports/dgca-monthly")
 async def export_dgca_monthly(
     fmt: str = Query(default="csv", pattern="^(csv|json)$"),
-    current_user=Depends(require_analyst),
+    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     rows = await db.execute(

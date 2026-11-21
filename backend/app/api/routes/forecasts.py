@@ -1,12 +1,13 @@
 """
 Forecast API — statistical fare projections per route.
-Requires ANALYST or ADMIN role.
+Requires any signed-in user (read-only; analyst gate dropped per the
+21 Nov 2026 access decision — write/admin actions stay gated).
 Returns INSUFFICIENT_DATA when real observation count is below the minimum.
 """
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
-from app.core.auth import require_analyst
+from app.core.auth import get_current_user
 from app.services.forecast_engine import forecast_route, FORECAST_HORIZONS_DAYS, MIN_OBS_FOR_FORECAST
 
 router = APIRouter()
@@ -21,7 +22,7 @@ async def get_forecast(
     advance_days: int = Query(default=7, description="Advance-purchase window (1,7,15,30,45)"),
     cabin: str = Query(default="ECONOMY"),
     lookback_days: int = Query(default=90, ge=7, le=365),
-    current_user=Depends(require_analyst),
+    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -40,7 +41,7 @@ async def get_forecast(
 
 @router.get("/forecasts/metadata")
 async def forecast_metadata(
-    current_user=Depends(require_analyst),
+    current_user=Depends(get_current_user),
 ):
     return {
         "model": "Holt-Winters Double Exponential Smoothing",

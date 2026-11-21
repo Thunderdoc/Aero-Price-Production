@@ -19,9 +19,10 @@ from app.api.routes import admin as admin_routes
 from app.api.routes import forecasts, exports, anomalies as anomalies_routes, aviation, historical, maps
 from app.api.routes.routes_basket import router as routes_router
 from app.api.routes.compare import router as compare_router
-from app.services.collector import run_collection
-from app.services.price_alerts import evaluate_price_alerts
-from app.services.gov_fetcher import run_gov_fetches, ensure_gov_dataset_registry
+from app.services.gov_fetcher import ensure_gov_dataset_registry
+# Single scheduler implementation: main.py registers the jobs defined in
+# app/scheduler/jobs.py (no inline wrappers — the orphan-module bug).
+from app.scheduler.jobs import job_run_collection, job_gov_refresh, job_publish_index
 from app.seed.routes import seed_route_basket
 from app.seed.feedback import seed_demo_feedback
 from app.models.feedback import UserFeedback  # noqa: F401 - register table metadata
@@ -37,7 +38,11 @@ else:
     IntervalTrigger = None  # type: ignore[assignment]
 
 logging.basicConfig(
-    level=getattr(logging, settings.LOG_LEVEL),
+    # .upper() + INFO fallback: getattr(logging, "debug") returns the
+    # logging.debug FUNCTION, which basicConfig rejects with a TypeError —
+    # a lowercase LOG_LEVEL used to crash the app at import (fixed 21 Nov
+    # 2026, Phase 5; the full-suite run surfaced it via a subprocess env).
+    level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 # Provider request URLs can contain server-side credentials in query strings.
@@ -49,22 +54,13 @@ logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler() if AsyncIOScheduler else None
 
 
-async def _scheduled_collection():
-    async with AsyncSessionLocal() as db:
-        await run_collection(db, triggered_by="scheduler")
-        await evaluate_price_alerts(db)
-        await db.commit()
-
-
-async def _scheduled_gov_fetch():
-    async with AsyncSessionLocal() as db:
-        await run_gov_fetches(db)
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     logger.info("AeroPrice India backend starting — SIH26056")
+    # Log which provider credentials are configured (names only, never values)
+    # so a zero-provider boot is visible in logs instead of silent.
+    settings.log_credential_status()
     # Vercel Functions are short-lived request workers. They must not create
     # tables in the read-only deployment filesystem or start APScheduler;
     # persistent live fare data belongs in the configured hosted database.
@@ -96,16 +92,24 @@ async def lifespan(app: FastAPI):
     if settings.COLLECTION_ENABLED:
         assert scheduler is not None and IntervalTrigger is not None
         scheduler.add_job(
-            _scheduled_collection,
+            job_run_collection,
             trigger=IntervalTrigger(minutes=settings.COLLECTION_INTERVAL_MINUTES),
             id="collection",
             replace_existing=True,
         )
         # Gov data refresh every 6 hours
         scheduler.add_job(
-            _scheduled_gov_fetch,
+            job_gov_refresh,
             trigger=IntervalTrigger(hours=6),
             id="gov_fetch",
+            replace_existing=True,
+        )
+        # Daily index publication (previously never scheduled anywhere —
+        # job_publish_index was orphaned along with the rest of jobs.py).
+        scheduler.add_job(
+            job_publish_index,
+            trigger=IntervalTrigger(hours=24),
+            id="index_publish",
             replace_existing=True,
         )
         scheduler.start()
@@ -113,7 +117,7 @@ async def lifespan(app: FastAPI):
         # for the first hourly interval. The collection still uses only
         # configured, authorized providers and never creates synthetic fares.
         scheduler.add_job(
-            _scheduled_collection,
+            job_run_collection,
             trigger="date",
             run_date=datetime.now(timezone.utc) + timedelta(seconds=8),
             id="initial_collection",
@@ -124,7 +128,7 @@ async def lifespan(app: FastAPI):
         # Providers remain provenance-safe: unavailable/unauthorized feeds
         # report no data rather than creating placeholder records.
         scheduler.add_job(
-            _scheduled_gov_fetch,
+            job_gov_refresh,
             trigger="date",
             run_date=datetime.now(timezone.utc) + timedelta(seconds=12),
             id="initial_gov_fetch",
@@ -187,11 +191,13 @@ app.add_middleware(
     allow_origins=list(dict.fromkeys(settings.allowed_origins_list + [
         "https://aero-price-production.vercel.app",
     ])),
-    # Render deployments can use a generated *.vercel.app hostname. Local
-    # Vite development must also reach this backend, including when the
-    # backend runs with ENVIRONMENT=production; otherwise browsers report the
-    # misleading generic "Failed to fetch" for every live-data endpoint.
-    allow_origin_regex=r"(?:https?://(?:localhost|127\.0\.0\.1|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})(?::[0-9]+)?|https://[a-z0-9-]+\.vercel\.app)",
+    # Exact production origins come from ALLOWED_ORIGINS above. The regex
+    # covers only local development (localhost / LAN). It must NOT match
+    # *.vercel.app: with allow_credentials=True any Vercel preview deployment
+    # could otherwise make credentialed cross-origin requests. Preview
+    # deployments that need API access must be added to ALLOWED_ORIGINS
+    # explicitly, by exact hostname.
+    allow_origin_regex=r"https?://(?:localhost|127\.0\.0\.1|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})(?::[0-9]+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

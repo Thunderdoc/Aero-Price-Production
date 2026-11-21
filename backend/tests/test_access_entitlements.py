@@ -265,14 +265,15 @@ async def test_notification_read_state_is_scoped_to_current_user(db):
 
 
 @pytest.mark.asyncio
-async def test_price_alerts_are_server_side_and_require_the_live_premium_grant(db):
+async def test_price_alerts_unlocked_for_signed_in_users(db):
+    """21 Nov 2026 decision: Price Alerts are unlocked for every signed-in
+    user — no Premium grant row is required. The server-side enforcement that
+    remains is per-user scoping: a user can only see and delete their own
+    alerts. (Replaces the old test that pinned the grant-gated 403.)"""
     identity = {"email": "premium@example.test", "role": "PUBLIC", "plan": "SUBSCRIBER"}
-    with pytest.raises(Exception) as denied:
-        await list_price_alerts(identity, db)
-    assert getattr(denied.value, "status_code", None) == 403
+    # No UserFeatureAccess row exists: list must succeed, not 403.
+    assert (await list_price_alerts(identity, db))["alerts"] == []
 
-    db.add(UserFeatureAccess(user_email=identity["email"], feature_key="PRICE_ALERTS", granted_by="admin@example.test"))
-    await db.flush()
     created = await create_price_alert(
         PriceAlertCreate(route="DEL-BOM", target_fare=5500, notification_frequency="DAILY"), identity, db,
     )
@@ -280,6 +281,13 @@ async def test_price_alerts_are_server_side_and_require_the_live_premium_grant(d
     listed = await list_price_alerts(identity, db)
     assert listed["alerts"][0]["id"] == created["id"]
     assert listed["alerts"][0]["route"] == "DEL-BOM"
+
+    # Another signed-in user cannot see or delete this alert.
+    other = {"email": "other@example.test", "role": "PUBLIC", "plan": "FREE"}
+    assert (await list_price_alerts(other, db))["alerts"] == []
+    with pytest.raises(Exception) as not_found:
+        await delete_price_alert(created["id"], other, db)
+    assert getattr(not_found.value, "status_code", None) == 404
 
     await delete_price_alert(created["id"], identity, db)
     assert await db.get(PriceAlert, created["id"]) is None

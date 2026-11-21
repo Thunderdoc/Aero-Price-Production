@@ -31,10 +31,14 @@ from datetime import date, datetime, timezone, timedelta
 from unittest.mock import patch, Mock
 from hypothesis import given, strategies as st, settings as hypothesis_settings, HealthCheck
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 from app.core.config import Settings
-from app.core.auth import create_access_token, decode_token, DEMO_USERS
+from app.core.database import get_db
+from app.core import auth as auth_core
+from app.core.auth import create_access_token, decode_token
+from demo_fixtures import DEMO_USERS
 from app.models.fare import FareObservation
 from app.models.user import User
 
@@ -405,21 +409,19 @@ def test_baseline_database_url_conversion():
 # Property 6: Non-Collection API Endpoints (Requirements 3.8, 3.9)
 # ══════════════════════════════════════════════════════════════════════════
 
-@given(
-    endpoint=st.sampled_from(["/api/health"])
-)
-@hypothesis_settings(deadline=2000)  # Allow more time for endpoint tests
-def test_property_readonly_endpoints_work_independently(endpoint):
+async def test_property_readonly_endpoints_work_independently(db):
     """
-    Property: For all non-collection API endpoints (health),
-    requests should succeed regardless of collection or Firebase status.
-    
+    Property: the public /api/health endpoint works regardless of collection
+    or Firebase status.
+
     Preservation: Read-only endpoints must continue working independently.
-    
+
     **Validates: Requirements 3.8, 3.9**
-    
-    Note: Some endpoints like /api/routes require authentication, so we test
-    only truly public endpoints here. Auth-required endpoints are tested separately.
+
+    Converted from a single-example hypothesis test: the @given sampled only
+    /api/health, and its 2 s deadline flaked on cold app import. Runs against
+    the isolated in-memory DB fixture, not the working-tree database file
+    (Phase 1 removed the committed snapshot it implicitly relied on).
     """
     # These endpoints should work with collection disabled and no Firebase
     with patch.dict(os.environ, {
@@ -427,37 +429,57 @@ def test_property_readonly_endpoints_work_independently(endpoint):
         "FIREBASE_SERVICE_ACCOUNT_JSON": ""
     }):
         from main import app
-        client = TestClient(app)
-        
-        response = client.get(endpoint)
-        
+
+        async def isolated_db():
+            yield db
+
+        app.dependency_overrides[get_db] = isolated_db
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                response = await client.get("/api/health")
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
         # Should return successful response (200 or 404 if no data, but not 500/502)
         assert response.status_code in [200, 404], \
-            f"Endpoint {endpoint} should work independently of collection/Firebase"
+            "Endpoint /api/health should work independently of collection/Firebase"
 
 
-def test_baseline_readonly_endpoints_accessible():
+async def test_baseline_readonly_endpoints_accessible(db):
     """
     Baseline test: Verify read-only endpoints are accessible.
-    
+
     This captures baseline API availability to preserve.
+
+    Runs against the isolated in-memory DB fixture, not the working-tree
+    database file (Phase 1 removed the committed snapshot it implicitly
+    relied on — /api/routes queries fare_observations and 500s without
+    tables).
     """
     from main import app
-    client = TestClient(app)
-    
-    # Test key endpoints
-    endpoints = [
-        "/api/health",
-        "/api/routes",
-        "/api/dashboard/stats",
-    ]
-    
-    for endpoint in endpoints:
-        response = client.get(endpoint)
-        
-        # Should not crash (200, 404, or other non-500 status is fine)
-        assert response.status_code < 500, \
-            f"Endpoint {endpoint} should not crash: got {response.status_code}"
+
+    async def isolated_db():
+        yield db
+
+    app.dependency_overrides[get_db] = isolated_db
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            # Test key endpoints
+            endpoints = [
+                "/api/health",
+                "/api/routes",
+                "/api/dashboard/stats",
+            ]
+
+            for endpoint in endpoints:
+                response = await client.get(endpoint)
+
+                # Should not crash (200, 404, or other non-500 status is fine)
+                assert response.status_code < 500, \
+                    f"Endpoint {endpoint} should not crash: got {response.status_code}"
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
 
 
 @pytest.mark.asyncio
@@ -494,23 +516,30 @@ async def test_stats_endpoint_works_without_firebase(db):
 
 def test_property_demo_users_available():
     """
-    Property: DEMO_USERS should be available for development/fallback
-    authentication regardless of Firebase status.
-    
-    Preservation: Demo users must remain available after fix.
-    
-    **Validates: Requirement 3.3**
+    Property (revised Phase 1, S1/L2): demo accounts must NOT exist in
+    production code anymore — the hardcoded DEMO_USERS dict (incl. a full
+    ADMIN with a plaintext password) was a live vulnerability whenever
+    ENVIRONMENT was not exactly "production". The fixtures survive ONLY in
+    tests/demo_fixtures.py, so tests can prove the old credentials no longer
+    log in, and the fixture identities must still round-trip through JWT
+    token creation.
     """
-    # Demo users should exist
+    # Production code must not carry demo accounts at all.
+    assert not hasattr(auth_core, "DEMO_USERS"), \
+        "DEMO_USERS must not exist in app.core.auth anymore"
+    assert not hasattr(auth_core, "authenticate_user"), \
+        "authenticate_user (the demo-login path) must not exist anymore"
+
+    # Test-only fixtures still exist, with the same identities.
     assert len(DEMO_USERS) >= 3, \
         "Should have at least 3 demo users for development"
-    
+
     # Admin user should exist
     assert "admin@aeroprice.in" in DEMO_USERS, \
         "Admin demo user should exist"
     assert DEMO_USERS["admin@aeroprice.in"]["role"] == "ADMIN", \
         "Admin user should have ADMIN role"
-    
+
     # Test that demo users work for token creation
     for email, info in DEMO_USERS.items():
         payload = {
@@ -520,7 +549,7 @@ def test_property_demo_users_available():
         }
         token = create_access_token(payload)
         decoded = decode_token(token)
-        
+
         assert decoded is not None, f"Demo user {email} should create valid token"
         assert decoded["role"] == info["role"]
 
@@ -612,9 +641,9 @@ def test_comprehensive_preservation_summary():
     if decoded is not None:
         preserved_behaviors.append("✓ JWT authentication works")
     
-    # Check 3: Demo users
-    if len(DEMO_USERS) >= 3:
-        preserved_behaviors.append("✓ Demo users available")
+    # Check 3: Demo users live in tests only, never in production code
+    if not hasattr(auth_core, "DEMO_USERS") and len(DEMO_USERS) >= 3:
+        preserved_behaviors.append("✓ Demo users test-only, removed from app code")
     
     # Check 4: Database URL parsing
     with patch.dict(os.environ, {"DATABASE_URL": "sqlite+aiosqlite:///./test.db"}):

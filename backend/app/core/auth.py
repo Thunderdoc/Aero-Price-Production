@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from jose import JWTError, jwt
+import jwt
+from jwt import PyJWTError
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -18,13 +19,12 @@ pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
 oauth2_optional_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token", auto_error=False)
 
-# Demo accounts — in production, managed by DB only
-DEMO_USERS = {
-    "admin@aeroprice.in":  {"password": "aeroadmin",  "role": "ADMIN",   "plan": "ADMIN",      "name": "Admin User"},
-    "dgca@gov.in":         {"password": "dgca2026",   "role": "ANALYST", "plan": "GOVERNMENT", "name": "DGCA Analyst"},
-    "user@aeroprice.in":   {"password": "aero123",    "role": "PUBLIC",  "plan": "FREE",       "name": "User Account"},
-    "visitor@example.com": {"password": "demo",       "role": "PUBLIC",  "plan": "FREE",       "name": "Free User"},
-}
+# NOTE: the hardcoded DEMO_USERS dict (incl. a full ADMIN with a plaintext
+# password) was deleted here in Phase 1 (S1/L2) — it was live whenever
+# ENVIRONMENT was not exactly "production", and its credentials sat in the
+# public repo. Demo-account fixtures live ONLY in backend/tests/
+# (tests/demo_fixtures.py), behind DEMO_ACCOUNTS_ENABLED defaulting off, and
+# no production code path reads them. Accounts come from the DB only.
 
 
 def verify_password(plain: str, hashed: str) -> bool:
@@ -44,19 +44,6 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
-def authenticate_user(email: str, password: str) -> Optional[dict]:
-    # These fixtures exist only for local development and unit tests. A
-    # production deployment must use the persistent user store instead.
-    if settings.is_production:
-        return None
-    user = DEMO_USERS.get(email)
-    if not user:
-        return None
-    if user["password"] != password:
-        return None
-    return {"email": email, **user}
-
-
 async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)) -> dict:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -71,14 +58,14 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
         role: str = payload.get("role", "PUBLIC")
         plan: str = payload.get("plan", "FREE")
         name: str = payload.get("name", "User")
-    except JWTError:
+    except PyJWTError:
         # Firebase sign-in is the primary deployed identity provider. If the
         # short-lived backend JWT exchange is unavailable, accept the already
         # verified Firebase ID token directly instead of leaving the signed-in
         # user unable to submit feedback or request feature access.
         try:
             firebase_token = jwt.get_unverified_header(token).get("alg") == "RS256"
-        except JWTError:
+        except PyJWTError:
             firebase_token = False
         if firebase_token:
             from app.core.firebase_tokens import verify_firebase_identity
@@ -128,7 +115,7 @@ def decode_token(token: str) -> Optional[dict]:
     """Decode a JWT token. Returns payload dict or None on failure."""
     try:
         return jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-    except JWTError:
+    except PyJWTError:
         return None
 
 

@@ -5,7 +5,7 @@
    ============================================================ */
 
 /* ── Google Font ──────────────────────────────────────────── */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700;800&display=swap');
 
 :root {
   /* ── Brand Colors ──────────────────────────────────────── */
@@ -23,7 +23,9 @@
   /* ── Text Colors ───────────────────────────────────────── */
   --color-text-primary:     #0f172a;   /* headings, primary body */
   --color-text-secondary:   #475569;   /* secondary labels */
-  --color-text-tertiary:    #94a3b8;   /* hints, timestamps */
+  /* Was #94a3b8 — 2.4:1 on white, failing WCAG AA for small text. #64748b
+     reaches 4.8:1; used only for text and small icons. */
+  --color-text-tertiary:    #64748b;   /* hints, timestamps */
   --color-text-on-brand:    #ffffff;   /* text on brand-primary */
   --color-text-on-dark:     rgba(255,255,255,0.85); /* text on dark surfaces */
 

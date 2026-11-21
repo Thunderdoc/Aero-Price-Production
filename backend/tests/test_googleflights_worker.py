@@ -33,4 +33,5 @@ def test_record_preserves_only_returned_optional_fields():
     assert record.total_fare == 5184
     assert record.flight_number is None
     assert record.arrival_time is None
-    assert record.data_origin == "REAL"
+    # Scraped public-interface fares are PUBLIC_INTERFACE, never REAL.
+    assert record.data_origin == "PUBLIC_INTERFACE"

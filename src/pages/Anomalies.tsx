@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Activity, CheckCircle2, Download, RefreshCw, Zap } from 'lucide-react'
+import { Activity, CheckCircle2, Download, RefreshCw, XCircle, Zap } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { apiAnomalies, apiRunAnomalyDetection, type AnomalyResponse } from '../services/api'
+import EmptyState from '../components/EmptyState'
+import { formatDateIST, formatDateTimeIST } from '../lib/liveStatus'
 
 interface EnrichedAnomaly {
   observation_id: string
@@ -22,9 +24,14 @@ export default function Anomalies() {
   const [loading, setLoading] = useState(false)
   const [running, setRunning] = useState(false)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
+  // Failure is a red error state, never a green "success" message, and a
+  // failed load is not the same as "no anomalies found" (audit §2.4).
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState(false)
 
   async function load() {
     setLoading(true)
+    setLoadError(false)
     try {
       const resp = await apiAnomalies(token ?? undefined)
       setSummary(resp.summary ?? null)
@@ -53,6 +60,7 @@ export default function Anomalies() {
     } catch {
       setAnomalies([])
       setSummary(null)
+      setLoadError(true)
     } finally {
       setLoading(false)
     }
@@ -65,15 +73,16 @@ export default function Anomalies() {
   async function runDetection() {
     setRunning(true)
     setSuccessMsg(null)
+    setErrorMsg(null)
     try {
       await apiRunAnomalyDetection(token ?? undefined)
       await load()
       setSuccessMsg('Anomaly detection completed; results were refreshed from verified observations.')
+      setTimeout(() => setSuccessMsg(null), 6000)
     } catch {
-      setSuccessMsg('Anomaly detection could not run because verified fare data is unavailable.')
+      setErrorMsg('Anomaly detection could not run — the backend did not return a result. Check the fare feed and try again.')
     }
     setRunning(false)
-    setTimeout(() => setSuccessMsg(null), 6000)
   }
 
   function exportCsv() {
@@ -179,6 +188,8 @@ export default function Anomalies() {
           <button
             className="ap-button ap-button-secondary"
             onClick={exportCsv}
+            disabled={anomalies.length === 0}
+            title={anomalies.length === 0 ? 'No rows to export' : undefined}
             style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, minHeight: 36 }}
           >
             <Download size={13} />
@@ -187,9 +198,10 @@ export default function Anomalies() {
         </div>
       </div>
 
-      {/* Success Notification */}
+      {/* Success / error notifications — separate states, separate colours */}
       {successMsg && (
         <div
+          role="status"
           style={{
             padding: '12px 18px',
             borderRadius: 10,
@@ -208,14 +220,33 @@ export default function Anomalies() {
           <span>{successMsg}</span>
         </div>
       )}
+      {errorMsg && (
+        <div
+          role="alert"
+          style={{
+            padding: '12px 18px',
+            borderRadius: 10,
+            background: 'var(--color-danger-bg)',
+            border: '1px solid rgba(220, 38, 38, 0.3)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            color: 'var(--color-danger)',
+            fontSize: 13,
+            fontWeight: 600,
+            animation: 'fade-in 200ms ease',
+          }}
+        >
+          <XCircle size={16} />
+          <span>{errorMsg}</span>
+        </div>
+      )}
 
       {/* ── Summary Metrics ── */}
       <div
-        className="ap-card"
+        className="ap-card kpi-grid-4"
         style={{
           padding: 'var(--space-xl) var(--space-2xl)',
-          display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
           gap: 20,
         }}
       >
@@ -294,13 +325,13 @@ export default function Anomalies() {
               {anomalies.map(a => (
                   <tr key={a.observation_id}>
                     <td style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>
-                      {new Date(a.collected_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                      {formatDateTimeIST(a.collected_at)}
                     </td>
                     <td style={{ fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--color-brand-primary)' }}>
                       {a.route}
                     </td>
                     <td style={{ fontWeight: 600 }}>{a.airline}</td>
-                    <td style={{ fontFamily: 'var(--font-mono)' }}>{a.travel_date}</td>
+                    <td style={{ fontFamily: 'var(--font-mono)' }}>{formatDateIST(a.travel_date)}</td>
                     <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>T+{a.advance_days}</td>
                     <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 800, fontSize: 14 }}>
                       ₹{a.total_fare.toLocaleString('en-IN')}
@@ -326,6 +357,11 @@ export default function Anomalies() {
               ))}
             </tbody>
           </table>
+          {!loading && anomalies.length === 0 && (
+            loadError
+              ? <EmptyState tone="error" title="ANOMALY DATA UNAVAILABLE" detail="The anomaly detector did not return a result. Refresh to retry — this is a failed check, not a clean scan." />
+              : <EmptyState title="NO OUTLIERS DETECTED" detail="The detector scanned the verified observations and found no fare outside the z-score threshold. A clean result is normal." />
+          )}
         </div>
       </div>
     </div>

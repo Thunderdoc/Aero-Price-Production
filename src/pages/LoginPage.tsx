@@ -1,74 +1,46 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { AlertCircle, ArrowRight, CheckCircle, Eye, EyeOff, Lock, Mail, Plane, ShieldCheck, User, Users } from 'lucide-react'
-import { useAuth, type AuthWorkspace, type UserRole } from '../contexts/AuthContext'
+import { useAuth, type UserRole } from '../contexts/AuthContext'
 import type { Page } from '../components/AppShell'
 import { getFirebaseAuth, resendFirebaseVerification } from '../services/firebase'
 
-type AuthRole = 'USER' | 'DGCA' | 'ADMIN'
 const airportBg = '/airport-login-bg.jpg'
-const WORKSPACE_STORAGE_KEY = 'aeroprice_last_workspace'
 
-function loadLastWorkspace(): AuthRole {
-  const value = localStorage.getItem(WORKSPACE_STORAGE_KEY)
-  return value === 'USER' || value === 'DGCA' || value === 'ADMIN' ? value : 'USER'
-}
+// SIH evaluator demo account (seeded in the DB by backend/app/seed/evaluator.py).
+// The email is public demo metadata; the password is NOT in code — it comes
+// from the VITE_EVALUATOR_PASSWORD build variable when the deployer sets it.
+// Without that variable the demo card prefills the email and asks for the
+// password shared with evaluators out of band.
+const EVALUATOR_EMAIL = (import.meta.env.VITE_EVALUATOR_EMAIL as string | undefined) || 'evaluator@aeroprice.in'
+const EVALUATOR_DEMO_PASSWORD = import.meta.env.VITE_EVALUATOR_PASSWORD as string | undefined
 
-const ROLE_CONFIG: Record<AuthRole, {
-  label: string
-  expectedRoles: UserRole[]
-  emailLabel: string
-  emailPlaceholder: string
-  buttonLabel: string
-  loadingLabel: string
-  destination: Page
-}> = {
-  USER: {
-    label: 'User',
-    expectedRoles: ['PUBLIC'],
-    emailLabel: 'Email Address',
-    emailPlaceholder: 'your@email.com',
-    buttonLabel: 'Sign In',
-    loadingLabel: 'Signing in...',
-    destination: 'overview',
-  },
-  DGCA: {
-    label: 'DGCA',
-    expectedRoles: ['ANALYST'],
-    emailLabel: 'DGCA ID / Email',
-    emailPlaceholder: 'dgca@organization.in',
-    buttonLabel: 'DGCA Sign In',
-    loadingLabel: 'Authenticating...',
-    destination: 'government',
-  },
-  ADMIN: {
-    label: 'Admin',
-    expectedRoles: ['ADMIN'],
-    emailLabel: 'Admin Email / ID',
-    emailPlaceholder: 'admin@aeroprice.in',
-    buttonLabel: 'Admin Sign In',
-    loadingLabel: 'Verifying access...',
-    destination: 'admin',
-  },
+// Single sign-in: the role is resolved post-auth from the server, and the
+// landing page follows the role — there are no role tabs anymore.
+function destinationForRole(role?: UserRole | null): Page {
+  if (role === 'ADMIN') return 'admin'
+  if (role === 'ANALYST') return 'government'
+  return 'overview'
 }
 
 function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())
 }
 
+// AuthContext now returns status-specific messages (401 vs 429 vs 5xx vs
+// network), so the login page passes them through instead of collapsing
+// every failure into "Incorrect email or password".
 function safeAuthError(message?: string) {
   if (!message) return 'Incorrect email or password.'
-  if (/not authorized|workspace|Google sign-in|Firebase|too many (?:requests|login attempts|sign-in attempts)|verification|verify your email|backend sign-in failed|timed out|this account is disabled/i.test(message)) return message
-  if (/network|fetch|connect/i.test(message)) return 'Unable to connect. Please try again.'
-  return 'Incorrect email or password.'
+  return message
 }
 
-export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void }) {
-  const { login, loginWithGoogle, createAccount, resetPassword, logout } = useAuth()
-  const [activeRole, setActiveRole] = useState<AuthRole>(loadLastWorkspace)
+export default function LoginPage({ onLogin, onGuest }: { onLogin: (page?: Page) => void; onGuest?: () => void }) {
+  const { login, loginWithGoogle, createAccount, resetPassword, isBackendAuth } = useAuth()
   const [authMode, setAuthMode] = useState<'login' | 'create'>('login')
   const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
   const [pass, setPass] = useState('')
+  const passwordRef = useRef<HTMLInputElement>(null)
   // Do not retain a personal account on a shared device unless the person
   // deliberately opts in. Password values are never stored by this app.
   const [rememberMe, setRememberMe] = useState(false)
@@ -103,16 +75,13 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
     // Initialize Firebase persistence while the user fills in the form, not
     // after Submit. This does not authenticate or change account permissions.
     try { getFirebaseAuth() } catch { /* The selected login action reports configuration errors. */ }
+    // Drop the deleted role-tab preference if an older build left one.
+    try { localStorage.removeItem('aeroprice_last_workspace') } catch { /* ignore */ }
   }, [])
 
-  const role = ROLE_CONFIG[activeRole]
-  const workspace = activeRole as AuthWorkspace
   const authBusy = loading || googleLoading || resetLoading
 
-  const submitLabel = useMemo(
-    () => (loading ? role.loadingLabel : role.buttonLabel),
-    [loading, role.buttonLabel, role.loadingLabel],
-  )
+  const submitLabel = loading ? 'Signing in...' : 'Sign In'
 
   function resetFeedback() {
     setError('')
@@ -149,7 +118,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
         return
       }
       setLoading(true)
-      const result = await createAccount(fullName.trim(), trimmedEmail, pass, workspace)
+      const result = await createAccount(fullName.trim(), trimmedEmail, pass)
       setLoading(false)
       if (!result.success) {
         setError(result.error || 'Unable to create account.')
@@ -157,12 +126,16 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
       }
       setAuthMode('login')
       setPass('')
-      setNotice(`Verification email sent to ${trimmedEmail}. Open the link first, then return here to sign in.`)
+      // Mode-accurate: backend registration sends no email at all, so never
+      // claim a verification email was sent in backend mode.
+      setNotice(isBackendAuth
+        ? `Account created for ${trimmedEmail}. Sign in now with your email and password.`
+        : `Verification email sent to ${trimmedEmail}. Open the link first, then return here to sign in.`)
       return
     }
 
     setLoading(true)
-    const result = await login(trimmedEmail, pass, rememberMe, workspace)
+    const result = await login(trimmedEmail, pass, rememberMe)
     setLoading(false)
 
     if (!result.success) {
@@ -175,37 +148,51 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
       return
     }
 
-    const authedRole = result.user?.role ?? null
-    if (!authedRole || !role.expectedRoles.includes(authedRole)) {
-      logout()
-      setError(`This account is not authorized for the ${role.label} workspace. Use the correct approved account.`)
-      return
-    }
-
-    onLogin(role.destination)
+    // Role is resolved post-auth: land by the server-returned role. A valid
+    // login is never undone here.
+    onLogin(destinationForRole(result.user?.role))
   }
 
   async function handleGoogleAuth() {
     if (authBusy) return
     resetFeedback()
     setGoogleLoading(true)
-    const result = await loginWithGoogle(workspace, pass)
+    const result = await loginWithGoogle(undefined, pass)
     setGoogleLoading(false)
     if (result.success) {
-      const stored = localStorage.getItem('aeroprice_auth')
+      const stored = localStorage.getItem('aeroprice_auth') ?? sessionStorage.getItem('aeroprice_session_auth')
       const authedRole = stored ? JSON.parse(stored).role as UserRole : null
       // Redirect sign-in navigates away; AuthProvider restores the verified
       // Firebase session when it returns.
       if (!stored) return
-      if (!authedRole || !role.expectedRoles.includes(authedRole)) {
-        logout()
-        setError(`This Google account is not authorized for the ${role.label} workspace.`)
-        return
-      }
-      onLogin(role.destination)
+      onLogin(destinationForRole(authedRole))
       return
     }
     setError(result.error || 'Unable to connect to Google sign-in. Please try again.')
+  }
+
+  async function handleEvaluatorLogin() {
+    if (authBusy) return
+    resetFeedback()
+    if (!EVALUATOR_DEMO_PASSWORD) {
+      // This build carries no demo password: prefill the evaluator email and
+      // let the evaluator type the password shared with them out of band.
+      setEmail(EVALUATOR_EMAIL)
+      setAuthMode('login')
+      setNotice('Evaluator account selected. Enter the evaluator password shared with SIH evaluators, then sign in.')
+      passwordRef.current?.focus()
+      return
+    }
+    setLoading(true)
+    // Demo sign-in is session-only: never persist an evaluator session on a
+    // shared or judging machine.
+    const result = await login(EVALUATOR_EMAIL, EVALUATOR_DEMO_PASSWORD, false)
+    setLoading(false)
+    if (!result.success) {
+      setError(safeAuthError(result.error))
+      return
+    }
+    onLogin(destinationForRole(result.user?.role))
   }
 
   async function handleForgotPassword(e: React.MouseEvent<HTMLAnchorElement>) {
@@ -873,31 +860,15 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
           <h2>Welcome back</h2>
           <p className="ap-card-sub">{authMode === 'login' ? 'Sign in to access AeroPrice.' : 'Create your verified AeroPrice account.'}</p>
 
-          <div className="ap-tabs" role="tablist" aria-label="Choose workspace role">
-            {(Object.keys(ROLE_CONFIG) as AuthRole[]).map((key) => (
-              <button
-                key={key}
-                type="button"
-                role="tab"
-                aria-selected={activeRole === key}
-                disabled={authBusy}
-                className={`ap-tab${activeRole === key ? ' active' : ''}`}
-                onClick={() => { setActiveRole(key); localStorage.setItem(WORKSPACE_STORAGE_KEY, key); if (key === 'ADMIN') setAuthMode('login'); resetFeedback() }}
-              >
-                {ROLE_CONFIG[key].label}
-              </button>
-            ))}
-          </div>
-
           <div className="ap-mode-toggle" aria-label="Choose auth mode">
             <button type="button" disabled={authBusy} className={authMode === 'login' ? 'active' : ''} onClick={() => { setAuthMode('login'); resetFeedback() }}>Sign in</button>
-            {activeRole !== 'ADMIN' && (
-              <button type="button" disabled={authBusy} className={authMode === 'create' ? 'active' : ''} onClick={() => { setAuthMode('create'); resetFeedback() }}>Create account</button>
-            )}
-            {activeRole === 'ADMIN' && (
-              <button type="button" disabled style={{ opacity: 0.45, cursor: 'not-allowed' }}>Admin by invite</button>
-            )}
+            <button type="button" disabled={authBusy} className={authMode === 'create' ? 'active' : ''} onClick={() => { setAuthMode('create'); resetFeedback() }}>Create account</button>
           </div>
+
+          <p style={{ margin: '0 0 10px', color: '#526079', fontSize: 12, lineHeight: 1.45 }}>
+            New accounts start as public users. Analyst and admin access is invite-only — granted by an administrator.
+            SIH prototype — demo analyst role, not a government login.
+          </p>
 
           {error && (
             <div className="ap-message error" role="alert">
@@ -932,7 +903,7 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
               </div>
             )}
             <div className="ap-field">
-              <label htmlFor="ap-email">{role.emailLabel}</label>
+              <label htmlFor="ap-email">Email Address</label>
               <div className="ap-input-wrap">
                 <Mail size={18} aria-hidden="true" />
                 <input
@@ -940,12 +911,10 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
                   className="ap-input"
                   type="email"
                   inputMode="email"
-                  autoComplete="off"
-                  data-lpignore="true"
-                  data-1p-ignore="true"
+                  autoComplete="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder={role.emailPlaceholder}
+                  placeholder="your@email.com"
                 />
               </div>
             </div>
@@ -956,11 +925,10 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
                 <Lock size={18} aria-hidden="true" />
                 <input
                   id="ap-password"
+                  ref={passwordRef}
                   className="ap-input"
                   type={showPass ? 'text' : 'password'}
-                  autoComplete="new-password"
-                  data-lpignore="true"
-                  data-1p-ignore="true"
+                  autoComplete={authMode === 'create' ? 'new-password' : 'current-password'}
                   value={pass}
                   onChange={(e) => setPass(e.target.value)}
                   placeholder="Enter your password"
@@ -1001,6 +969,31 @@ export default function LoginPage({ onLogin }: { onLogin: (page?: Page) => void 
               </svg>
               {googleLoading ? 'Connecting...' : 'Continue with Google'}
           </button>
+
+          <div style={{ marginTop: 12, padding: '12px 14px', borderRadius: 13, border: '1px solid #bfdbfe', background: '#eff6ff' }}>
+            <div style={{ fontSize: 13, fontWeight: 850, color: '#0f1b46' }}>SIH evaluator demo</div>
+            <div style={{ marginTop: 3, fontSize: 12, lineHeight: 1.45, color: '#526079' }}>
+              Sign in with the seeded demo analyst account ({EVALUATOR_EMAIL}) to review forecasts, exports and government data.
+            </div>
+            <button className="ap-google" type="button" onClick={handleEvaluatorLogin} disabled={authBusy} style={{ marginTop: 10 }}>
+              <ShieldCheck size={17} />
+              <span>{loading ? 'Signing in...' : 'Sign in as evaluator'}</span>
+            </button>
+            <div style={{ marginTop: 8, fontSize: 11, lineHeight: 1.4, color: '#64748b' }}>
+              SIH prototype — demo analyst role, not a government login.
+            </div>
+          </div>
+
+          {onGuest && (
+            <button
+              type="button"
+              onClick={onGuest}
+              disabled={authBusy}
+              style={{ width: '100%', marginTop: 12, border: 0, background: 'transparent', color: '#075be8', fontWeight: 750, fontSize: 13, cursor: 'pointer', padding: 0 }}
+            >
+              Browse public data without an account →
+            </button>
+          )}
 
           <div className="ap-security" aria-label="Security notes">
             <div><ShieldCheck size={22} /><span>Secure access</span></div>

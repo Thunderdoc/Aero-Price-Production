@@ -15,6 +15,7 @@ from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func
 from app.models.fare import FareObservation
+from app.services.index_engine import INDEX_ELIGIBLE_ORIGINS
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +83,10 @@ async def _get_fare_series(
 ) -> list[tuple[str, float]]:
     """
     Return (date_str, median_fare) tuples for the route/window/cabin bucket,
-    ordered by date ascending. Real observations only.
+    ordered by date ascending. Index-eligible origins only (REAL, OFFICIAL,
+    PUBLIC_INTERFACE) — the same gate as the Jevons index, so forecasts train
+    on the disclosed demo fare source. SANDBOX_TEST / GENERATED_TEST never
+    feed a forecast.
     """
     since = datetime.now(timezone.utc) - timedelta(days=lookback_days)
     rows = await db.execute(
@@ -94,7 +98,7 @@ async def _get_fare_series(
             FareObservation.route == route,
             FareObservation.advance_days == advance_days,
             FareObservation.cabin == cabin,
-            FareObservation.data_origin.in_(["REAL", "OFFICIAL"]),
+            FareObservation.data_origin.in_(list(INDEX_ELIGIBLE_ORIGINS)),
             FareObservation.is_valid == True,
             FareObservation.collected_at >= since,
         ))

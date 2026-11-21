@@ -12,18 +12,34 @@ down_revision = "0001"
 branch_labels = None
 depends_on = None
 
+# (column, new width). Same list drives both dialects below.
+_WIDENED = [
+    ("airline", 64),
+    ("flight_number", 32),
+    ("departure_time", 32),
+    ("arrival_time", 32),
+    ("fare_family", 32),
+    ("cabin", 16),
+    ("availability_status", 32),
+    ("source", 64),
+    ("data_origin", 32),
+    ("collector_version", 16),
+]
+
 
 def upgrade() -> None:
-    op.alter_column("fare_observations", "airline", type_=sa.String(64))
-    op.alter_column("fare_observations", "flight_number", type_=sa.String(32))
-    op.alter_column("fare_observations", "departure_time", type_=sa.String(32))
-    op.alter_column("fare_observations", "arrival_time", type_=sa.String(32))
-    op.alter_column("fare_observations", "fare_family", type_=sa.String(32))
-    op.alter_column("fare_observations", "cabin", type_=sa.String(16))
-    op.alter_column("fare_observations", "availability_status", type_=sa.String(32))
-    op.alter_column("fare_observations", "source", type_=sa.String(64))
-    op.alter_column("fare_observations", "data_origin", type_=sa.String(32))
-    op.alter_column("fare_observations", "collector_version", type_=sa.String(16))
+    bind = op.get_bind()
+    if bind.dialect.name == "sqlite":
+        # SQLite has no ALTER COLUMN ... TYPE: batch mode rewrites the table
+        # (copy → drop → rename) with the new widths. Without this branch
+        # `alembic upgrade head` fails on the dev SQLite DB before reaching
+        # later migrations (fixed 21 Nov 2026, Phase 5).
+        with op.batch_alter_table("fare_observations") as batch_op:
+            for name, width in _WIDENED:
+                batch_op.alter_column(name, type_=sa.String(width))
+    else:
+        for name, width in _WIDENED:
+            op.alter_column("fare_observations", name, type_=sa.String(width))
 
 
 def downgrade() -> None:

@@ -2,6 +2,9 @@
 
 The worker must be explicitly configured and accept one JSON request on stdin,
 then write one JSON response on stdout. No command means NOT_CONFIGURED.
+
+Provenance: worker results are public-interface fares, labelled
+PUBLIC_INTERFACE, never REAL.
 """
 import asyncio
 import hashlib
@@ -9,8 +12,9 @@ import json
 import shlex
 import time
 
-from app.collectors.base import CollectionResult, FareRecord, FareSourceAdapter
+from app.collectors.base import CollectionResult, FareRecord, FareSourceAdapter, redact_credentials
 from app.core.config import settings
+from app.processing.provenance import PUBLIC_INTERFACE
 
 
 class GoogleFlightsWorkerAdapter(FareSourceAdapter):
@@ -44,7 +48,7 @@ class GoogleFlightsWorkerAdapter(FareSourceAdapter):
             stops=int(item.get("stops") or 0), cabin="ECONOMY",
             source=GoogleFlightsWorkerAdapter.source_id,
             source_url=item.get("booking_url") or item.get("source_url"),
-            data_origin="REAL", raw_hash=hashlib.sha256(raw.encode()).hexdigest(),
+            data_origin=PUBLIC_INTERFACE, raw_hash=hashlib.sha256(raw.encode()).hexdigest(),
         )
 
     async def collect(self, route: str, travel_date: str, advance_days: int,
@@ -97,4 +101,5 @@ class GoogleFlightsWorkerAdapter(FareSourceAdapter):
             self.source_id, route, travel_date, advance_days,
             "SUCCESS" if records else "NO_DATA", records=records,
             records_rejected=max(0, len(items)-len(records)),
+            raw_response=redact_credentials(stdout.decode(errors="replace")),
             latency_ms=int((time.monotonic()-started)*1000))
