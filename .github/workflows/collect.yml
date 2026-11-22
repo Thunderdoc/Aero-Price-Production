@@ -1,0 +1,130 @@
+name: Collect airfares (chunked daily sweep)
+
+# Free collection worker for AeroPrice (SIH26056). A full collection run
+# (19 routes x 5 windows x 11 adapters) cannot finish inside Vercel's 60 s
+# function limit, so this workflow drives the chunked endpoints instead: one
+# HTTP call per route+window, each completing well under 60 s, then a gov
+# refresh and a finalize step (index publish + price alerts).
+#
+# Required repo secrets (Settings > Secrets and variables > Actions):
+#   AEROPRICE_API_BASE_URL — e.g. https://aero-price-production.vercel.app
+#   AEROPRICE_CRON_SECRET  — MUST be the same value as the CRON_SECRET env var
+#                            in Vercel (set by Ankit; code fails closed without it)
+#
+# Do NOT run this and the APScheduler sweep (local/Render) at the same time:
+# the server-side run lock makes the second sweep fail fast with 409, which
+# this workflow treats as "another sweep is running" and exits cleanly.
+#
+# Schedule: 01:30 UTC daily (07:00 IST) — after the midnight-UTC Vercel cron,
+# which is only a lightweight trigger (reaper + index publish + alerts).
+
+on:
+  schedule:
+    - cron: "30 1 * * *"
+  workflow_dispatch:
+    inputs:
+      route:
+        description: "Single route to collect (e.g. DEL-BOM). Leave empty for the full sweep."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aeroprice-collection
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    name: Chunked fare sweep
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      API_BASE_URL: ${{ secrets.AEROPRICE_API_BASE_URL }}
+      CRON_SECRET: ${{ secrets.AEROPRICE_CRON_SECRET }}
+      SINGLE_ROUTE: ${{ inputs.route }}
+    steps:
+      - name: Check secrets are configured
+        run: |
+          if [ -z "$API_BASE_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "::error::Set AEROPRICE_API_BASE_URL and AEROPRICE_CRON_SECRET repo secrets. CRON_SECRET must match the Vercel env var of the same name."
+            exit 1
+          fi
+
+      - name: Fetch chunk plan from the API
+        id: plan
+        run: |
+          curl --fail --silent --show-error --max-time 30 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$API_BASE_URL/api/collections/plan" > plan.json
+          echo "Plan: $(jq -c '{routes: (.routes | length), windows: .advance_windows, chunks: .chunks}' plan.json)"
+          if [ -n "$SINGLE_ROUTE" ]; then
+            echo "$SINGLE_ROUTE" | tr '[:lower:]' '[:upper:]' > routes.txt
+          else
+            jq -r '.routes[]' plan.json > routes.txt
+          fi
+          jq -r '.advance_windows[]' plan.json > windows.txt
+          echo "routes=$(wc -l < routes.txt) windows=$(wc -l < windows.txt)"
+
+      - name: Collect chunks (one route+window per call, throttled)
+        run: |
+          # Throttle: 5 s between chunk calls. The public-interface source
+          # (fast-flights) must not be hammered, and each chunk itself takes
+          # seconds — 95 chunks take ~15-25 min total, inside the job timeout.
+          succeeded=0
+          failed=0
+          failed_chunks=""
+          while read -r route; do
+            while read -r window; do
+              http_code=$(curl --silent --show-error --max-time 55 --output chunk.json --write-out "%{http_code}" \
+                -X POST -H "Authorization: Bearer $CRON_SECRET" -H "Content-Type: application/json" \
+                -d "{\"route\": \"$route\", \"advance_days\": $window}" \
+                "$API_BASE_URL/api/collections/chunk" || echo "000")
+              if [ "$http_code" = "200" ]; then
+                succeeded=$((succeeded + 1))
+              elif [ "$http_code" = "409" ]; then
+                # Another sweep holds the run lock — stop cleanly, do not hammer.
+                echo "Run lock held by another sweep (409). Stopping this run; the other sweep owns collection today."
+                echo "succeeded=$succeeded failed=$failed" >> "$GITHUB_OUTPUT"
+                exit 0
+              elif [ "$http_code" = "503" ]; then
+                echo "::error::Collection endpoint returned 503 (CRON_SECRET unset on the server or collection disabled). See chunk.json."
+                cat chunk.json
+                exit 1
+              else
+                failed=$((failed + 1))
+                failed_chunks="$failed_chunks $route/T+$window($http_code)"
+                echo "::warning::Chunk $route T+$window failed (HTTP $http_code); continuing with the next chunk."
+              fi
+              sleep 5
+            done < windows.txt
+          done < routes.txt
+          echo "Chunks: $succeeded succeeded, $failed failed."
+          if [ -n "$failed_chunks" ]; then echo "Failed chunks:$failed_chunks"; fi
+          if [ "$succeeded" -eq 0 ]; then
+            echo "::error::Every chunk failed — no fares were collected. Check the API logs and CRON_SECRET."
+            exit 1
+          fi
+
+      - name: Refresh government datasets
+        # Best-effort: gov sources are monthly context data, and a slow or
+        # down publisher must not fail the fare sweep. Sources without
+        # credentials report NOT_CONFIGURED honestly.
+        continue-on-error: true
+        run: |
+          curl --fail --silent --show-error --max-time 55 \
+            -X POST -H "Authorization: Bearer $CRON_SECRET" \
+            "$API_BASE_URL/api/collections/gov-refresh"
+
+      - name: Finalize (publish index + evaluate price alerts)
+        run: |
+          curl --fail --silent --show-error --max-time 55 \
+            -X POST -H "Authorization: Bearer $CRON_SECRET" \
+            "$API_BASE_URL/api/collections/finalize"
+
+      - name: Health check (informational)
+        continue-on-error: true
+        run: |
+          curl --silent --show-error --max-time 30 "$API_BASE_URL/api/health" | head -c 2000
+          echo
