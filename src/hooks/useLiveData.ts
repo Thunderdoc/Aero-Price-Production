@@ -14,7 +14,7 @@
  * No synthetic price variance. No fake LIVE indicators.
  */
 import { useState, useEffect } from 'react'
-import { apiDashboard, BASE_URL, isBackendAvailable } from '../services/api'
+import { apiAviationLive, apiDashboard, isBackendAvailable } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
 
 type Corridor = never
@@ -92,15 +92,16 @@ export function useLiveData(): UseLiveDataResult {
       // The radar feed is independent of the fare dashboard: a radar failure
       // must not flip the whole connection status to offline.
       try {
-        const flightResponse = await fetch(`${BASE_URL}/api/aviation/live?limit=150`, { signal: AbortSignal.timeout(8000) })
-        if (!flightResponse.ok) throw new Error('aviation feed unavailable')
-        const flightBody = await flightResponse.json() as { aircraft?: Array<Record<string, unknown>> }
-        const aircraft = (flightBody.aircraft ?? []).map((item, index) => ({
-          icao24: String(item.icao24 ?? item.registration ?? `live-${index}`),
-          callsign: String(item.callsign ?? item.registration ?? 'UNKNOWN').trim(),
-          lat: Number(item.latitude ?? item.lat), lng: Number(item.longitude ?? item.lng),
-          altitude: Number(item.altitude_ft ?? item.altitude ?? 0), velocity: Number(item.ground_speed_kts ?? item.velocity ?? 0),
-          heading: Number(item.track_deg ?? item.heading ?? 0), origin_country: String(item.origin_country ?? 'Unknown'),
+        // M2: /api/aviation/live requires auth — the old bare fetch() sent no
+        // Authorization header and 401d. Route through the authed helper
+        // with this hook's token, like apiDashboard above.
+        const flightBody = await apiAviationLive(token ?? undefined)
+        const aircraft = flightBody.aircraft.map((item, index) => ({
+          icao24: item.icao24 || item.registration || `live-${index}`,
+          callsign: (item.callsign || item.registration || 'UNKNOWN').trim(),
+          lat: Number(item.latitude), lng: Number(item.longitude),
+          altitude: Number(item.altitude_ft ?? 0), velocity: Number(item.ground_speed_kts ?? 0),
+          heading: Number(item.track_deg ?? 0), origin_country: 'Unknown',
         })).filter(item => Number.isFinite(item.lat) && Number.isFinite(item.lng))
         setLiveFlights(aircraft)
       } catch {

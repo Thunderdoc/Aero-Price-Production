@@ -37,6 +37,7 @@ import logging
 from datetime import datetime, timezone, timedelta, date
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+from app.services.source_health import LIVE_FRESHNESS
 
 from app.core.config import settings
 from app.models.fare import FareObservation, RawFarePayload
@@ -439,13 +440,25 @@ async def _upsert_source_health(
             row.latency_ms_avg = result.latency_ms
         row.auth_status = "VALID"
     elif result.status == "NO_DATA":
-        row.status = "DEGRADED"
+        # The request succeeded, just no results for this route/window — an
+        # empty route is not source degradation, so the status is preserved:
+        # a LIVE source that collected fares minutes ago must not flip to
+        # DEGRADED because its last chunk had no fares (22 Nov 2026: the
+        # fast-flights row ended the sweep DEGRADED and /api/health reported
+        # STALE_DATA despite 387 fresh fares). last_success still refreshes
+        # (successful contact) and a stale failure is cleared.
         row.last_success = now  # request succeeded, just no results
         row.last_failure = None
         row.failure_reason = result.error
         row.auth_status = "VALID"
         if result.latency_ms:
             row.latency_ms_avg = result.latency_ms
+    elif result.status == "PARTIAL":
+        # Aggregators return PARTIAL for an empty result (zero records) —
+        # same as NO_DATA but without refreshing last_success, so a source
+        # that goes dry still expires out of the LIVE window honestly.
+        # Status is preserved; only the attempt is recorded.
+        pass
     elif result.status == "CHALLENGE_DETECTED":
         row.status = "CHALLENGE_DETECTED"
         row.last_failure = now
@@ -454,7 +467,20 @@ async def _upsert_source_health(
     elif result.status == "NOT_CONFIGURED":
         row.status = "NOT_CONFIGURED"
     elif result.status in ("FAILED", "TIMEOUT"):
-        row.status = "DEGRADED"
+        # One failed call amid a successful sweep is a blip, not
+        # degradation: a LIVE source with a fresh success keeps its status
+        # (the 24h window on last_success is the honest expiry). Only a
+        # source with no fresh success degrades. (SQLite returns naive
+        # datetimes — normalize like is_live_now does.)
+        last_success = row.last_success
+        if last_success is not None and last_success.tzinfo is None:
+            last_success = last_success.replace(tzinfo=timezone.utc)
+        if not (
+            row.status == "LIVE"
+            and last_success is not None
+            and now - last_success <= LIVE_FRESHNESS
+        ):
+            row.status = "DEGRADED"
         row.last_failure = now
         row.failure_reason = result.error
 

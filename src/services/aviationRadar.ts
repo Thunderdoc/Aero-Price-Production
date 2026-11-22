@@ -1,12 +1,13 @@
 import { useEffect, useSyncExternalStore } from 'react'
-import { BASE_URL } from './api'
+import { apiAviationLive, getStoredSessionToken, type AviationAircraft } from './api'
+import { useAuth } from '../contexts/AuthContext'
 
-export type Aircraft = {
-  icao24: string; callsign: string; registration: string; aircraft_type: string
-  latitude: number; longitude: number; altitude_ft: number | null
-  ground_speed_kts: number | null; track_deg: number | null
-  vertical_rate_fpm: number | null; on_ground: boolean; seen_seconds: number | null
-}
+// D2: a CACHED poll used to retry after 3 s, hammering the backend at ~20
+// req/min against its 30/min per-user limit while the provider was degraded.
+// 20 s still recovers well ahead of the 30 s poll interval.
+export const CACHED_RETRY_MS = 20_000
+
+export type Aircraft = AviationAircraft
 export type RadarSnapshot = {
   aircraft: Aircraft[]; source: string; retrievedAt: string | null
   status: 'loading' | 'connected' | 'cached' | 'empty' | 'unavailable'; refreshing: boolean
@@ -18,6 +19,14 @@ let pending: Promise<void> | null = null
 let timer: ReturnType<typeof setInterval> | undefined
 let retryTimer: ReturnType<typeof setTimeout> | undefined
 let consumers = 0
+// The signed-in user's token, handed to this store by useAviationRadar (the
+// same token AuthContext gives every other authed call). The store itself
+// lives outside React, so the hook registers the token and refreshRadar —
+// including the 30 s interval and manual retries — reuses it.
+let authToken: string | undefined
+export function setRadarAuthToken(token: string | null) {
+  authToken = token ?? undefined
+}
 const listeners = new Set<() => void>()
 function publish(next: RadarSnapshot) { snapshot = next; listeners.forEach(listener => listener()) }
 
@@ -26,12 +35,14 @@ export function refreshRadar(): Promise<void> {
   publish({ ...snapshot, refreshing: true })
   pending = (async () => {
     try {
-      const response = await fetch(`${BASE_URL}/api/aviation/live?limit=150`, { signal: AbortSignal.timeout(45000) })
-      if (!response.ok) throw new Error('Tracking feed unavailable')
-      const body = await response.json()
+      // M2: /api/aviation/live requires auth — the old bare fetch() sent no
+      // Authorization header and 401d on every poll. Route through the
+      // authed helper with the signed-in user's token (hook-registered, or
+      // the persisted session token for direct refreshRadar() calls).
+      const body = await apiAviationLive(authToken ?? getStoredSessionToken())
       if (!Array.isArray(body.aircraft) || !['LIVE_ADSB', 'LIVE_OPENSKY', 'LIVE_TRACKING_API'].includes(body.data_origin)) throw new Error('Invalid tracking response')
       const ids = new Set<string>()
-      const aircraft = (body.aircraft as Aircraft[]).filter(a => {
+      const aircraft = body.aircraft.filter(a => {
         const id = a.icao24 || a.callsign
         if (!id || ids.has(id) || !Number.isFinite(a.latitude) || !Number.isFinite(a.longitude)) return false
         ids.add(id); return true
@@ -43,7 +54,7 @@ export function refreshRadar(): Promise<void> {
       // Keep cached positions visible, but actively retry the provider so the
       // UI promotes them to LIVE only after a genuinely fresh response.
       if (providerStatus === 'CACHED' && consumers > 0 && !retryTimer) {
-        retryTimer = setTimeout(() => { retryTimer = undefined; void refreshRadar() }, 3000)
+        retryTimer = setTimeout(() => { retryTimer = undefined; void refreshRadar() }, CACHED_RETRY_MS)
       }
     } catch {
       const ageMs = snapshot.retrievedAt ? Date.now() - Date.parse(snapshot.retrievedAt) : Number.POSITIVE_INFINITY
@@ -55,6 +66,11 @@ export function refreshRadar(): Promise<void> {
 }
 export function useAviationRadar(enabled = true) {
   const state = useSyncExternalStore(listener => { listeners.add(listener); return () => { listeners.delete(listener) } }, () => snapshot)
+  const { token } = useAuth()
+  // Hand the store the signed-in user's token (M2) and keep it current when
+  // the session refreshes. This effect is separate from the poll effect so a
+  // token change does not restart the 30 s interval.
+  useEffect(() => { setRadarAuthToken(token) }, [token])
   useEffect(() => {
     if (!enabled) return
     consumers++

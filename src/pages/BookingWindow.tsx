@@ -32,7 +32,11 @@ export default function BookingWindow() {
     setLoading(true)
     setError(null)
     setFetchFailed(false)
-    apiFares({ route: activeRoute, data_origin: 'REAL', limit: 1000 }, token ?? undefined)
+    // P2: no data_origin filter — the old REAL-only filter matched zero rows
+    // (the live DB holds PUBLIC_INTERFACE fares) and left this page
+    // permanently empty. The backend default already returns the
+    // index-eligible set (REAL / OFFICIAL / PUBLIC_INTERFACE).
+    apiFares({ route: activeRoute, limit: 1000 }, token ?? undefined)
       .then(result => {
         if (!active) return
         setObservations(result.observations ?? [])
@@ -51,11 +55,15 @@ export default function BookingWindow() {
     : null
 
   const windowData = useMemo(() => WINDOWS.map(window => {
-    const values = observations.filter(item => item.advance_days === window.advanceDays).map(item => Number(item.total_fare)).filter(Number.isFinite).sort((a, b) => a - b)
+    const rows = observations.filter(item => item.advance_days === window.advanceDays)
+    const values = rows.map(item => Number(item.total_fare)).filter(Number.isFinite).sort((a, b) => a - b)
+    // The true origins behind this window's median — never hardcoded REAL:
+    // the rows are whatever index-eligible origins the backend returned.
+    const origins = [...new Set(rows.map(item => item.data_origin).filter(Boolean))]
     // Shared median (average of two middle values) — this page previously
     // used the upper median, so the same route showed a different "median"
     // here than everywhere else (audit §1.7).
-    return { ...window, median: median(values), count: values.length }
+    return { ...window, median: median(values), count: values.length, origins }
   }), [observations])
   const baseRef = windowData[0]?.median ?? null
   function getMultiplier(windowIdx: number) {
@@ -75,7 +83,7 @@ export default function BookingWindow() {
           <LiveBadge check={feedCheck} label={feedCheck.ok ? 'VERIFIED ROUTE OBSERVATIONS' : undefined} />
         </div>
         <p style={{ margin:0, fontSize:12, color:'var(--color-text-secondary)' }}>
-          Advance-purchase fare comparison from stored REAL observations for the selected route.
+          Advance-purchase fare comparison from stored verified observations for the selected route.
         </p>
       </div>
 
@@ -88,7 +96,7 @@ export default function BookingWindow() {
           <Info size={14} style={{ color: error ? 'var(--color-warning)' : feedCheck.ok ? 'var(--color-success)' : 'var(--color-text-tertiary)', flexShrink:0, marginTop:1 }}/>
           <div style={{ fontSize:12, color:'var(--color-text-primary)', lineHeight:1.6 }}>
             <strong style={{ color: 'var(--color-brand-primary)' }}>BACKEND-REPORTED FARE DATA.</strong>{' '}
-            {error ?? `Values below are calculated only from verified REAL observations returned for ${activeRoute}. Missing booking windows remain unavailable; no estimates are inserted.`}
+            {error ?? `Values below are calculated only from verified observations returned for ${activeRoute}. Missing booking windows remain unavailable; no estimates are inserted.`}
           </div>
         </div>
 
@@ -107,7 +115,7 @@ export default function BookingWindow() {
           ))}
         </div>
         <div style={{ marginBottom: 16, padding: '10px 12px', borderRadius: 9, background: loading ? 'var(--color-info-bg)' : error ? 'var(--color-warning-bg)' : 'var(--color-surface-secondary)', color: error ? 'var(--color-warning)' : 'var(--color-text-secondary)', fontSize: 11, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <span>{loading ? 'Loading verified route observations…' : error ?? `${observations.length.toLocaleString('en-IN')} verified REAL observations loaded for ${activeRoute}.`}</span>
+          <span>{loading ? 'Loading verified route observations…' : error ?? `${observations.length.toLocaleString('en-IN')} verified observations loaded for ${activeRoute}.`}</span>
           {newestCollectedAt && <DataFreshness minutesAgo={Math.max(0, Math.floor((Date.now() - new Date(newestCollectedAt).getTime()) / 60000))} />}
         </div>
 
@@ -154,7 +162,7 @@ export default function BookingWindow() {
                     <span style={{ fontFamily:'var(--font-mono)', color:'var(--color-text-secondary)' }}>
                       {medianFare == null ? '—' : `₹${Math.round(medianFare).toLocaleString('en-IN')}`}
                     </span>
-                    <span style={{ fontSize:9, color:'var(--color-text-tertiary)', marginLeft:4 }}>REAL</span>
+                    {(windowData[wi]?.origins ?? []).length > 0 && <span style={{ fontSize:9, color:'var(--color-text-tertiary)', marginLeft:4 }}>{windowData[wi].origins.join(' · ')}</span>}
                   </div>
                   <span style={{ fontSize:9, fontWeight:700, padding:'1px 6px', borderRadius:99,
                     background:'var(--color-brand-muted)', color:'var(--color-brand-primary)',
@@ -281,7 +289,7 @@ export default function BookingWindow() {
                   <td style={{ padding:'10px 14px', fontSize:12, color:'var(--color-text-secondary)',
                     fontFamily:'var(--font-mono)' }}>
                     {medianFare == null ? '—' : `₹${Math.round(medianFare).toLocaleString('en-IN')}`}
-                    <span style={{ fontSize:9, marginLeft:5, color:'var(--color-info)', opacity:0.8 }}>REAL</span>
+                    {(windowData[i]?.origins ?? []).length > 0 && <span style={{ fontSize:9, marginLeft:5, color:'var(--color-info)', opacity:0.8 }}>{windowData[i].origins.join(' · ')}</span>}
                   </td>
                   <td style={{ padding:'10px 14px', fontSize:12, fontFamily:'var(--font-mono)',
                     color:'var(--color-brand-primary)', fontWeight:600 }}>{count.toLocaleString('en-IN')}</td>

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ArrowRight, BarChart3, Bell, CalendarDays, CheckCircle2, GitBranch, Map as MapIcon, Plane, Tag, TrendingDown, TrendingUp } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
-import { apiDashboard, apiFareMovement, apiFares, apiPriceAlerts, BASE_URL } from '../services/api'
+import { apiAviationLive, apiDashboard, apiFareMovement, apiFares, apiPriceAlerts } from '../services/api'
 import { median } from '../lib/liveStatus'
 
 // Version the public hero asset so Vercel/browser caches cannot keep an older
@@ -252,16 +252,17 @@ export default function Overview({ onNavigate }: Props) {
     let active = true
     const loadLiveAircraft = async () => {
       try {
-        const response = await fetch(`${BASE_URL}/api/aviation/live?limit=150`, { signal: AbortSignal.timeout(8000) })
-        if (!response.ok) throw new Error('live feed unavailable')
-        const payload = await response.json() as { aircraft?: unknown[] }
+        // M2: /api/aviation/live requires auth — the old bare fetch() sent no
+        // Authorization header and 401d, leaving "Aircraft tracked" blank
+        // forever. Route through the authed helper with the user's token.
+        const payload = await apiAviationLive(token ?? undefined)
         if (active) setLiveAircraft(Array.isArray(payload.aircraft) ? payload.aircraft.length : 0)
       } catch { if (active) setLiveAircraft(null) }
     }
     void loadLiveAircraft()
     const timer = window.setInterval(loadLiveAircraft, 60_000)
     return () => { active = false; window.clearInterval(timer) }
-  }, [])
+  }, [token])
 
   const availableRoutes = useMemo(() => routeCards.filter(route => route.fare != null), [routeCards])
   const movementForRoute = (route: string) => fareMovement?.routes.find(item => item.route === route)

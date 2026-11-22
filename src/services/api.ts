@@ -201,9 +201,9 @@ export async function apiCurrentUser(token: string): Promise<ApiUser> {
   return apiFetch('/api/auth/me', token, undefined, true)
 }
 
-async function fetchWithAuthRefresh(url: string, token?: string, init?: RequestInit): Promise<Response> {
+async function fetchWithAuthRefresh(url: string, token?: string, init?: RequestInit, timeoutMs: number = API_REQUEST_TIMEOUT_MS): Promise<Response> {
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), API_REQUEST_TIMEOUT_MS)
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
   const requestInit: RequestInit = {
     ...init,
     cache: 'no-store',
@@ -248,7 +248,10 @@ async function fetchWithAuthRefresh(url: string, token?: string, init?: RequestI
   }
 }
 
-async function apiFetch<T>(path: string, token?: string, init?: RequestInit, forceNetwork = false): Promise<T> {
+// `timeoutMs` overrides the 12 s abort for a single call. It exists for the
+// live-fares scrape (R1), whose server round-trip can take up to 45 s — every
+// other endpoint keeps the global 12 s abort.
+async function apiFetch<T>(path: string, token?: string, init?: RequestInit, forceNetwork = false, timeoutMs: number = API_REQUEST_TIMEOUT_MS): Promise<T> {
   const method = (init?.method || 'GET').toUpperCase()
   const cacheKey = `${method}:${path}:${token || 'public'}`
   const persistedKey = snapshotKey(method, path, token)
@@ -270,7 +273,7 @@ async function apiFetch<T>(path: string, token?: string, init?: RequestInit, for
     const pending = !forceNetwork ? readInflight.get(cacheKey) : undefined
     if (pending) return pending as Promise<T>
   }
-  const request = fetchWithAuthRefresh(`${BASE_URL}${path}`, token, init).then(async resp => {
+  const request = fetchWithAuthRefresh(`${BASE_URL}${path}`, token, init, timeoutMs).then(async resp => {
   if (!resp.ok) {
     const text = await resp.text().catch(() => resp.statusText)
     if (resp.status === 401) {
@@ -472,6 +475,10 @@ export async function apiAirlineFares(token?: string): Promise<AirlineFaresRespo
   return apiFetch('/api/fares/airlines/summary', token)
 }
 
+// The server-side live-fare scrape allows 45 s; the client budget sits just
+// above it so a slow-but-successful scrape is not cut off.
+export const LIVE_FARES_TIMEOUT_MS = 50_000
+
 export async function apiLiveFares(route: string, travelDate: string, token?: string): Promise<{
   status: string
   provider_status: string
@@ -483,7 +490,89 @@ export async function apiLiveFares(route: string, travelDate: string, token?: st
   rejected_count: number
   error?: string | null
 }> {
-  return apiFetch(`/api/fares/live?route=${encodeURIComponent(route)}&travel_date=${encodeURIComponent(travelDate)}`, token)
+  // R1: the server-side scrape takes up to 45 s, so the 12 s global abort
+  // made every live search fail by construction. Only this call gets the
+  // longer budget; every other endpoint keeps the 12 s abort.
+  return apiFetch(`/api/fares/live?route=${encodeURIComponent(route)}&travel_date=${encodeURIComponent(travelDate)}`, token, undefined, false, LIVE_FARES_TIMEOUT_MS)
+}
+
+// The session token AuthContext persists on sign-in (same keys as
+// loadStoredToken in AuthContext: 'aeroprice_token' in localStorage when the
+// session is remembered, 'aeroprice_session_token' in sessionStorage
+// otherwise). Plain service functions with no React context — flightData —
+// read the signed-in user's token from the same place instead of inventing a
+// second credential. Components and hooks must keep using useAuth().
+export function getStoredSessionToken(): string | undefined {
+  try {
+    return localStorage.getItem('aeroprice_token') ?? sessionStorage.getItem('aeroprice_session_token') ?? undefined
+  } catch {
+    return undefined
+  }
+}
+
+// ── Aviation ─────────────────────────────────────────────────────────────────
+
+export interface AviationAircraft {
+  icao24: string
+  callsign: string
+  registration: string
+  aircraft_type: string
+  latitude: number
+  longitude: number
+  altitude_ft: number | null
+  ground_speed_kts: number | null
+  track_deg: number | null
+  vertical_rate_fpm: number | null
+  on_ground: boolean
+  seen_seconds: number | null
+}
+
+export interface AviationLiveResponse {
+  source: string
+  data_origin: string
+  provider_status: 'LIVE' | 'CACHED' | 'EMPTY' | 'ERROR'
+  retrieved_at: string | null
+  count: number
+  aircraft: AviationAircraft[]
+}
+
+// M2: /api/aviation/live requires auth (401 without a token). Every caller
+// goes through here so the signed-in user's Bearer token is always sent.
+// forceNetwork: live positions must never come from the 20 s GET cache —
+// a CACHED-retry that reads the cache would re-read its own stale response.
+export async function apiAviationLive(token?: string, limit = 150): Promise<AviationLiveResponse> {
+  return apiFetch(`/api/aviation/live?limit=${limit}`, token, undefined, true)
+}
+
+export interface AviationScheduleFlight {
+  flight_iata: string
+  airline_name: string
+  airline_iata: string
+  dep_iata: string
+  dep_city: string
+  arr_iata: string
+  arr_city: string
+  dep_scheduled: string
+  arr_scheduled: string
+  status: string
+  dep_actual: string | null
+  arr_actual: string | null
+}
+
+export interface AviationSchedulesResponse {
+  source: string
+  data_origin: string
+  retrieved_at: string | null
+  count: number
+  flights: AviationScheduleFlight[]
+  status: string
+}
+
+// /api/aviation/schedules is auth-gated the same way as /aviation/live.
+export async function apiAviationSchedules(departure: string, arrival: string | undefined, token?: string): Promise<AviationSchedulesResponse> {
+  const params = new URLSearchParams({ departure, limit: '25' })
+  if (arrival) params.set('arrival', arrival)
+  return apiFetch(`/api/aviation/schedules?${params}`, token, undefined, true)
 }
 
 export async function apiFareSummary(route: string, token?: string) {
@@ -513,7 +602,7 @@ export async function apiRouteBasket(token?: string): Promise<RouteBasketRespons
   return apiFetch('/api/routes', token)
 }
 
-export async function apiRouteSummaries(token?: string): Promise<{ summaries: Record<string, { median: number; min: number; max: number; count: number; sample_period: string; last_collected_at: string | null }> }> {
+export async function apiRouteSummaries(token?: string): Promise<{ summaries: Record<string, { median: number; min: number; max: number; count: number; sample_period: string; last_collected_at: string | null; sample_count?: number; sample_window_days?: number; sample_period_start?: string }> }> {
   return apiFetch('/api/routes/summary', token)
 }
 

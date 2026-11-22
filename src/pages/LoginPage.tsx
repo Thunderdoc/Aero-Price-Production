@@ -789,11 +789,27 @@ export default function LoginPage({ onLogin, onGuest }: { onLogin: (page?: Page)
             overflow-y: auto;
             height: auto;
             min-height: 100vh;
+            min-height: 100dvh;
           }
           .ap-panel {
             order: 1;
+            /* The panel kept its desktop height: 100vh while the unclipped
+               card is ~894px tall, so the card overflowed the panel top and
+               bottom — the ministry logo was cut at the viewport top and the
+               card's bottom (guest link) overlapped the hero brand block. */
+            height: auto;
             min-height: auto;
             padding: 18px;
+          }
+          /* The card's desktop cap (max-height: 100vh - 28px + overflow:
+             hidden) clipped the form on phones — the card content is taller
+             than a phone viewport, so the evaluator demo box and everything
+             below it were cut off and unreachable, and swipes over the dead
+             card made page scroll feel stuck. On mobile the card must grow
+             to its full content height and let the page scroll. */
+          .ap-card {
+            max-height: none;
+            overflow: visible;
           }
           .ap-left {
             order: 2;

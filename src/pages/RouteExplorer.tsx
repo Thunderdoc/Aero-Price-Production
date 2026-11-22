@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, ArrowLeftRight, Info, RefreshCw } from 'lucide-react'
 import { Button } from '../components/ui/Button'
 import { Modal } from '../components/ui/Modal'
 import { BarChart, LineChart } from '../components/MiniChart'
-import { apiAnomalies, apiFares, apiLiveFares, apiForecast, isBackendAvailable, type AnomalyResponse, type FareObservationApi, type ForecastResponse } from '../services/api'
+import { apiAnomalies, apiFares, apiLiveFares, apiForecast, apiRouteBasket, isBackendAvailable, type AnomalyResponse, type FareObservationApi, type ForecastResponse } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
 import DataFreshness from '../components/DataFreshness'
 import { buildDailyMedianSeries, collectionDays } from '../lib/fareSeries'
@@ -37,32 +37,40 @@ export default function RouteExplorer() {
   const [tab, setTab] = useState<Tab>('Overview')
   const [showProv, setShowProv] = useState(false)
   const [rows, setRows] = useState<FareObservationApi[]>([])
-  const [allRows, setAllRows] = useState<FareObservationApi[]>([])
+  const [basketRoutes, setBasketRoutes] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState<string | null>(null)
   const [searchDate, setSearchDate] = useState(() => { const date = new Date(); date.setDate(date.getDate() + 7); return date.toISOString().slice(0, 10) })
   const [filteredToDate, setFilteredToDate] = useState(false)
   const [forecast, setForecast] = useState<ForecastResponse | null>(null)
   const [anomalies, setAnomalies] = useState<AnomalyResponse | null>(null)
+  // R2: request-id guard — a slow loadRoute for a route the user has already
+  // left must not overwrite the current route's fares when it lands.
+  const requestIdRef = useRef(0)
 
   const verifiedRows = useMemo(() => rows.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL' || row.data_origin === 'PUBLIC_INTERFACE'), [rows])
+  // R3: the picker comes from GET /api/routes (the authoritative basket), not
+  // from a 600-row fare sample that could never list routes outside it.
   const routeOptions = useMemo(() => {
-    const available = [...new Set(allRows.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL' || row.data_origin === 'PUBLIC_INTERFACE').map(row => row.route))].sort()
-    return available.length ? available : [route]
-  }, [allRows, route])
+    return basketRoutes.length ? basketRoutes : [route]
+  }, [basketRoutes, route])
   const [from, to] = route.split('-')
 
   async function loadRoute(date?: string) {
+    const requestId = ++requestIdRef.current
+    const isCurrent = () => requestId === requestIdRef.current
     setLoading(true)
     setMessage(null)
     try {
       const response = await apiLiveFares(route, date ?? searchDate, token ?? undefined)
+      if (!isCurrent()) return
       let next = response.observations.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL' || row.data_origin === 'PUBLIC_INTERFACE')
       // The on-demand provider can temporarily fail or time out even while
       // the verified snapshot is healthy. Keep the route usable by falling
       // back to persisted index-eligible rows and label the result honestly.
       if (!next.length) {
         const cached = await apiFares({ route, limit: 200 }, token ?? undefined)
+        if (!isCurrent()) return
         next = cached.observations.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL' || row.data_origin === 'PUBLIC_INTERFACE')
         setFilteredToDate(false)
         if (next.length) setMessage('Live fare source is temporarily unavailable; showing cached verified observations.')
@@ -82,26 +90,28 @@ export default function RouteExplorer() {
     } catch {
       try {
         const cached = await apiFares({ route, limit: 200 }, token ?? undefined)
+        if (!isCurrent()) return
         const next = cached.observations.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL' || row.data_origin === 'PUBLIC_INTERFACE')
         setRows(next)
         setFilteredToDate(false)
         setMessage(next.length ? 'Live fare source is temporarily unavailable; showing cached verified observations.' : 'No verified fare records are available for this route.')
       } catch {
+        if (!isCurrent()) return
         setRows([])
         setMessage('The verified fare service is not available right now.')
       }
-    } finally { setLoading(false) }
+    } finally { if (isCurrent()) setLoading(false) }
   }
 
   useEffect(() => {
     let active = true
     isBackendAvailable().then(available => {
       if (!available) throw new Error('backend unavailable')
-      return apiFares({ limit: 600 }, token ?? undefined)
+      return apiRouteBasket(token ?? undefined)
     }).then(response => {
       if (!active || !response) return
-      setAllRows(response.observations)
-    }).catch(() => { if (active) setAllRows([]) })
+      setBasketRoutes(response.routes.map(item => item.route).sort())
+    }).catch(() => { if (active) setBasketRoutes([]) })
     return () => { active = false }
   }, [token])
 

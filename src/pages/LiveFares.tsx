@@ -71,11 +71,16 @@ export default function LiveFares() {
           const up = await isBackendAvailable()
           if (!up) throw new Error('The verified fare service is temporarily unavailable.')
 
-          const resp = await apiFares({ limit: 100, data_origin: 'REAL' }, token ?? undefined)
+          // P1: no data_origin filter — the old REAL-only filter matched zero
+          // rows (the live DB holds PUBLIC_INTERFACE fares) and left this
+          // page permanently empty. The backend default already returns the
+          // index-eligible set (REAL / OFFICIAL / PUBLIC_INTERFACE), and the
+          // Provenance column below shows each row's true origin.
+          const resp = await apiFares({ limit: 100 }, token ?? undefined)
           setAllFares(resp.observations ?? [])
           setCurrentPage(0)
           if (!resp.observations?.length) {
-            setError(resp.note || 'The backend is healthy, but no verified REAL fare observations are available.')
+            setError(resp.note || 'The backend is healthy, but no verified fare observations are available.')
           }
           loaded = true
         } catch (cause) {
@@ -452,8 +457,13 @@ export default function LiveFares() {
                     </span>
                   </td>
                   <td style={{ padding: '12px 14px' }}>
-                    <span className="ap-badge ap-badge-real" style={{ fontSize: 9 }}>
-                      REAL
+                    {/* P1: show each row's TRUE origin from the API response —
+                        the old hardcoded "REAL" badge mislabelled scraped
+                        PUBLIC_INTERFACE rows as verified REAL fares. The
+                        ap-badge-real class has no CSS definition, so REAL
+                        rows render exactly as before. */}
+                    <span className={o.data_origin === 'REAL' ? 'ap-badge ap-badge-real' : 'ap-badge'} style={{ fontSize: 9 }}>
+                      {o.data_origin}
                     </span>
                   </td>
                 </tr>
@@ -465,7 +475,7 @@ export default function LiveFares() {
               title={allFares.length ? 'NO FARES MATCH THESE FILTERS' : 'NO VERIFIED FARES AVAILABLE'}
               detail={allFares.length
                 ? 'Loosen the filters to see more verified observations.'
-                : 'The backend returned no verified REAL fare observations for this session. Try Refresh Feeds, or check the Data Sources page for provider status.'}
+                : 'The backend returned no verified fare observations for this session. Try Refresh Feeds, or check the Data Sources page for provider status.'}
             />
           )}
         </div>

@@ -29,11 +29,24 @@ interface MapCorridor {
   maxFare: number
   observations: number
   samplePeriod: string
+  // M5: how many collection days the median spans (1 = latest-day median;
+  // the backend falls back to a 7-day window when the latest day is thin).
+  // Absent on older responses — treated as 1.
+  sampleWindowDays?: number
   observedAt: string | null
   trend: 'up' | 'down' | 'stable' | 'unknown'
   movementAvailable: boolean
   change7d: number
   weight: number
+}
+
+// M5: the median label must match the window the backend actually used —
+// calling a 7-day fallback median "Latest-day median" would mislabel it.
+// A missing window (older responses) means the latest day, as before.
+export function medianWindowLabel(sampleWindowDays?: number): string {
+  return sampleWindowDays != null && sampleWindowDays > 1
+    ? `${sampleWindowDays}-day median`
+    : 'Latest-day median'
 }
 
 // ─── Colour helpers (raw hex needed by Leaflet) ───────────────────────────────
@@ -109,11 +122,44 @@ function arcHeading(
   return Math.atan2(dLng, dLat) * (180 / Math.PI)
 }
 
+// ─── Shared arc animation loop (M4) ──────────────────────────────────────────
+// One requestAnimationFrame loop drives every arc's dash + plane animation.
+// The old code ran two setInterval timers per corridor (24+ timers for 12
+// routes) and rebuilt each plane's divIcon from an HTML string every 80 ms.
+// Rates are preserved exactly — dash −30 units/s, plane +0.05 of the arc/s —
+// so the motion looks identical with one timer total. The loop starts on the
+// first registered arc and stops when the last one unregisters.
+export interface ArcAnimator { tick(now: number): void }
+const arcAnimators = new Set<ArcAnimator>()
+let arcRafId: number | null = null
+function arcAnimationFrame(now: number) {
+  arcRafId = null
+  arcAnimators.forEach(animator => animator.tick(now))
+  if (arcAnimators.size > 0) arcRafId = requestAnimationFrame(arcAnimationFrame)
+}
+export function registerArcAnimator(animator: ArcAnimator): void {
+  arcAnimators.add(animator)
+  if (arcRafId === null) arcRafId = requestAnimationFrame(arcAnimationFrame)
+}
+export function unregisterArcAnimator(animator: ArcAnimator): void {
+  arcAnimators.delete(animator)
+  if (arcAnimators.size === 0 && arcRafId !== null) {
+    cancelAnimationFrame(arcRafId)
+    arcRafId = null
+  }
+}
+
 // ─── Aerial Arc Route ─────────────────────────────────────────────────────────
 
+// M3: coordinates arrive as primitive props, not array literals — the old
+// from={[…]} / to={[…]} created new array identities on every parent render
+// (every 30 s radar poll), so the effect below tore down and rebuilt all arc
+// layers and restarted all timers. Primitives are stable across re-renders.
 interface AerialArcProps {
-  from: [number, number]
-  to: [number, number]
+  fromLat: number
+  fromLng: number
+  toLat: number
+  toLng: number
   color: string
   weight: number
   highlighted?: boolean
@@ -129,10 +175,12 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;')
 }
 
-function AerialArc({ from, to, color, weight, highlighted, routeLabel }: AerialArcProps) {
+export function AerialArc({ fromLat, fromLng, toLat, toLng, color, weight, highlighted, routeLabel }: AerialArcProps) {
   const map = useMap()
 
   useEffect(() => {
+    const from: [number, number] = [fromLat, fromLng]
+    const to: [number, number] = [toLat, toLng]
     const pts = arcPoints(from, to, 80)
 
     // Glow layer (thick, low opacity)
@@ -153,13 +201,9 @@ function AerialArc({ from, to, color, weight, highlighted, routeLabel }: AerialA
       smoothFactor: 1,
     }).addTo(map)
 
-    // Animate dash offset
+    // Dash offset is animated by the shared loop below (was a 40 ms interval).
     const svgPath = (arc as unknown as { _path: SVGPathElement | null })._path
     let offset = 0
-    const id = setInterval(() => {
-      offset -= 1.2
-      if (svgPath) svgPath.style.strokeDashoffset = String(offset)
-    }, 40)
 
     // Aircraft icon moving along the arc
     let planeT = Math.random() // stagger start position per route
@@ -167,28 +211,48 @@ function AerialArc({ from, to, color, weight, highlighted, routeLabel }: AerialA
     const planeMarker = L.marker(pts[0], { icon: planeIcon, zIndexOffset: 500 }).addTo(map)
 
     const STEPS = pts.length - 1
-    const planeTick = setInterval(() => {
-      planeT = (planeT + 0.004) % 1
-      const idx = Math.min(Math.floor(planeT * STEPS), STEPS - 1)
-      const heading = arcHeading(from, to, planeT)
-      const pos = pts[idx]
-      planeMarker.setLatLng(pos)
-      planeMarker.setIcon(L.divIcon({
-        className: '',
-        html: `<div style="
-          width:20px;height:20px;
-          display:flex;align-items:center;justify-content:center;
-          transform:rotate(${heading}deg);
-          filter:drop-shadow(0 1px 3px rgba(0,0,0,0.4));
-        ">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="${color}" opacity="${highlighted ? 1 : 0.75}">
-            <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>
-          </svg>
-        </div>`,
-        iconSize: [20, 20],
-        iconAnchor: [10, 10],
-      }))
-    }, 80)
+    let iconSet = false
+    let lastNow: number | null = null
+    const animator: ArcAnimator = {
+      tick(now: number) {
+        // Elapsed-time rates match the old timers exactly: dash −1.2 per
+        // 40 ms (−30/s) and plane +0.004 per 80 ms (+0.05/s, one full arc
+        // traversal in 20 s). Clamped so a backgrounded tab does not jump.
+        const dt = lastNow == null ? 0 : Math.min(0.25, Math.max(0, (now - lastNow) / 1000))
+        lastNow = now
+        offset -= 30 * dt
+        if (svgPath) svgPath.style.strokeDashoffset = String(offset)
+        planeT = (planeT + 0.05 * dt) % 1
+        const idx = Math.min(Math.floor(planeT * STEPS), STEPS - 1)
+        const heading = arcHeading(from, to, planeT)
+        const pos = pts[idx]
+        planeMarker.setLatLng(pos)
+        // The plane icon is created ONCE; each frame only rotates the
+        // existing icon's inner element instead of rebuilding the divIcon
+        // from an HTML string (the old 80 ms setIcon churn).
+        if (!iconSet) {
+          planeMarker.setIcon(L.divIcon({
+            className: '',
+            html: `<div style="
+              width:20px;height:20px;
+              display:flex;align-items:center;justify-content:center;
+              transform:rotate(${heading}deg);
+              filter:drop-shadow(0 1px 3px rgba(0,0,0,0.4));
+            ">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="${color}" opacity="${highlighted ? 1 : 0.75}">
+                <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>
+              </svg>
+            </div>`,
+            iconSize: [20, 20],
+            iconAnchor: [10, 10],
+          }))
+          iconSet = true
+        }
+        const rotor = planeMarker.getElement()?.firstElementChild as HTMLElement | null
+        if (rotor) rotor.style.transform = `rotate(${heading}deg)`
+      },
+    }
+    registerArcAnimator(animator)
 
     // Bind tooltip on arc hover
     arc.bindTooltip(
@@ -197,13 +261,12 @@ function AerialArc({ from, to, color, weight, highlighted, routeLabel }: AerialA
     )
 
     return () => {
-      clearInterval(id)
-      clearInterval(planeTick)
+      unregisterArcAnimator(animator)
       map.removeLayer(glow)
       map.removeLayer(arc)
       map.removeLayer(planeMarker)
     }
-  }, [map, from, to, color, weight, highlighted, routeLabel])
+  }, [map, fromLat, fromLng, toLat, toLng, color, weight, highlighted, routeLabel])
 
   return null
 }
@@ -612,7 +675,7 @@ function RouteSidebar({ corridors, selectedId, onSelect }: RouteSidebarProps) {
                   : <span style={{ fontSize: 'var(--text-caption-size)', color: 'var(--color-text-tertiary)' }}>No comparable prior collection</span>}
               </div>
               <div style={{ marginTop: 5, fontSize: 'var(--text-caption-size)', color: 'var(--color-text-tertiary)' }}>
-                Latest-day median · {corridor.observations} quotes · {corridor.samplePeriod}
+                {medianWindowLabel(corridor.sampleWindowDays)} · {corridor.observations} quotes · {corridor.samplePeriod}
               </div>
             </button>
           )
@@ -690,6 +753,7 @@ export default function AirfareMap() {
             weight: 1,
             observations: fare.count,
             samplePeriod: fare.sample_period,
+            sampleWindowDays: fare.sample_window_days,
             observedAt: fare.last_collected_at,
             movementAvailable: Boolean(compared),
           } satisfies MapCorridor
@@ -837,8 +901,10 @@ export default function AirfareMap() {
           {filteredCorridors.map((corridor) => (
             <AerialArc
               key={corridor.id}
-              from={[corridor.fromLat, corridor.fromLng]}
-              to={[corridor.toLat, corridor.toLng]}
+              fromLat={corridor.fromLat}
+              fromLng={corridor.fromLng}
+              toLat={corridor.toLat}
+              toLng={corridor.toLng}
               color={TREND_COLORS[corridor.trend]}
               weight={Math.max(1.5, corridor.weight * 2.2)}
               highlighted={selectedId === corridor.id}

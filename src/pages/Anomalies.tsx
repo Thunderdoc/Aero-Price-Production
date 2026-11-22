@@ -51,7 +51,10 @@ export default function Anomalies() {
             severity: 'BACKEND FLAG',
             cause: (a.quality_flags ?? []).join(', ') || 'OUTLIER',
             collected_at: a.collected_at,
-            data_origin: 'REAL',
+            // P3: the row's TRUE origin from the API response — the old
+            // hardcoded 'REAL' mislabelled scraped PUBLIC_INTERFACE rows as
+            // verified REAL fares (and the mislabel flowed into the CSV).
+            data_origin: a.data_origin,
           }))
         )
       } else {

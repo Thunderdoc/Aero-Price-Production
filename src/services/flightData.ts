@@ -1,6 +1,6 @@
 // AeroPrice — Real flight data service
 // Keys loaded from .env (gitignored). Never hardcode keys in source.
-import { BASE_URL } from './api'
+import { apiAviationLive, apiAviationSchedules, getStoredSessionToken } from './api'
 
 
 export interface LiveFlight {
@@ -43,19 +43,17 @@ export interface LiveFare {
 /** Fetch live domestic Indian flights from AviationStack or live radar stream */
 export async function fetchLiveFlights(
   depIata: string,
-  arrIata?: string
+  arrIata?: string,
+  // Plain service function with no React context: the token defaults to the
+  // persisted session token (same one AuthContext stores on sign-in).
+  token: string | undefined = getStoredSessionToken(),
 ): Promise<{ flights: LiveFlight[]; source: 'REAL'; error?: string }> {
   try {
-    const params = new URLSearchParams({ departure: depIata, limit: '25' })
-    if (arrIata) params.set('arrival', arrIata)
-    const res = await fetch(`${BASE_URL}/api/aviation/schedules?${params}`, {
-      signal: AbortSignal.timeout(3000),
-    })
-    if (res.ok) {
-      const json = await res.json() as { flights?: LiveFlight[] }
-      if (json.flights && json.flights.length > 0) {
-        return { flights: json.flights, source: 'REAL' }
-      }
+    // M2: /api/aviation/schedules requires auth — the old bare fetch() sent
+    // no Authorization header and 401d. Route through the authed helper.
+    const json = await apiAviationSchedules(depIata, arrIata, token)
+    if (json.flights && json.flights.length > 0) {
+      return { flights: json.flights, source: 'REAL' }
     }
   } catch {
     // No fallback fleet: return an honest empty result instead of simulated
@@ -75,41 +73,42 @@ export const INDIA_CORRIDORS = [
   { dep: 'DEL', arr: 'HYD' },
 ]
 
-export async function fetchAllCorridorFlights(): Promise<Array<{ flights: LiveFlight[]; source: 'REAL' }>> {
+export async function fetchAllCorridorFlights(
+  // Plain service function with no React context: the token defaults to the
+  // persisted session token (same one AuthContext stores on sign-in).
+  token: string | undefined = getStoredSessionToken(),
+): Promise<Array<{ flights: LiveFlight[]; source: 'REAL' }>> {
   try {
-    const response = await fetch(`${BASE_URL}/api/aviation/live?limit=150`, {
-      signal: AbortSignal.timeout(5000),
-    })
-    if (response.ok) {
-      const body = await response.json()
-      const aircraftList = body.aircraft ?? []
-      if (aircraftList.length > 0) {
-        const flights: LiveFlight[] = aircraftList.map((a: Record<string, unknown>) => {
-          const callsign = String(a.callsign ?? '').trim()
-          const prefix = callsign.slice(0, 3)
-          const airlines: Record<string, string> = {
-            IGO: 'IndiGo', AIC: 'Air India', AXB: 'Air India Express',
-            AKJ: 'Akasa Air', SEJ: 'SpiceJet', VTI: 'Vistara',
-          }
-          return {
-            flight_iata: callsign || String(a.registration ?? a.icao24 ?? ''),
-            airline_name: airlines[prefix] ?? 'Live ADS-B aircraft',
-            airline_iata: prefix,
-            dep_iata: '', dep_city: '', arr_iata: '', arr_city: '',
-            dep_scheduled: '', arr_scheduled: '', status: body.provider_status === 'CACHED' ? 'cached' : 'active',
-            dep_actual: null, arr_actual: null,
-            latitude: Number(a.latitude), longitude: Number(a.longitude),
-            altitude_ft: a.altitude_ft as number | null,
-            ground_speed_kts: a.ground_speed_kts as number | null,
-            track_deg: a.track_deg as number | null,
-            registration: String(a.registration ?? ''),
-            aircraft_type: String(a.aircraft_type ?? ''),
-            source: body.source ?? 'ADSB.lol',
-            freshness: body.provider_status === 'CACHED' ? 'RECENT CACHE' : 'POSITION ONLY',
-          }
-        })
-        return [{ flights, source: 'REAL' as const }]
-      }
+    // M2: /api/aviation/live requires auth — the old bare fetch() sent no
+    // Authorization header and 401d. Route through the authed helper.
+    const body = await apiAviationLive(token)
+    const aircraftList = body.aircraft ?? []
+    if (aircraftList.length > 0) {
+      const flights: LiveFlight[] = aircraftList.map(a => {
+        const callsign = String(a.callsign ?? '').trim()
+        const prefix = callsign.slice(0, 3)
+        const airlines: Record<string, string> = {
+          IGO: 'IndiGo', AIC: 'Air India', AXB: 'Air India Express',
+          AKJ: 'Akasa Air', SEJ: 'SpiceJet', VTI: 'Vistara',
+        }
+        return {
+          flight_iata: callsign || String(a.registration ?? a.icao24 ?? ''),
+          airline_name: airlines[prefix] ?? 'Live ADS-B aircraft',
+          airline_iata: prefix,
+          dep_iata: '', dep_city: '', arr_iata: '', arr_city: '',
+          dep_scheduled: '', arr_scheduled: '', status: body.provider_status === 'CACHED' ? 'cached' : 'active',
+          dep_actual: null, arr_actual: null,
+          latitude: Number(a.latitude), longitude: Number(a.longitude),
+          altitude_ft: a.altitude_ft,
+          ground_speed_kts: a.ground_speed_kts,
+          track_deg: a.track_deg,
+          registration: String(a.registration ?? ''),
+          aircraft_type: String(a.aircraft_type ?? ''),
+          source: body.source ?? 'ADSB.lol',
+          freshness: body.provider_status === 'CACHED' ? 'RECENT CACHE' : 'POSITION ONLY',
+        }
+      })
+      return [{ flights, source: 'REAL' as const }]
     }
   } catch {
     // Continue to fallback
