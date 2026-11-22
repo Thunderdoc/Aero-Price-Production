@@ -7,8 +7,8 @@ The safest approach is to separate public user access from privileged evaluator/
 ### 1. Public/User access
 
 - Anyone may self-register with email + password, or sign in with Google (Firebase, when configured).
-- Self-registration creates role `PUBLIC`, plan `FREE` only.
-- **DGCA self-registration is CLOSED.** Registering with workspace `DGCA` is rejected by the backend (`POST /api/auth/register`); the ANALYST role is granted by an admin only. There is no way for a visitor to grant themselves analyst access.
+- Self-registration creates role `PUBLIC` (workspace `USER`) or `ANALYST` (workspace `DGCA`), plan `FREE`.
+- **DGCA self-registration is OPEN (owner decision 22 Nov 2026).** Registering with workspace `DGCA` creates role `ANALYST` (`POST /api/auth/register`); anyone may register as a DGCA analyst. Only `ADMIN` self-registration is blocked — admin access is granted by an administrator only.
 - Signed-in public users can VIEW all read-only surfaces: dashboard, map, fares, route explorer, forecast, anomalies, government intelligence, index history/basket, exports, collections reads and source-health. The analyst gate on those read-only endpoints was dropped on 21 Nov 2026; write/admin actions (collection trigger, anomaly-detection run, government refresh, all `/api/admin/*`) stay gated.
 
 ### 2. SIH evaluator access
@@ -34,11 +34,11 @@ Admin is private only.
 
 ### 4. TGC / DGCA access
 
-Treat TGC/DGCA as invite-only.
+TGC/DGCA analyst registration is open to anyone (owner decision 22 Nov 2026).
 
-- The login screen no longer offers DGCA as a self-registration path.
-- Access is granted only when an admin assigns role `ANALYST` to an existing account.
-- A normal Google user cannot become TGC/DGCA by clicking anything.
+- The sign-up form offers a workspace choice: User or DGCA Analyst.
+- Registering with workspace `DGCA` creates role `ANALYST` directly.
+- Only ADMIN is invite-only — admin access is granted by an administrator only.
 
 ## What not to do
 

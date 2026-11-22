@@ -8,7 +8,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 
-from app.analytics.backtest import load_dgca_fares_csv, run_backtest
+from app.analytics.backtest import (
+    MOSPI_CPI_BENCHMARK_NAME,
+    MOSPI_CPI_METHOD,
+    load_benchmark_csv,
+    load_dgca_fares_csv,
+    run_backtest,
+    run_backtest_vs_benchmark,
+)
 from app.config.weights import get_route_weights, weights_metadata
 from app.core.auth import get_current_user
 from app.core.database import get_db
@@ -26,11 +33,15 @@ router = APIRouter(prefix="/index", tags=["index"])
 # traffic weights are unavailable; see backend/app/config/weights.py).
 ROUTE_BASKET = get_route_weights()
 
-# DGCA monthly average fares for the backtest, when downloaded. The CSV is
-# NOT in the repo until someone downloads the DGCA dataset (see
-# backend/app/analytics/backtest.py for the format); without it the backtest
-# endpoint honestly reports NO_DGCA_DATA.
+# MoSPI CPI Transport index values for the backtest — the live benchmark,
+# shipped in the repo (backend/data/mospi_cpi_transport.csv, Jan–Oct 2026,
+# each row sourced from that month's MoSPI press release, Annexure I).
+# DGCA monthly average fares are the original benchmark, but DGCA does not
+# publish them publicly (verified 22 Nov 2026), so that CSV is NOT in the
+# repo and benchmark=dgca honestly reports NO_DGCA_DATA. See
+# backend/app/analytics/backtest.py for both formats.
 _BACKEND_DIR = Path(__file__).resolve().parents[3]
+DEFAULT_MOSPI_CPI_CSV = _BACKEND_DIR / "data" / "mospi_cpi_transport.csv"
 DEFAULT_DGCA_FARES_CSV = _BACKEND_DIR / "data" / "dgca_monthly_fares.csv"
 
 _MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
@@ -233,32 +244,50 @@ async def index_history(
 
 @router.get("/backtest")
 async def index_backtest(
+    benchmark: str = Query(default="mospi-cpi", pattern=r"^(mospi-cpi|dgca)$"),
     start_month: Optional[str] = Query(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$"),
     end_month: Optional[str] = Query(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$"),
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Backtest the monthly Jevons index against DGCA monthly average fares.
+    """Backtest the monthly Jevons index against an official benchmark.
 
     SIH26056 requires >= 30 days of back-tested results against DGCA monthly
-    average-fare data. The method is implemented in
-    backend/app/analytics/backtest.py; this endpoint runs it over the stored
-    REAL/OFFICIAL fares and the DGCA dataset at DGCA_FARES_CSV (default
-    backend/data/dgca_monthly_fares.csv). That CSV is NOT in the repo until
-    the DGCA dataset is downloaded — until then the endpoint honestly reports
-    NO_DGCA_DATA with the coverage it does have. Read-only: any signed-in
-    user may view it.
+    average-fare data. Verified 22 Nov 2026, DGCA does not publish monthly
+    average fares publicly, so the live benchmark is the MoSPI CPI
+    Transport division (All-India Combined, base 2024=100), shipped in
+    backend/data/mospi_cpi_transport.csv and honestly labelled as MoSPI CPI
+    — never as DGCA data. The method (monthly Jevons series vs the
+    benchmark's MoM % changes, with coverage reporting) is implemented in
+    backend/app/analytics/backtest.py. ``benchmark=dgca`` keeps the original
+    DGCA path (DGCA_FARES_CSV, default backend/data/dgca_monthly_fares.csv),
+    which honestly reports NO_DGCA_DATA until genuine DGCA fare data is
+    supplied. Read-only: any signed-in user may view it.
     """
-    csv_path = os.getenv("DGCA_FARES_CSV") or str(DEFAULT_DGCA_FARES_CSV)
-    try:
-        dgca_fares = load_dgca_fares_csv(csv_path)
-    except FileNotFoundError:
-        dgca_fares = []
-    except (ValueError, OSError) as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"DGCA fares file at {csv_path} could not be read: {exc}",
-        )
+    if benchmark == "dgca":
+        csv_path = os.getenv("DGCA_FARES_CSV") or str(DEFAULT_DGCA_FARES_CSV)
+        try:
+            dgca_fares = load_dgca_fares_csv(csv_path)
+        except FileNotFoundError:
+            dgca_fares = []
+        except (ValueError, OSError) as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"DGCA fares file at {csv_path} could not be read: {exc}",
+            )
+        benchmark_rows = None
+    else:
+        csv_path = os.getenv("MOSPI_CPI_CSV") or str(DEFAULT_MOSPI_CPI_CSV)
+        try:
+            benchmark_rows = load_benchmark_csv(csv_path)
+        except FileNotFoundError:
+            benchmark_rows = []
+        except (ValueError, OSError) as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"MoSPI CPI file at {csv_path} could not be read: {exc}",
+            )
+        dgca_fares = None
 
     if start_month is None or end_month is None:
         bounds = await db.execute(
@@ -281,4 +310,14 @@ async def index_backtest(
     if end_month < start_month:
         raise HTTPException(status_code=400, detail="end_month must not precede start_month")
 
-    return await run_backtest(db, ROUTE_BASKET, dgca_fares, start_month, end_month)
+    if benchmark == "dgca":
+        return await run_backtest(db, ROUTE_BASKET, dgca_fares, start_month, end_month)
+    return await run_backtest_vs_benchmark(
+        db,
+        ROUTE_BASKET,
+        benchmark_rows,
+        MOSPI_CPI_BENCHMARK_NAME,
+        MOSPI_CPI_METHOD,
+        start_month,
+        end_month,
+    )

@@ -196,12 +196,11 @@ async def login(
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register_account(payload: RegistrationRequest, db: AsyncSession = Depends(get_db)):
-    """Create a self-registered PUBLIC user account.
+    """Create a self-registered account.
 
-    Admin and DGCA analyst accounts are granted by an administrator only —
-    self-registration with workspace DGCA is closed (S2/L4). A registered
-    user who needs analyst access asks an admin (role PATCH / access-request
-    flow); the endpoint never grants ANALYST/GOVERNMENT by itself.
+    Owner decision (22 Nov 2026): anyone may self-register as a DGCA
+    analyst (workspace DGCA grants role ANALYST). Only ADMIN accounts are
+    blocked here — admin access is granted by an administrator only.
     """
     email = payload.email.strip().lower()
     name = payload.name.strip()
@@ -218,14 +217,15 @@ async def register_account(payload: RegistrationRequest, db: AsyncSession = Depe
 
     workspace = payload.workspace.strip().upper()
     if workspace == "DGCA":
+        role = "ANALYST"
+    elif workspace == "USER":
+        role = "PUBLIC"
+    else:
         raise HTTPException(
             status_code=403,
-            detail="DGCA analyst accounts are granted by an administrator only. "
-            "Register as a user, then request analyst access.",
+            detail="Only User and DGCA self-registration are allowed. "
+            "Admin accounts are granted by an administrator only.",
         )
-    if workspace != "USER":
-        raise HTTPException(status_code=403, detail="Only User self-registration is allowed.")
-    role = "PUBLIC"
     plan = "FREE"
 
     db.add(AuthAccount(

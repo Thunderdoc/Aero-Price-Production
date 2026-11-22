@@ -1,6 +1,7 @@
 """
 Read-access tests for the 21 Nov 2026 access decision:
-- DGCA self-registration is CLOSED (analyst granted by admin only).
+- DGCA self-registration is OPEN (owner decision 22 Nov 2026): anyone may
+  register as a DGCA analyst; only ADMIN self-registration is blocked.
 - The analyst gate is DROPPED on read-only endpoints, so any signed-in user
   (including PUBLIC) can view forecasts, index history/basket, exports,
   collections reads and source-health.
@@ -74,7 +75,21 @@ async def test_public_user_can_read_index_basket_and_history(db):
             assert history.json()["count"] == 0
             backtest = await client.get("/api/index/backtest", headers=_headers("public@example.test"))
             assert backtest.status_code == 200
-            assert backtest.json()["status"] in ("NO_DGCA_DATA", "INSUFFICIENT_DATA", "COMPLETED")
+            assert backtest.json()["status"] in (
+                "NO_BENCHMARK_DATA",
+                "INSUFFICIENT_DATA",
+                "COMPLETED",
+            )
+            assert backtest.json()["benchmark"].startswith("MoSPI CPI")
+            dgca_backtest = await client.get(
+                "/api/index/backtest?benchmark=dgca", headers=_headers("public@example.test")
+            )
+            assert dgca_backtest.status_code == 200
+            assert dgca_backtest.json()["status"] in (
+                "NO_DGCA_DATA",
+                "INSUFFICIENT_DATA",
+                "COMPLETED",
+            )
     finally:
         app.dependency_overrides.pop(get_db, None)
 

@@ -1,7 +1,8 @@
 """Phase 1 regression tests: database + security (audit report §11 Phase 1).
 
 Pins each P0/P1 fix so a regression fails before it reaches a deployment:
-fail-closed SECRET_KEY, deleted demo accounts, closed DGCA self-registration,
+fail-closed SECRET_KEY, deleted demo accounts, open DGCA self-registration
+(owner decision 22 Nov 2026 — ADMIN self-registration stays blocked),
 auth + per-user rate limits on the live-scrape endpoints, health exception
 logging, and the snapshot fallback with a missing database file.
 """
@@ -114,16 +115,30 @@ async def test_demo_login_rejected(db):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# 3. DGCA self-registration closed (S2/L4)
+# 3. DGCA self-registration OPEN, ADMIN still blocked (owner decision 22 Nov 2026)
 # ══════════════════════════════════════════════════════════════════════════
 
-async def test_dgca_self_registration_is_closed(db):
-    for i, workspace in enumerate(("DGCA", "dgca", "ADMIN")):
-        email = f"closed-reg-{i}@example.test"
+async def test_dgca_self_registration_is_open_admin_blocked(db):
+    for i, workspace in enumerate(("DGCA", "dgca")):
+        email = f"open-reg-{i}@example.test"
+        result = await register_account(
+            RegistrationRequest(
+                name="Open Workspace",
+                email=email,
+                password="secret123",
+                workspace=workspace,
+            ),
+            db,
+        )
+        assert result["user"]["role"] == "ANALYST"
+        account = await db.scalar(select(AuthAccount).where(AuthAccount.email == email))
+        assert account is not None and account.role == "ANALYST"
+    for workspace in ("ADMIN", "admin", "SUPERADMIN"):
+        email = f"blocked-reg-{workspace}@example.test"
         with pytest.raises(HTTPException) as exc:
             await register_account(
                 RegistrationRequest(
-                    name="Closed Workspace",
+                    name="Blocked Workspace",
                     email=email,
                     password="secret123",
                     workspace=workspace,

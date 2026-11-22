@@ -553,14 +553,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  // Self-registration creates a PUBLIC user account only. Analyst and admin
-  // accounts are granted by an administrator (role change / invite) — the
-  // `workspace` argument is accepted for call-site compatibility but is
-  // deliberately ignored, and the backend rejects DGCA self-registration.
-  async function createAccount(name: string, email: string, password: string, _workspace?: AuthWorkspace): Promise<{ success: boolean; error?: string }> {
+  // Self-registration creates a PUBLIC user or a DGCA analyst account, per
+  // the workspace the user picks on the sign-up form (owner decision
+  // 22 Nov 2026). Only ADMIN is blocked — the backend rejects it. The
+  // workspace is ignored on the Firebase path (no workspace concept there).
+  async function createAccount(name: string, email: string, password: string, workspace: AuthWorkspace = 'USER'): Promise<{ success: boolean; error?: string }> {
     if (USE_BACKEND_AUTH) {
       try {
-        await apiRegister(name.trim(), email.trim().toLowerCase(), password, 'USER')
+        await apiRegister(name.trim(), email.trim().toLowerCase(), password, workspace === 'DGCA' ? 'DGCA' : 'USER')
         return { success: true }
       } catch (err) {
         return { success: false, error: err instanceof Error ? err.message : 'Unable to create account.' }

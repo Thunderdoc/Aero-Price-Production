@@ -61,9 +61,10 @@ async def test_user_registration_persists_a_backend_auth_account(db):
     assert token_response.access_token
 
 
-# DGCA self-registration is CLOSED (Phase 1, S2/L4): workspace="DGCA" no
-# longer grants ANALYST/GOVERNMENT. The regression test lives in
-# test_phase1_security.py::test_dgca_self_registration_is_closed.
+# DGCA self-registration is OPEN (owner decision 22 Nov 2026):
+# workspace="DGCA" grants ANALYST; only ADMIN self-registration is blocked.
+# The regression test lives in
+# test_phase1_security.py::test_dgca_self_registration_is_open_admin_blocked.
 
 
 async def test_verified_google_login_uses_admin_granted_dgca_role(db, monkeypatch):

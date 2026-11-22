@@ -38,6 +38,7 @@ export default function LoginPage({ onLogin, onGuest }: { onLogin: (page?: Page)
   const { login, loginWithGoogle, createAccount, resetPassword, isBackendAuth } = useAuth()
   const [authMode, setAuthMode] = useState<'login' | 'create'>('login')
   const [fullName, setFullName] = useState('')
+  const [signupWorkspace, setSignupWorkspace] = useState<'USER' | 'DGCA'>('USER')
   const [email, setEmail] = useState('')
   const [pass, setPass] = useState('')
   const passwordRef = useRef<HTMLInputElement>(null)
@@ -118,7 +119,7 @@ export default function LoginPage({ onLogin, onGuest }: { onLogin: (page?: Page)
         return
       }
       setLoading(true)
-      const result = await createAccount(fullName.trim(), trimmedEmail, pass)
+      const result = await createAccount(fullName.trim(), trimmedEmail, pass, signupWorkspace)
       setLoading(false)
       if (!result.success) {
         setError(result.error || 'Unable to create account.')
@@ -866,7 +867,7 @@ export default function LoginPage({ onLogin, onGuest }: { onLogin: (page?: Page)
           </div>
 
           <p style={{ margin: '0 0 10px', color: '#526079', fontSize: 12, lineHeight: 1.45 }}>
-            New accounts start as public users. Analyst and admin access is invite-only — granted by an administrator.
+            New accounts start as public users, or as DGCA analysts if you pick that workspace below. Admin access is granted by an administrator only.
             SIH prototype — demo analyst role, not a government login.
           </p>
 
@@ -943,6 +944,16 @@ export default function LoginPage({ onLogin, onGuest }: { onLogin: (page?: Page)
                 </button>
               </div>
             </div>
+
+            {authMode === 'create' && (
+              <div className="ap-field">
+                <label id="ap-workspace-label">Workspace</label>
+                <div className="ap-mode-toggle" role="radiogroup" aria-labelledby="ap-workspace-label">
+                  <button type="button" disabled={authBusy} className={signupWorkspace === 'USER' ? 'active' : ''} onClick={() => setSignupWorkspace('USER')}>User</button>
+                  <button type="button" disabled={authBusy} className={signupWorkspace === 'DGCA' ? 'active' : ''} onClick={() => setSignupWorkspace('DGCA')}>DGCA Analyst</button>
+                </div>
+              </div>
+            )}
 
             <div className="ap-meta">
               <label>
