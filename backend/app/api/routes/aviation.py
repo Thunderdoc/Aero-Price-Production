@@ -14,7 +14,10 @@ from app.core.rate_limit import rate_limited_user
 
 router = APIRouter(prefix="/aviation", tags=["aviation"])
 
-ADSB_LOL_URL = "https://api.adsb.lol/v2/point/22.9734/78.6569/1000"
+# Radius is 250 NM: the ADSB.lol anonymous tier rejects anything larger
+# with HTTP 403 "radius exceeds 250 NM" (the old /1000 URL 403d on every
+# call, which took the primary provider out of the chain entirely).
+ADSB_LOL_URL = "https://api.adsb.lol/v2/point/22.9734/78.6569/250"
 # AvioADSB exposes the same readsb-compatible aircraft shape and does not
 # require a credential. Keep it as a provider fallback, not as synthetic data.
 AVIOADSB_URL = "https://avioadsb.org/v1/point/22.9734/78.6569/100"

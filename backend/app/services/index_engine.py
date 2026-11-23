@@ -151,10 +151,12 @@ async def calculate_index(
         }
 
     # Weighted Jevons: geometric mean of ratios with normalised weights,
-    # P = Π (ratio_i ^ (w_i / Σw)) * 100. Under the current equal-weight
-    # regime (every w_i = 1.0) this is exactly the unweighted Jevons formula
-    # Π ratio^(1/n) * 100; when DGCA traffic weights arrive, the same code
-    # weights corridors by their traffic share without an engine change.
+    # P = Π (ratio_i ^ (w_i / Σw)) * 100. Weights come from the caller —
+    # the AAI gravity-model weights in app/config/weights.py (Σw = 1 over
+    # the basket); under equal weights this reduces to the unweighted
+    # Jevons formula Π ratio^(1/n) * 100. When DGCA traffic weights
+    # arrive, the same code weights corridors by their traffic share
+    # without an engine change.
     total_weight = sum(weights)
     log_sum = sum(
         (w / total_weight) * math.log(ratio) for ratio, w in zip(ratios, weights)

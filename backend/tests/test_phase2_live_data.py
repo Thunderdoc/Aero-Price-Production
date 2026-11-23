@@ -486,6 +486,55 @@ async def test_aviation_opensky_only_after_both_adsb_providers_fail(monkeypatch)
     assert result["aircraft"][0]["callsign"] == "IGO123"
 
 
+def _point_radius_nm(url: str) -> int:
+    return int(url.rstrip("/").rsplit("/", 1)[1])
+
+
+def test_adsb_lol_url_radius_within_anonymous_cap():
+    """Regression (round 2, 22 Nov 2026): the old /1000 radius made ADSB.lol
+    answer HTTP 403 "radius exceeds 250 NM" on every call, taking the primary
+    provider out of the chain and leaving /api/aviation/live ERROR with 0
+    aircraft. The anonymous cap is 250 NM."""
+    assert _point_radius_nm(aviation_mod.ADSB_LOL_URL) <= 250
+
+
+def test_avioadsb_url_radius_within_anonymous_cap():
+    """AvioADSB answers HTTP 422 above 100 NM on the anonymous tier
+    ("radius is limited to 100 nm on the anonymous tier")."""
+    assert _point_radius_nm(aviation_mod.AVIOADSB_URL) <= 100
+
+
+async def test_aviation_adsb_lol_real_shape_normalizes():
+    """The real ADSB.lol /v2/point payload (captured 22 Nov 2026, radius 250)
+    normalizes through _adsb_compatible_aircraft: valid rows keep their
+    fields, out-of-bbox and stale (seen > 90 s) rows are dropped."""
+
+    class _FakeClient:
+        def __init__(self, payload):
+            self._payload = payload
+
+        async def get(self, url, headers=None, **kwargs):
+            return _FakeResponse(self._payload)
+
+    payload = {"ac": [
+        {"hex": "800c3c", "flight": "AIC8DS  ", "lat": 19.634491, "lon": 77.369793,
+         "alt_baro": 37000, "gs": 432.8, "track": 176.42, "baro_rate": -64,
+         "seen": 0.5, "r": "VT-TNE", "t": "A20N"},
+        {"hex": "dead01", "flight": "FARAWAY ", "lat": 51.5, "lon": -0.12,
+         "alt_baro": 30000, "gs": 400, "track": 90, "seen": 1.0},
+        {"hex": "dead02", "flight": "STALE   ", "lat": 28.5, "lon": 77.1,
+         "alt_baro": 35000, "gs": 450, "track": 90, "seen": 120.0},
+    ], "msg": "No error", "total": 3}
+    rows = await aviation_mod._adsb_compatible_aircraft(_FakeClient(payload), aviation_mod.ADSB_LOL_URL, 150)
+    assert len(rows) == 1
+    assert rows[0]["icao24"] == "800c3c"
+    assert rows[0]["callsign"] == "AIC8DS"
+    assert rows[0]["registration"] == "VT-TNE"
+    assert rows[0]["aircraft_type"] == "A20N"
+    assert rows[0]["latitude"] == 19.634491
+    assert rows[0]["seen_seconds"] == 0.5
+
+
 # ── 8. Gov honest degradation ─────────────────────────────────────────────────
 
 async def test_gov_fetchers_report_not_configured_without_credentials(db, monkeypatch):

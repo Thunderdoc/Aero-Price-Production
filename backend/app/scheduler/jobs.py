@@ -82,8 +82,12 @@ async def job_gov_refresh():
 async def job_publish_index():
     """Daily index publication from real observations."""
     from datetime import date
+    # Lazy import for consistency with collector.py (weights.py imports
+    # ROUTE_BASKET from collector). The published index uses AAI
+    # gravity-model weights, not equal 1.0.
+    from app.config.weights import get_route_weights
     today = date.today().isoformat()
-    routes = [{"route": r, "weight": 1.0} for r in ROUTE_BASKET]
+    routes = get_route_weights()
     logger.info(f"[scheduler] Publishing index for {today}")
     async with AsyncSessionLocal() as db:
         result = await publish_index(db, today, routes)

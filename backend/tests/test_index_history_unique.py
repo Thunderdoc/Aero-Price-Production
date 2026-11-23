@@ -37,6 +37,11 @@ async def test_index_history_returns_latest_publication_per_day(db):
 
 @pytest.mark.asyncio
 async def test_index_basket_reports_actual_collection_routes_and_weights():
+    from app.config.weights import ROUTE_WEIGHTS
+
     result = await route_basket(current_user={"role": "ANALYST"})
     assert [row["route"] for row in result["routes"]] == ROUTE_BASKET
-    assert all(row["weight"] == 1.0 for row in result["routes"])
+    assert [row["weight"] for row in result["routes"]] == [
+        ROUTE_WEIGHTS[r] for r in ROUTE_BASKET
+    ]
+    assert abs(sum(row["weight"] for row in result["routes"]) - 1.0) < 1e-9

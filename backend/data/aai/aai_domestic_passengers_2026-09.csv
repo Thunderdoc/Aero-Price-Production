@@ -1,0 +1,13 @@
+iata_code,airport_name_aai,aai_category,domestic_pax_sep_2026,domestic_pax_apr_sep_2026,source_url
+DEL,DELHI (DIAL),JV INTERNATIONAL AIRPORTS,4256929,28126333,https://www.aai.aero/sites/default/files/traffic-news/Sep2k26Annex_3.pdf
+BOM,MUMBAI (MIAL),JV INTERNATIONAL AIRPORTS,2777538,17290972,https://www.aai.aero/sites/default/files/traffic-news/Sep2k26Annex_3.pdf
+BLR,BENGALURU (BIAL),JV INTERNATIONAL AIRPORTS,2705725,17810499,https://www.aai.aero/sites/default/files/traffic-news/Sep2k26Annex_3.pdf
+HYD,HYDERABAD (GHIAL),JV INTERNATIONAL AIRPORTS,1665727,11045143,https://www.aai.aero/sites/default/files/traffic-news/Sep2k26Annex_3.pdf
+CCU,KOLKATA,INTERNATIONAL AIRPORTS,1182452,8331182,https://www.aai.aero/sites/default/files/traffic-news/Sep2k26Annex_3.pdf
+MAA,CHENNAI,INTERNATIONAL AIRPORTS,1149087,7388363,https://www.aai.aero/sites/default/files/traffic-news/Sep2k26Annex_3.pdf
+GAU,GUWAHATI,PPP INTERNATIONAL,453000,3055634,https://www.aai.aero/sites/default/files/traffic-news/Sep2k26Annex_3.pdf
+LKO,LUCKNOW,PPP INTERNATIONAL,355006,2460063,https://www.aai.aero/sites/default/files/traffic-news/Sep2k26Annex_3.pdf
+JAI,JAIPUR,PPP INTERNATIONAL,340143,2156109,https://www.aai.aero/sites/default/files/traffic-news/Sep2k26Annex_3.pdf
+PAT,PATNA,CUSTOM AIRPORTS,270548,1958112,https://www.aai.aero/sites/default/files/traffic-news/Sep2k26Annex_3.pdf
+SXR,SRINAGAR,INTERNATIONAL AIRPORTS,223471,1731090,https://www.aai.aero/sites/default/files/traffic-news/Sep2k26Annex_3.pdf
+IMF,IMPHAL,INTERNATIONAL AIRPORTS,95579,627766,https://www.aai.aero/sites/default/files/traffic-news/Sep2k26Annex_3.pdf

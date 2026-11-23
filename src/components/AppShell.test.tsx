@@ -2,8 +2,9 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, within } from '@testing-library/react'
 import AppShell, { type Page } from './AppShell'
 
-const { identity } = vi.hoisted(() => ({
+const { identity, bannerProps } = vi.hoisted(() => ({
   identity: { role: 'ADMIN', plan: 'ADMIN' },
+  bannerProps: {} as Record<string, unknown>,
 }))
 
 vi.mock('../contexts/AuthContext', () => ({
@@ -12,7 +13,9 @@ vi.mock('../contexts/AuthContext', () => ({
 }))
 vi.mock('../hooks/useGovData', () => ({ useGovData: () => ({ datasets: [], anyConnected: false, isLoading: false }) }))
 vi.mock('../services/aviationRadar', () => ({ useAviationRadar: () => ({ aircraft: [] }) }))
-vi.mock('./DataStatusBanner', () => ({ default: () => null }))
+vi.mock('./DataStatusBanner', () => ({
+  default: (props: Record<string, unknown>) => { Object.assign(bannerProps, props); return null },
+}))
 vi.mock('./UserSupportModal', () => ({
   default: ({ mode }: { mode: string }) => mode === 'feedback'
     ? <div role="dialog" aria-label="New feedback workflow" />
@@ -34,11 +37,13 @@ beforeEach(() => {
   Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: vi.fn() })
   localStorage.clear()
   sessionStorage.clear()
+  Object.keys(bannerProps).forEach(key => delete bannerProps[key])
   identity.role = 'ADMIN'
   identity.plan = 'ADMIN'
 })
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   if (originalScrollTo) Object.defineProperty(HTMLElement.prototype, 'scrollTo', originalScrollTo)
   else Reflect.deleteProperty(HTMLElement.prototype, 'scrollTo')
 })
@@ -95,4 +100,63 @@ test('notification badge and read operation use the authoritative backend count'
   expect(view.getByRole('dialog', { name: 'Notifications' })).toBeTruthy()
   fireEvent.click(view.getByRole('button', { name: 'Mark all read' }))
   await vi.waitFor(() => expect(api.apiMarkAllNotificationsRead).toHaveBeenCalledWith('test-token'))
+})
+
+const healthyPayload = {
+  status: 'ok', database: 'connected' as const, real_observations: 4137,
+  live_sources: 1, total_sources: 11, last_collection: '2026-11-22T13:44:34.233356+00:00',
+  data_status: 'LIVE' as const, timestamp: '2026-11-22T19:30:00.000Z',
+}
+const emptyPayload = {
+  status: 'ok', database: 'connected' as const, real_observations: 0,
+  live_sources: 0, total_sources: 11, last_collection: null,
+  data_status: 'NO_LIVE_DATA' as const, timestamp: '2026-11-22T19:30:00.000Z',
+}
+
+test('a cold-start health failure retries and the banner recovers', async () => {
+  // Round 2 item 4: the old one-shot check froze the banner on
+  // "DATA FEEDS UNAVAILABLE" after a single cold-start abort, even though
+  // /api/health reports LIVE. One failure must retry, not stick.
+  vi.useFakeTimers()
+  const healthMock = vi.mocked(api.apiHealth)
+  healthMock.mockReset()
+  healthMock.mockImplementation(async () => healthyPayload)
+  healthMock.mockRejectedValueOnce(new Error('cold start timeout'))
+  try {
+    render(<AppShell currentPage="overview" onNavigate={vi.fn()}><div>Gov page</div></AppShell>)
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    // The first check failed; the retry fires 3 s later and succeeds.
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+    expect(bannerProps.fareFeedConnected).toBe(true)
+    expect(bannerProps.fareFeedLive).toBe(true)
+    expect(bannerProps.verifiedObservations).toBe(4137)
+  } finally {
+    healthMock.mockReset()
+    healthMock.mockImplementation(async () => emptyPayload)
+  }
+})
+
+test('one health failure does not flip a connected banner; two do', async () => {
+  vi.useFakeTimers()
+  const healthMock = vi.mocked(api.apiHealth)
+  healthMock.mockReset()
+  healthMock.mockImplementation(async () => healthyPayload)
+  try {
+    render(<AppShell currentPage="overview" onNavigate={vi.fn()}><div>Gov page</div></AppShell>)
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(bannerProps.fareFeedConnected).toBe(true)
+    // The next two checks fail: the 60 s refresh, then its 3 s retry.
+    healthMock.mockRejectedValueOnce(new Error('blip'))
+    healthMock.mockRejectedValueOnce(new Error('blip'))
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
+    // One consecutive failure: the last-known-good signal stands.
+    expect(bannerProps.fareFeedConnected).toBe(true)
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+    // Two consecutive failures: a real outage shows honestly.
+    expect(bannerProps.fareFeedConnected).toBe(false)
+    expect(bannerProps.verifiedObservations).toBeNull()
+  } finally {
+    healthMock.mockReset()
+    healthMock.mockImplementation(async () => emptyPayload)
+  }
 })

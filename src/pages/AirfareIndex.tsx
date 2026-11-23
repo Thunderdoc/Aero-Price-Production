@@ -345,7 +345,7 @@ export default function AirfareIndex() {
         </div>
         <p style={{ margin: '0 0 16px', fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.6 }}>
           {dgcaWeightsNote || current.weights?.dgca_weights_note ||
-            'The index uses equal 1.0 weights for every route. DGCA route-level traffic weights are unavailable — this is a stated limitation, not a DGCA-weighted index.'}
+            'Route weights come from AAI airport domestic-passenger traffic (September 2026) via a gravity model — a modelled proxy, not DGCA route traffic, which remains unavailable. This is a stated limitation, not a DGCA-weighted index.'}
         </p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
           {basket.map(rw => (

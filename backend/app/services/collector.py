@@ -706,8 +706,12 @@ async def run_collection(
         # finalize step publishes once, after all chunks land.
         if publish_index_after:
             from app.services.index_engine import publish_index
+            # Lazy import: weights.py imports ROUTE_BASKET from this module,
+            # so a module-level import would be circular. The engine
+            # normalises weights (weighted Jevons), so a subset is fine.
+            from app.config.weights import get_weight
             await publish_index(db, date.today().isoformat(), [
-                {"route": route, "weight": 1.0} for route in selected_routes
+                {"route": route, "weight": get_weight(route)} for route in selected_routes
             ])
 
         final_status = (
@@ -792,10 +796,13 @@ async def finalize_collection_day(db: AsyncSession) -> dict:
     """
     from app.services.index_engine import publish_index
     from app.services.price_alerts import evaluate_price_alerts
+    # Lazy import (weights.py imports ROUTE_BASKET from this module).
+    # The published index uses AAI gravity-model weights, not equal 1.0.
+    from app.config.weights import get_route_weights
 
     index_result = await publish_index(
         db, date.today().isoformat(),
-        [{"route": route, "weight": 1.0} for route in ROUTE_BASKET],
+        get_route_weights(),
     )
     alerts_triggered = await evaluate_price_alerts(db)
     await db.commit()

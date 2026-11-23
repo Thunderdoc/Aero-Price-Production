@@ -29,8 +29,9 @@ from app.services.index_engine import (
 
 router = APIRouter(prefix="/index", tags=["index"])
 
-# Weights come from the documented weights config (equal 1.0 today — DGCA
-# traffic weights are unavailable; see backend/app/config/weights.py).
+# Weights come from the documented weights config (AAI gravity-model
+# weights today — DGCA traffic weights are unavailable; see
+# backend/app/config/weights.py).
 ROUTE_BASKET = get_route_weights()
 
 # MoSPI CPI Transport index values for the backtest — the live benchmark,

@@ -323,18 +323,47 @@ export default function AppShell({ currentPage, onNavigate, children, guest = fa
     return () => { active = false }
   }, [token])
 
+  // Fare-feed status: retry + periodic refresh. The old one-shot check ran
+  // once on mount with no retry, so a single Vercel cold-start failure (the
+  // 12 s apiFetch abort) froze the banner on "DATA FEEDS UNAVAILABLE" for
+  // the whole session even though /api/health reports LIVE and fares are
+  // fresh. A transient failure now retries shortly and the 60 s refresh
+  // keeps the signal current; only two consecutive failures flip the banner
+  // to disconnected, so a real outage still shows honestly.
   useEffect(() => {
     let active = true
-    apiHealth()
-      .then(health => {
-        if (active) setFareFeed({
+    let consecutiveFailures = 0
+    let retryTimer: number | undefined
+    const checkHealth = async () => {
+      try {
+        const health = await apiHealth()
+        if (!active) return
+        consecutiveFailures = 0
+        setFareFeed({
           connected: health.status === 'ok' && health.database === 'connected' && health.real_observations > 0,
           live: health.data_status === 'LIVE',
           observations: health.real_observations,
         })
-      })
-      .catch(() => { if (active) setFareFeed({ connected: false, live: false, observations: null }) })
-    return () => { active = false }
+      } catch {
+        if (!active) return
+        consecutiveFailures += 1
+        if (consecutiveFailures >= 2) {
+          setFareFeed({ connected: false, live: false, observations: null })
+        } else if (retryTimer === undefined) {
+          retryTimer = window.setTimeout(() => {
+            retryTimer = undefined
+            if (active) void checkHealth()
+          }, 3000)
+        }
+      }
+    }
+    void checkHealth()
+    const timer = window.setInterval(() => { if (active) void checkHealth() }, 60_000)
+    return () => {
+      active = false
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer)
+      window.clearInterval(timer)
+    }
   }, [])
 
   async function markNotificationsRead(ids?: string[]) {

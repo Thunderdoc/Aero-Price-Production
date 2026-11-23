@@ -45,16 +45,17 @@ const NODE_STATUS_STYLE: Record<NodeStatus, { icon: typeof BookOpen; color: stri
   DOCUMENTED: { icon: BookOpen, color: 'var(--color-info)', bg: 'var(--color-info-bg)', label: 'METHOD' },
 }
 
-const JEVONS = `P = Π (p_it / p_i0)^(1/n)
+const JEVONS = `P = Π (p_it / p_i0)^(w_i)
 
 where:
   p_it   = fare for corridor i at time t (current period)
   p_i0   = median fare on the first verified collection day
+  w_i    = normalised route weight (AAI gravity model; Σw_i = 1 over matched corridors)
   n      = matched corridors with observations in both periods
   Π      = geometric product over all matched corridors i
 
 The index is published only when the backend confirms the required matched REAL/OFFICIAL observations.
-Current backend collection uses equal weights (1.0) for each route. This is an AeroPrice sample index, not an official DGCA or MoSPI index.`
+Route weights come from AAI airport domestic-passenger traffic (September 2026) via a gravity model: each route's weight is proportional to sqrt(passengers at origin × passengers at destination). This is a modelled proxy for route traffic, not DGCA route traffic (unavailable). This is an AeroPrice sample index, not an official DGCA or MoSPI index.`
 
 export default function Methodology({ onNavigate }: { onNavigate?: (page: Page) => void }) {
   const [expanded, setExpanded] = useState<Set<number>>(new Set([1, 7, 8]))

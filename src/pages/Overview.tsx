@@ -24,6 +24,10 @@ const routeSpecs = [
 const GEOJSON_URL = '/maps/india-states-2019.geojson'
 const ROUTE_CACHE_KEY = 'aeroprice:verified-route-cards:v1'
 const DASHBOARD_CACHE_KEY = 'aeroprice:verified-dashboard:v1'
+// Delay before a failed route-card fetch retries once. A Vercel cold start
+// can exceed the 12 s apiFetch abort on the first attempt; by the time the
+// retry runs the backend is warm, so a short delay is enough.
+const ROUTE_CARD_RETRY_MS = 1000
 
 const movementColors: Record<FareMovementStatus | 'NO_DATA', string> = {
   SIGNIFICANT_INCREASE: '#d9343e', MODERATE_INCREASE: '#ef7661', STABLE: '#4d8ec4',
@@ -230,18 +234,32 @@ export default function Overview({ onNavigate }: Props) {
 
   useEffect(() => {
     let active = true
-    Promise.all(routeSpecs.map(async spec => {
+    const loadRoute = async (spec: (typeof routeSpecs)[number], attempt = 0): Promise<RouteCard> => {
       try {
         const response = await apiFares({ route: spec.key, limit: 200 }, token ?? undefined)
         const fares = response.observations.filter(observation => observation.data_origin === 'REAL' || observation.data_origin === 'OFFICIAL' || observation.data_origin === 'PUBLIC_INTERFACE').map(observation => Number(observation.total_fare)).filter(Number.isFinite)
         return { ...spec, fare: median(fares), minFare: fares.length ? Math.min(...fares) : null, maxFare: fares.length ? Math.max(...fares) : null, sampleCount: fares.length }
-      } catch { return { ...spec, fare: null, minFare: null, maxFare: null, sampleCount: 0 } }
-    })).then(next => {
+      } catch {
+        // One retry: a cold-start failure must not pin the route as
+        // unavailable — the retry usually lands on a warm backend.
+        if (attempt === 0) {
+          await new Promise(resolve => setTimeout(resolve, ROUTE_CARD_RETRY_MS))
+          if (active) return loadRoute(spec, 1)
+        }
+        return { ...spec, fare: null, minFare: null, maxFare: null, sampleCount: 0 }
+      }
+    }
+    Promise.all(routeSpecs.map(spec => loadRoute(spec))).then(next => {
       if (!active) return
-      // Cache only a successful response containing verified rows. A failed
-      // refresh must never overwrite the last real snapshot with nulls.
-      if (next.some(route => route.fare != null)) {
-        setRouteCards(next)
+      // Merge: a route that failed this round keeps its previously loaded
+      // fare (from the cached snapshot or an earlier load) instead of
+      // dropping to "Data unavailable" on a transient failure.
+      setRouteCards(prev => next.map(card => card.fare != null ? card : (prev.find(item => item.key === card.key) ?? card)))
+      // Cache only a COMPLETE snapshot. Caching a partial one pinned the
+      // failed routes as unavailable for the rest of the session (22 Nov
+      // 2026: DEL-BOM/DEL-BLR stuck "No verified observation" while
+      // DEL-MAA loaded, after a cold-start partial failure).
+      if (next.every(route => route.fare != null)) {
         try { sessionStorage.setItem(ROUTE_CACHE_KEY, JSON.stringify(next)) } catch { /* storage is optional */ }
       }
     })
