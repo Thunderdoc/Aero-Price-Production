@@ -3,7 +3,7 @@ import { AlertTriangle, ArrowLeftRight, Info, RefreshCw } from 'lucide-react'
 import { Button } from '../components/ui/Button'
 import { Modal } from '../components/ui/Modal'
 import { BarChart, LineChart } from '../components/MiniChart'
-import { apiAnomalies, apiFares, apiLiveFares, apiForecast, apiRouteBasket, isBackendAvailable, type AnomalyResponse, type FareObservationApi, type ForecastResponse } from '../services/api'
+import { apiAnomalies, apiFares, apiFareSummary, apiLiveFares, apiForecast, apiRouteBasket, isBackendAvailable, type AnomalyResponse, type FareObservationApi, type ForecastResponse } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
 import DataFreshness from '../components/DataFreshness'
 import { buildDailyMedianSeries, collectionDays } from '../lib/fareSeries'
@@ -16,6 +16,24 @@ type Tab = typeof TABS[number]
 function formatFare(value: number | null) {
   return value == null ? 'Data unavailable' : `₹${value.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`
 }
+
+// P5: shape of GET /api/fares/summary/{route} (backend/app/api/routes/
+// fares.py route_fare_summary). `overall` is the median/min/max over the
+// COMPLETE latest collection day — no row cap — while the cached-rows
+// fallback below is capped by the fares endpoint's limit.
+interface RouteFareSummary {
+  route: string
+  overall: { median: number | null; min: number | null; max: number | null; count: number; sample_period: string | null; last_collected_at: string | null; data_origin: string; status: string }
+  windows: Record<string, { median: number | null; min: number | null; max: number | null; count: number; data_origin: string; status: string }>
+  has_real_data: boolean
+  timestamp: string
+}
+
+// P5: the fares endpoint caps limit at 1000 (backend fares.py le=1000) and
+// the largest route holds ~494 rows, so 1000 loads every stored row for any
+// route — the history, booking-window and collection-change figures derived
+// from rows are no longer truncated to a newest-first subsample.
+const CACHED_FARES_LIMIT = 1000
 
 function changeBetweenCollections(rows: FareObservationApi[]) {
   const byDay = new Map<string, number[]>()
@@ -44,6 +62,11 @@ export default function RouteExplorer() {
   const [filteredToDate, setFilteredToDate] = useState(false)
   const [forecast, setForecast] = useState<ForecastResponse | null>(null)
   const [anomalies, setAnomalies] = useState<AnomalyResponse | null>(null)
+  // P5: per-route summary from the backend (complete latest-day figures).
+  // It drives the headline ONLY on the cached path — live rows are a
+  // complete scrape for the searched travel date and keep their own median.
+  const [fareSummary, setFareSummary] = useState<RouteFareSummary | null>(null)
+  const [liveRows, setLiveRows] = useState(false)
   // R2: request-id guard — a slow loadRoute for a route the user has already
   // left must not overwrite the current route's fares when it lands.
   const requestIdRef = useRef(0)
@@ -69,11 +92,14 @@ export default function RouteExplorer() {
       // the verified snapshot is healthy. Keep the route usable by falling
       // back to persisted index-eligible rows and label the result honestly.
       if (!next.length) {
-        const cached = await apiFares({ route, limit: 200 }, token ?? undefined)
+        const cached = await apiFares({ route, limit: CACHED_FARES_LIMIT }, token ?? undefined)
         if (!isCurrent()) return
         next = cached.observations.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL' || row.data_origin === 'PUBLIC_INTERFACE')
+        setLiveRows(false)
         setFilteredToDate(false)
         if (next.length) setMessage('Live fare source is temporarily unavailable; showing cached verified observations.')
+      } else {
+        setLiveRows(true)
       }
       setRows(next)
       setFilteredToDate(Boolean(date))
@@ -89,14 +115,16 @@ export default function RouteExplorer() {
       if (!next.length) setMessage(date ? `No verified fare records are available for ${route} on ${date}.` : `No verified fare records are available for ${route}.`)
     } catch {
       try {
-        const cached = await apiFares({ route, limit: 200 }, token ?? undefined)
+        const cached = await apiFares({ route, limit: CACHED_FARES_LIMIT }, token ?? undefined)
         if (!isCurrent()) return
         const next = cached.observations.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL' || row.data_origin === 'PUBLIC_INTERFACE')
+        setLiveRows(false)
         setRows(next)
         setFilteredToDate(false)
         setMessage(next.length ? 'Live fare source is temporarily unavailable; showing cached verified observations.' : 'No verified fare records are available for this route.')
       } catch {
         if (!isCurrent()) return
+        setLiveRows(false)
         setRows([])
         setMessage('The verified fare service is not available right now.')
       }
@@ -120,12 +148,26 @@ export default function RouteExplorer() {
   useEffect(() => {
     apiForecast(route, 7, token ?? undefined).then(setForecast).catch(() => setForecast(null))
     apiAnomalies(token ?? undefined).then(setAnomalies).catch(() => setAnomalies(null))
+    // P5: the summary is stored data, independent of the searched travel
+    // date — one fetch per route, alongside forecast/anomalies.
+    apiFareSummary(route, token ?? undefined).then(value => setFareSummary(value as RouteFareSummary)).catch(() => setFareSummary(null))
   }, [route, token])
 
+  // R4: filter anomalies by route FIRST — the tab branches on this list,
+  // so anomalies that exist only for other routes show the empty message
+  // instead of a header-only table.
+  const routeAnomalies = useMemo(() => (anomalies?.anomalies ?? []).filter(item => item.route === route), [anomalies, route])
+
   const fares = verifiedRows.map(row => row.total_fare)
-  const currentFare = median(fares)
-  const minFare = fares.length ? Math.min(...fares) : null
-  const maxFare = fares.length ? Math.max(...fares) : null
+  // P5: on the cached path the headline comes from the backend summary's
+  // complete latest-day figures, not from the (capped) loaded rows — the
+  // old newest-200 subsample silently excluded older quotes on the biggest
+  // routes. Live rows keep their own median (a complete scrape for the
+  // searched date), and a failed summary falls back to the row figures.
+  const summaryOverall = liveRows ? null : fareSummary?.overall ?? null
+  const currentFare = summaryOverall?.median ?? median(fares)
+  const minFare = summaryOverall?.min ?? (fares.length ? Math.min(...fares) : null)
+  const maxFare = summaryOverall?.max ?? (fares.length ? Math.max(...fares) : null)
   const collectionChange = changeBetweenCollections(verifiedRows)
   const carriers = [...new Set(verifiedRows.map(row => row.airline).filter(Boolean))]
   const sources = [...new Set(verifiedRows.map(row => row.source).filter(Boolean))]
@@ -184,7 +226,7 @@ export default function RouteExplorer() {
 
         {tab === 'Forecast' && (forecast?.status === 'FORECAST' && forecast.forecasts.length ? <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14 }}>{forecast.forecasts.map(item => <div key={item.horizon_days} style={{ padding: 15, borderRadius: 'var(--radius-md)', background: 'var(--color-surface-secondary)' }}><div className="text-caption text-tertiary">{item.horizon_days}-day outlook</div><div className="text-label text-primary" style={{ marginTop: 7, fontWeight: 750 }}>{formatFare(item.forecast_fare)}</div><div className="text-caption text-tertiary">Range {formatFare(item.lower_bound)} – {formatFare(item.upper_bound)}</div></div>)}</div> : <div style={{ padding: 14, borderRadius: 'var(--radius-md)', background: 'var(--color-warning-bg)', color: 'var(--color-text-secondary)', fontSize: 12 }}><AlertTriangle size={14} style={{ verticalAlign: 'middle', marginRight: 6 }} />{forecast?.message ?? 'A forecast needs more verified history before it can be produced.'}</div>)}
 
-        {tab === 'Anomalies' && (anomalies?.anomalies?.length ? <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}><thead><tr>{['Route', 'Airline', 'Fare', 'Collected'].map(item => <th key={item} style={{ textAlign: 'left', padding: 9, color: 'var(--color-text-tertiary)', fontSize: 10 }}>{item}</th>)}</tr></thead><tbody>{anomalies.anomalies.filter(item => item.route === route).map(item => <tr key={item.observation_id} style={{ borderTop: '1px solid var(--color-border-primary)' }}><td style={{ padding: 9 }}>{item.route}</td><td style={{ padding: 9 }}>{item.airline}</td><td style={{ padding: 9 }}>{formatFare(item.total_fare)}</td><td style={{ padding: 9 }}>{formatDateIST(item.collected_at)}</td></tr>)}</tbody></table></div> : <p className="text-body text-secondary">No verified anomaly records are available for this route.</p>)}
+        {tab === 'Anomalies' && (routeAnomalies.length ? <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}><thead><tr>{['Route', 'Airline', 'Fare', 'Collected'].map(item => <th key={item} style={{ textAlign: 'left', padding: 9, color: 'var(--color-text-tertiary)', fontSize: 10 }}>{item}</th>)}</tr></thead><tbody>{routeAnomalies.map(item => <tr key={item.observation_id} style={{ borderTop: '1px solid var(--color-border-primary)' }}><td style={{ padding: 9 }}>{item.route}</td><td style={{ padding: 9 }}>{item.airline}</td><td style={{ padding: 9 }}>{formatFare(item.total_fare)}</td><td style={{ padding: 9 }}>{formatDateIST(item.collected_at)}</td></tr>)}</tbody></table></div> : <p className="text-body text-secondary">No verified anomaly records are available for this route.</p>)}
 
         {tab === 'Sources' && (sourceRows.length ? <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}><thead><tr>{['Source', 'Status', 'Verified records', 'Latest collection'].map(item => <th key={item} style={{ textAlign: 'left', padding: 9, color: 'var(--color-text-tertiary)', fontSize: 10 }}>{item}</th>)}</tr></thead><tbody>{sourceRows.map(item => <tr key={item.source} style={{ borderTop: '1px solid var(--color-border-primary)' }}><td style={{ padding: 9 }}>{item.source}</td><td style={{ padding: 9, color: 'var(--color-success)', fontWeight: 700 }}>VERIFIED</td><td style={{ padding: 9 }}>{item.count}</td><td style={{ padding: 9 }}>{item.latest ? formatDateTimeIST(item.latest) : '—'}</td></tr>)}</tbody></table></div> : <p className="text-body text-secondary">No verified source records are available for this route.</p>)}
       </div>

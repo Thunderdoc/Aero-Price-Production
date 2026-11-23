@@ -12,11 +12,41 @@ authenticated production API responses that pass all 5 provenance conditions).
 import asyncio
 import hashlib
 import json
+import os
 import time
 
 from app.collectors.base import CollectionResult, FareRecord, FareSourceAdapter, redact_credentials
 from app.core.config import settings
 from app.processing.provenance import PUBLIC_INTERFACE
+
+
+def _import_fast_flights():
+    """Import the third-party ``fast_flights`` package without letting it
+    mutate this process's environment.
+
+    Root cause of the LOG_LEVEL leak (Track C): fast-flights 3.0 calls
+    ``dotenv.load_dotenv()`` at import time (``fast_flights/integrations/
+    base.py``), which loads the nearest ``.env`` up the directory tree
+    into os.environ — including this machine's ``~/.env``, whose
+    ``LOG_LEVEL=debug`` leaked a lowercase value into the pytest process
+    env (first via ``_make_adapters()`` -> ``is_configured()``) and from
+    there into subprocess boots, where it used to crash main.py at import.
+    Snapshot os.environ and restore only the delta afterwards (remove keys
+    the import added, restore keys it changed); existing keys are never
+    touched, so a concurrent reader cannot observe a half-restored env.
+    The module stays cached in sys.modules, so later imports are free.
+    """
+    previous = dict(os.environ)
+    try:
+        import fast_flights
+        return fast_flights
+    finally:
+        for key in list(os.environ):
+            if key not in previous:
+                del os.environ[key]
+        for key, value in previous.items():
+            if os.environ.get(key) != value:
+                os.environ[key] = value
 
 
 class FastFlightsAdapter(FareSourceAdapter):
@@ -31,7 +61,7 @@ class FastFlightsAdapter(FareSourceAdapter):
 
     def is_configured(self) -> bool:
         try:
-            import fast_flights  # noqa: F401
+            _import_fast_flights()
             return True
         except ImportError:
             return False
@@ -118,14 +148,14 @@ class FastFlightsAdapter(FareSourceAdapter):
         started = time.monotonic()
 
         def search():
-            from fast_flights import FlightQuery, Passengers, create_query, get_flights
-            query = create_query(
-                flights=[FlightQuery(date=travel_date, from_airport=origin,
-                                     to_airport=destination)],
-                seat="economy", trip="one-way", passengers=Passengers(adults=1),
+            ff = _import_fast_flights()
+            query = ff.create_query(
+                flights=[ff.FlightQuery(date=travel_date, from_airport=origin,
+                                        to_airport=destination)],
+                seat="economy", trip="one-way", passengers=ff.Passengers(adults=1),
                 currency="INR",
             )
-            return get_flights(query)
+            return ff.get_flights(query)
 
         try:
             results = await asyncio.wait_for(asyncio.to_thread(search), timeout=45)

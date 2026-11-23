@@ -3,9 +3,13 @@ import {
   apiAviationLive,
   apiAviationSchedules,
   apiFares,
+  apiGovDatasets,
+  apiGovRefresh,
   apiLiveFares,
+  AVIATION_TIMEOUT_MS,
   clearApiAuthSession,
   getStoredSessionToken,
+  GOV_REFRESH_TIMEOUT_MS,
   LIVE_FARES_TIMEOUT_MS,
 } from './api'
 
@@ -59,6 +63,78 @@ test('R1: a live-fares search survives past the 12 s global abort and times out 
 test('R1: ordinary endpoints still abort at 12 s — only the live-fares call gets the longer budget', async () => {
   hangUntilAborted()
   const result = apiFares({ limit: 10 }, 'test-token').catch((error: Error) => error.message)
+  await vi.advanceTimersByTimeAsync(11_999)
+  expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(false)
+  await vi.advanceTimersByTimeAsync(1)
+  expect(await result).toBe('The server is taking too long to respond. Please retry in a moment.')
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+})
+
+test('ITEM 2: the aviation live call survives past the 12 s abort and times out at 30 s', async () => {
+  expect(AVIATION_TIMEOUT_MS).toBe(30_000)
+  hangUntilAborted()
+  const result = apiAviationLive('test-token').catch((error: Error) => error.message)
+  // A cold cache miss fans out to three providers at 8 s each (≈24 s), so
+  // the old 12 s abort cut off slow-but-successful provider round-trips.
+  await vi.advanceTimersByTimeAsync(12_000)
+  expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(false)
+  await vi.advanceTimersByTimeAsync(17_999)
+  expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(false)
+  await vi.advanceTimersByTimeAsync(1)
+  expect(await result).toBe('The server is taking too long to respond. Please retry in a moment.')
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+})
+
+test('ITEM 2: the aviation schedules call survives past the 12 s abort and times out at 30 s', async () => {
+  hangUntilAborted()
+  const result = apiAviationSchedules('DEL', 'BOM', 'test-token').catch((error: Error) => error.message)
+  // The schedules provider allows 20 s server-side, past the 12 s abort.
+  await vi.advanceTimersByTimeAsync(12_000)
+  expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(false)
+  await vi.advanceTimersByTimeAsync(17_999)
+  expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(false)
+  await vi.advanceTimersByTimeAsync(1)
+  expect(await result).toBe('The server is taking too long to respond. Please retry in a moment.')
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+})
+
+test('D5: the government refresh survives past the 12 s abort and times out at 120 s', async () => {
+  expect(GOV_REFRESH_TIMEOUT_MS).toBe(120_000)
+  hangUntilAborted()
+  const result = apiGovRefresh('test-token').catch((error: Error) => error.message)
+  // Six sequential official-source fetches, each up to 3 attempts × 30 s,
+  // legitimately take well over 12 s — the old call always timed out.
+  await vi.advanceTimersByTimeAsync(12_000)
+  expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(false)
+  expect(fetchMock.mock.calls[0][1]?.method).toBe('POST')
+  await vi.advanceTimersByTimeAsync(107_999)
+  expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(false)
+  await vi.advanceTimersByTimeAsync(1)
+  expect(await result).toBe('The server is taking too long to respond. Please retry in a moment.')
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+})
+
+test('S5: a caller-provided signal aborts the request', async () => {
+  hangUntilAborted()
+  const controller = new AbortController()
+  const result = apiGovDatasets('test-token', controller.signal).catch((error: unknown) => error)
+  await vi.advanceTimersByTimeAsync(1000)
+  expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(false)
+  controller.abort()
+  const error = await result
+  expect(error).toBeInstanceOf(DOMException)
+  expect((error as DOMException).name).toBe('AbortError')
+  expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(true)
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+})
+
+test('S5: the 12 s timeout still applies when a caller signal is present', async () => {
+  hangUntilAborted()
+  // The old `init?.signal ?? controller.signal` silently disabled the
+  // timeout whenever a caller passed a signal — the gov hook's 8 s race
+  // would have been the only backstop. The signals must combine.
+  const controller = new AbortController()
+  const result = apiGovDatasets('test-token', controller.signal).catch((error: Error) => error.message)
   await vi.advanceTimersByTimeAsync(11_999)
   expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(false)
   await vi.advanceTimersByTimeAsync(1)

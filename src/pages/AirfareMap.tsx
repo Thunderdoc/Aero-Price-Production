@@ -8,7 +8,8 @@ import { Activity, Radio, Filter } from 'lucide-react'
 import { AIRPORTS } from '../data/airports'
 import { useLiveData } from '../hooks/useLiveData'
 import { useAuth } from '../contexts/AuthContext'
-import { apiFareMovement, apiRouteBasket, apiRouteSummaries } from '../services/api'
+import { apiFareMovement, apiIndexBasket, apiRouteBasket, apiRouteSummaries, type FareMovementResponse, type RouteBasketItem } from '../services/api'
+import { useIndiaGeoJson } from '../services/indiaGeoJson'
 import TrendIndicator from '../components/TrendIndicator'
 import { useAviationRadar } from '../services/aviationRadar'
 
@@ -67,13 +68,21 @@ const TIER_RADIUS: Record<string, number> = {
 // ─── Arc helpers ─────────────────────────────────────────────────────────────
 
 /** Generate N points along a quadratic bezier arc in lat/lng space */
-function arcPoints(
+export function arcPoints(
   from: [number, number],
   to: [number, number],
   steps = 60,
 ): [number, number][] {
   const [lat1, lng1] = from
   const [lat2, lng2] = to
+
+  // M8: a same-airport route has dist === 0, and the perpendicular offset
+  // below divides by dist — without this guard every point is NaN and the
+  // whole map render breaks. A zero-length route is a straight line (all
+  // points at the airport), never a NaN arc.
+  if (lat1 === lat2 && lng1 === lng2) {
+    return Array.from({ length: steps + 1 }, () => [lat1, lng1] as [number, number])
+  }
 
   // Midpoint offset — perpendicular deflection scaled by distance
   const mlat = (lat1 + lat2) / 2
@@ -99,13 +108,16 @@ function arcPoints(
 }
 
 /** Tangent heading (degrees) at parameter t along the bezier arc */
-function arcHeading(
+export function arcHeading(
   from: [number, number],
   to: [number, number],
   t: number,
 ): number {
   const [lat1, lng1] = from
   const [lat2, lng2] = to
+  // M8: a zero-length route has no tangent — report due north (0°) rather
+  // than dividing by a zero distance and returning NaN.
+  if (lat1 === lat2 && lng1 === lng2) return 0
   const mlat = (lat1 + lat2) / 2
   const mlng = (lng1 + lng2) / 2
   const dlat = lat2 - lat1
@@ -335,21 +347,17 @@ function AirportMarker({ lat, lng, iata, name, city, tier }: AirportMarkerProps)
 
 // ─── GeoJSON India layer ──────────────────────────────────────────────────────
 
-function IndiaGeoJSON() {
-  const [geoData, setGeoData] = useState<object | null>(null)
-
-  useEffect(() => {
-    fetch('/maps/india-states-2019.geojson')
-      .then((r) => { if (!r.ok) throw new Error('India boundaries unavailable'); return r.json() })
-      .then((d: object) => setGeoData(d))
-      .catch(() => { /* silently skip if unavailable */ })
-  }, [])
-
-  if (!geoData) return null
+// M7: the boundaries now load through the shared cached loader
+// (src/services/indiaGeoJson.ts) at page level, so the fare map and the
+// radar map fetch the file once between them instead of once each. This
+// component only renders the loaded data; the page shows a small notice
+// when the load fails, as the radar map does.
+function IndiaGeoJSON({ data }: { data: object | null }) {
+  if (!data) return null
 
   return (
     <GeoJSON
-      data={geoData as Parameters<typeof GeoJSON>[0]['data']}
+      data={data as Parameters<typeof GeoJSON>[0]['data']}
       style={() => ({
         fillColor: '#eff6ff',
         fillOpacity: 0.55,
@@ -685,6 +693,71 @@ function RouteSidebar({ corridors, selectedId, onSelect }: RouteSidebarProps) {
   )
 }
 
+// ─── Corridor builder (M6) ────────────────────────────────────────────────────
+
+type RouteSummaries = Awaited<ReturnType<typeof apiRouteSummaries>>['summaries']
+
+// Build map corridors only from backend route summaries. The former static
+// Kaggle corridor list made old fares look current and was removed.
+//
+// M6: each corridor carries the route's CONFIGURED weight from
+// /api/index/basket (the AAI gravity-model weights in
+// backend/app/config/weights.py), so major corridors draw thicker than minor
+// ones. The old code hardcoded weight: 1 for every corridor. When the
+// basket call fails, every route gets the equal share (1/N) — the same
+// fallback the backend's get_weight uses for unknown routes — so the map
+// renders uniformly instead of breaking.
+export function buildMapCorridors(
+  routes: RouteBasketItem[],
+  movement: FareMovementResponse | null,
+  summaries: RouteSummaries,
+  weightsByRoute: Map<string, number>,
+): MapCorridor[] {
+  const equalShare = routes.length > 0 ? 1 / routes.length : 0
+  return routes.filter(item => item.has_data).map((item): MapCorridor | null => {
+    const [from, to] = item.route.split('-')
+    const fromAirport = AIRPORTS[from]
+    const toAirport = AIRPORTS[to]
+    if (!fromAirport || !toAirport) return null
+    const fare = summaries[item.route]
+    if (!fare || fare.median == null || fare.min == null || fare.max == null || !fare.sample_period) return null
+    const compared = movement?.routes.find(row => row.route === item.route)
+    const trend = compared
+      ? compared.status.includes('INCREASE') ? 'up' : compared.status.includes('DECREASE') ? 'down' : 'stable'
+      : 'unknown'
+    return {
+      id: item.route,
+      from,
+      to,
+      fromLat: fromAirport.lat,
+      fromLng: fromAirport.lng,
+      toLat: toAirport.lat,
+      toLng: toAirport.lng,
+      currentFare: fare.median,
+      minFare: fare.min,
+      maxFare: fare.max,
+      change7d: compared?.change_pct ?? 0,
+      trend,
+      weight: weightsByRoute.get(item.route) ?? equalShare,
+      observations: fare.count,
+      samplePeriod: fare.sample_period,
+      sampleWindowDays: fare.sample_window_days,
+      observedAt: fare.last_collected_at,
+      movementAvailable: Boolean(compared),
+    } satisfies MapCorridor
+  }).filter((corridor): corridor is MapCorridor => corridor != null)
+}
+
+// M6: map a route's configured weight share to an arc stroke width in px.
+// Normalised over the loaded corridors so the busiest corridor draws at
+// 4 px and the quietest at 1.5 px. A single weight — or a failed basket
+// fetch, which yields equal shares — renders at the old uniform 2.2 px.
+export function corridorStrokeWidth(weight: number, minWeight: number, maxWeight: number): number {
+  if (!Number.isFinite(weight) || maxWeight <= minWeight) return 2.2
+  const t = Math.min(1, Math.max(0, (weight - minWeight) / (maxWeight - minWeight)))
+  return 1.5 + t * 2.5
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function AirfareMap() {
@@ -711,9 +784,10 @@ export default function AirfareMap() {
   const [corridors, setCorridors] = useState<MapCorridor[]>([])
   const [routesLoading, setRoutesLoading] = useState(false)
   const [routeError, setRouteError] = useState<string | null>(null)
+  // M7: state boundaries load through the shared cached loader; a failed
+  // load shows a small notice instead of failing silently.
+  const indiaGeo = useIndiaGeoJson()
 
-  // Build map corridors only from backend route summaries. The former static
-  // Kaggle corridor list made old fares look current and was removed.
   useEffect(() => {
     let active = true
     if (!token) {
@@ -724,41 +798,10 @@ export default function AirfareMap() {
 
     setRoutesLoading(true)
     setRouteError(null)
-    Promise.all([apiRouteBasket(token), apiFareMovement(token).catch(() => null), apiRouteSummaries(token)])
-      .then(([basket, movement, summaryResponse]) => {
-        const results = basket.routes.filter(item => item.has_data).map((item): MapCorridor | null => {
-          const [from, to] = item.route.split('-')
-          const fromAirport = AIRPORTS[from]
-          const toAirport = AIRPORTS[to]
-          if (!fromAirport || !toAirport) return null
-          const fare = summaryResponse.summaries[item.route]
-          if (!fare || fare.median == null || fare.min == null || fare.max == null || !fare.sample_period) return null
-          const compared = movement?.routes.find(row => row.route === item.route)
-          const trend = compared
-            ? compared.status.includes('INCREASE') ? 'up' : compared.status.includes('DECREASE') ? 'down' : 'stable'
-            : 'unknown'
-          return {
-            id: item.route,
-            from,
-            to,
-            fromLat: fromAirport.lat,
-            fromLng: fromAirport.lng,
-            toLat: toAirport.lat,
-            toLng: toAirport.lng,
-            currentFare: fare.median,
-            minFare: fare.min,
-            maxFare: fare.max,
-            change7d: compared?.change_pct ?? 0,
-            trend,
-            weight: 1,
-            observations: fare.count,
-            samplePeriod: fare.sample_period,
-            sampleWindowDays: fare.sample_window_days,
-            observedAt: fare.last_collected_at,
-            movementAvailable: Boolean(compared),
-          } satisfies MapCorridor
-        })
-        if (active) setCorridors(results.filter((corridor): corridor is MapCorridor => corridor != null))
+    Promise.all([apiRouteBasket(token), apiFareMovement(token).catch(() => null), apiRouteSummaries(token), apiIndexBasket(token).catch(() => null)])
+      .then(([basket, movement, summaryResponse, indexBasket]) => {
+        const weightsByRoute = new Map(indexBasket?.routes.map(row => [row.route, row.weight]) ?? [])
+        if (active) setCorridors(buildMapCorridors(basket.routes, movement, summaryResponse.summaries, weightsByRoute))
       })
       .catch(() => { if (active) { setCorridors([]); setRouteError('Verified route summaries are unavailable.') } })
       .finally(() => { if (active) setRoutesLoading(false) })
@@ -768,6 +811,12 @@ export default function AirfareMap() {
 
   const [filter, setFilter] = useState<FilterMode>('ALL')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+
+  // M6: stroke widths normalise over ALL loaded corridors (not the filtered
+  // subset) so switching the trend filter never rescales the arcs.
+  const corridorWeights = corridors.map(c => c.weight)
+  const minCorridorWeight = corridorWeights.length ? Math.min(...corridorWeights) : 0
+  const maxCorridorWeight = corridorWeights.length ? Math.max(...corridorWeights) : 0
 
   // Filter corridors based on selected mode
   const filteredCorridors = corridors.filter((c) => {
@@ -878,6 +927,11 @@ export default function AirfareMap() {
             {routesLoading ? 'Loading verified route summaries…' : routeError ?? 'No verified route observations are available for the map.'}
           </div>
         )}
+        {indiaGeo.failed && (
+          <div role="status" style={{ position: 'absolute', zIndex: 500, top: 18, left: '50%', transform: 'translateX(-50%)', maxWidth: 340, padding: '8px 12px', borderRadius: 9, background: 'rgba(255,255,255,0.94)', border: '1px solid var(--color-border-primary)', boxShadow: '0 4px 16px rgba(15,44,90,.12)', fontSize: 11, color: 'var(--color-text-secondary)', textAlign: 'center' }}>
+            State boundaries unavailable — routes and airports remain visible.
+          </div>
+        )}
         <MapContainer
           center={[20.5937, 78.9629]}
           zoom={5}
@@ -895,7 +949,7 @@ export default function AirfareMap() {
           />
 
           {/* India state boundaries */}
-          <IndiaGeoJSON />
+          <IndiaGeoJSON data={indiaGeo.data} />
 
           {/* Aerial arc routes with animated aircraft */}
           {filteredCorridors.map((corridor) => (
@@ -906,7 +960,7 @@ export default function AirfareMap() {
               toLat={corridor.toLat}
               toLng={corridor.toLng}
               color={TREND_COLORS[corridor.trend]}
-              weight={Math.max(1.5, corridor.weight * 2.2)}
+              weight={corridorStrokeWidth(corridor.weight, minCorridorWeight, maxCorridorWeight)}
               highlighted={selectedId === corridor.id}
               routeLabel={`${corridor.from} → ${corridor.to}  latest-day median ₹${corridor.currentFare.toLocaleString('en-IN')} · ${corridor.observations} quotes · ${corridor.samplePeriod}`}
             />

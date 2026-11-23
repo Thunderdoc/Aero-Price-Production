@@ -74,11 +74,15 @@ function pathToPage(pathname: string): Page {
 // page here reads only endpoints the backend already serves without auth
 // (dashboard, fares, routes, fare movement) and renders honestly with no
 // token. Anything else routes the guest back to the login page.
-// NOTE for the Phase 4 router rebuild: preserve this guest set and the
-// guest banner below — the public-read set can grow (livefares, government,
-// methodology, aviation pages are also public-read) once the sidebar offers
-// them to guests.
-const GUEST_PAGES: Page[] = ['overview', 'routes', 'insights', 'map']
+// ITEM 4: livefares is in the set — GET /api/fares carries no auth
+// dependency and the health probe is public, so a guest on Live Fares fires
+// no 401 at all. Aviation stays OUT: /api/aviation/live requires a Bearer
+// token, so a guest deep-linking an aviation URL is clamped to Overview by
+// the effect below (and sidebar navigation bounces them to the sign-in
+// prompt via navigate()). Government stays out: its page calls the
+// auth-gated index endpoint and its refresh is analyst-gated. Methodology
+// was not evaluated for guest access in this change.
+const GUEST_PAGES: Page[] = ['overview', 'routes', 'insights', 'map', 'livefares']
 
 function GuestBanner({ onSignIn }: { onSignIn: () => void }) {
   return (

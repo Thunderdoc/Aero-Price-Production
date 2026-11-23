@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Circle, CircleMarker, GeoJSON, MapContainer, Marker, Polyline, Popup, TileLayer, Tooltip, useMap } from 'react-leaflet'
 import L from 'leaflet'
-import type { GeoJsonObject } from 'geojson'
 import { BarChart3, Crosshair, Layers, Minus, Plus } from 'lucide-react'
 import { aircraftId, aircraftLabel, flightPhase, operatorName, radarAirports, telemetry, type Aircraft, type RadarSnapshot } from '../services/aviationRadar'
+import { useIndiaGeoJson } from '../services/indiaGeoJson'
 
 export type RadarLayer = 'Live' | 'Routes' | 'Corridors' | 'Weather' | 'ATC Zones'
 const INDIA_BOUNDS: L.LatLngBoundsExpression = [[5.3, 65.7], [36.3, 98.8]]
@@ -40,12 +40,15 @@ function AircraftMarker({ aircraft, selected, onSelect }: { aircraft: Aircraft; 
   </Marker>
 }
 
-export default function AviationRadarMap({ state, selected, onSelect, layer, fullscreen, weatherConnected = false }: { state: RadarSnapshot; selected: string | null; onSelect: (a: Aircraft) => void; layer: RadarLayer; fullscreen: boolean; weatherConnected?: boolean }) {
-  const [geo, setGeo] = useState<GeoJsonObject | null>(null)
+export type WeatherStatus = 'loading' | 'connected' | 'unavailable'
+
+export default function AviationRadarMap({ state, selected, onSelect, layer, fullscreen, weatherStatus = 'loading' }: { state: RadarSnapshot; selected: string | null; onSelect: (a: Aircraft) => void; layer: RadarLayer; fullscreen: boolean; weatherStatus?: WeatherStatus }) {
+  // M7: boundaries load through the shared cached loader — one request for
+  // both maps instead of one each. A failed load still shows the
+  // "Basemap unavailable" notice below, as before.
+  const { data: geo, failed: mapFailed } = useIndiaGeoJson()
   const [boundaries, setBoundaries] = useState(true)
   const [trails, setTrails] = useState(true)
-  const [mapFailed, setMapFailed] = useState(false)
-  useEffect(() => { const controller = new AbortController(); fetch('/maps/india-states-2019.geojson', { signal: controller.signal }).then(r => { if (!r.ok) throw new Error(); return r.json() }).then(setGeo).catch(e => { if (e.name !== 'AbortError') setMapFailed(true) }); return () => controller.abort() }, [])
   const paths = useMemo(() => {
     const result = new Map<string, L.LatLngTuple[]>()
     state.history.forEach(frame => frame.aircraft.forEach(a => { const id = aircraftId(a); const path = result.get(id) ?? []; path.push([a.latitude, a.longitude]); result.set(id, path) }))
@@ -55,7 +58,7 @@ export default function AviationRadarMap({ state, selected, onSelect, layer, ful
   const layerNotice: Partial<Record<RadarLayer, string>> = {
     Routes: paths.length ? 'Flight trails recorded during this session' : 'Flight trails build as fresh positions arrive. Origin and destination are not supplied by this feed.',
     Corridors: 'Indicative airport corridors are drawn for situational awareness; live aircraft remain provider positions.',
-    Weather: weatherConnected ? 'Live airport weather is connected. Aircraft positions remain visible on the radar.' : 'Weather coverage is connecting. Aircraft positions remain visible.',
+    Weather: weatherStatus === 'connected' ? 'Live airport weather is connected. Aircraft positions remain visible on the radar.' : weatherStatus === 'unavailable' ? 'Weather coverage is unavailable. Aircraft positions remain visible.' : 'Weather coverage is connecting. Aircraft positions remain visible.',
     'ATC Zones': 'Approximate 100 km airport control zones are shown. Official ATC sector files are not connected.',
   }
   const airportByCode = new Map(radarAirports.map(a => [a.code, a]))

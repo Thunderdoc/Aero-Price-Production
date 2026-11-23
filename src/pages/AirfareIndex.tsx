@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { BarChart2, CheckCircle2, Download, RefreshCw, Info, Layers } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { apiIndexBasket, apiIndexCurrent, apiIndexHistory, type IndexBasketRoute, type IndexFrequency, type IndexHistoryResponse, type IndexResponse } from '../services/api'
+import DataFreshness from '../components/DataFreshness'
 import { fareChangeColor, formatDateIST, formatDateTimeIST } from '../lib/liveStatus'
 
 const DEFAULT_INDEX_CURRENT: IndexResponse = {
@@ -237,6 +238,17 @@ export default function AirfareIndex() {
               {lastRefreshed ? `VIEW LOADED: ${formatDateTimeIST(lastRefreshed)}` : 'VIEW NOT LOADED YET'}
             </div>
             <div style={{ fontSize: 11, color: '#94a3b8' }}>Observation period: {current.observation_period ?? 'not published'}</div>
+            {/* ITEM 3: freshness of the DATA the index describes — the
+                observation period (YYYY-MM-DD), same DataFreshness pattern
+                as LiveFares. Never lastRefreshed: that is the page-load
+                time, and would call months-old data "live". A republished
+                calculation of old fares must still read stale, so the
+                calculation timestamp is deliberately not used here. */}
+            {current.observation_period && Number.isFinite(Date.parse(current.observation_period)) && (
+              <div style={{ marginTop: 8 }}>
+                <DataFreshness minutesAgo={Math.max(0, Math.floor((Date.now() - new Date(current.observation_period).getTime()) / 60000))} />
+              </div>
+            )}
           </div>
         </div>
       </div>

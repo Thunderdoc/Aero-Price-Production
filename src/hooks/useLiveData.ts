@@ -13,7 +13,7 @@
  *
  * No synthetic price variance. No fake LIVE indicators.
  */
-import { useState, useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { apiAviationLive, apiDashboard, isBackendAvailable } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
 
@@ -62,7 +62,15 @@ export function useLiveData(): UseLiveDataResult {
   const [sourcesLive, setSourcesLive] = useState(0)
   const [liveFlights, setLiveFlights] = useState<LiveFlight[]>([])
   const [lastUpdated, setLastUpdated] = useState(formatTimestamp())
+  // D3: a slow dashboard response must not overlap the next 60 s tick — a
+  // tick that arrives while a fetch is in flight is skipped, and the
+  // following tick retries. (With the 3 s health probe + 12 s dashboard
+  // abort + 30 s aviation budget, a full pass now finishes well inside
+  // 60 s; the guard protects the poll against future slow paths.)
+  const inFlightRef = useRef(false)
   async function fetchDashboard() {
+    if (inFlightRef.current) return
+    inFlightRef.current = true
     try {
       const up = await isBackendAvailable()
       if (!up) {
@@ -109,9 +117,20 @@ export function useLiveData(): UseLiveDataResult {
       }
     } catch {
       setConnectionStatus('offline')
+    } finally {
+      inFlightRef.current = false
     }
   }
 
+  // D3 note — why the 60 s poll stays instead of folding into the radar
+  // store: the two polls measure different things. This hook's
+  // connectionStatus comes from the fare dashboard (backend reachability +
+  // sources_live); the radar store's status comes from the ADS-B provider
+  // feed. ADS-B can be up while the fare database is down, and vice versa —
+  // merging them would report one feed's health as the other's. Folding
+  // would also just move the dashboard poll into the radar store, not
+  // remove a request. The single consumer (AirfareMap) uses only
+  // connectionStatus, but that field still needs a live dashboard read.
   useEffect(() => {
     fetchDashboard()
     const timer = setInterval(fetchDashboard, REFRESH_MS)

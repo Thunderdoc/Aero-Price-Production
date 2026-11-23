@@ -1,21 +1,32 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import Overview from './Overview'
+import { __resetIndiaGeoJsonCache } from '../services/indiaGeoJson'
 import type { FareObservationApi } from '../services/api'
 
+const authState = vi.hoisted(() => ({
+  user: { email: 'test@example.test', name: 'Test', role: 'PUBLIC', plan: 'FREE' } as { email: string; name: string; role: string; plan: string } | null,
+  token: 'test-token' as string | null,
+}))
+const radarState = vi.hoisted(() => ({
+  snapshot: null as { aircraft: unknown[]; source: string; retrievedAt: string | null; status: string; refreshing: boolean; history: [] } | null,
+}))
 vi.mock('../contexts/AuthContext', () => ({
-  useAuth: () => ({ user: { email: 'test@example.test', name: 'Test', role: 'PUBLIC', plan: 'FREE' }, token: 'test-token' }),
+  useAuth: () => authState,
 }))
 vi.mock('../services/api', () => ({
   apiDashboard: vi.fn(),
   apiFareMovement: vi.fn(),
   apiFares: vi.fn(),
   apiPriceAlerts: vi.fn(),
-  apiAviationLive: vi.fn(),
   apiIndexHistory: vi.fn(),
+}))
+vi.mock('../services/aviationRadar', () => ({
+  useAviationRadar: vi.fn(() => radarState.snapshot ?? { aircraft: [], source: '', retrievedAt: null, status: 'loading', refreshing: false, history: [] }),
 }))
 
 const api = await import('../services/api')
+const radar = await import('../services/aviationRadar')
 const fetchMock = vi.fn<typeof fetch>()
 
 const aviationBody = {
@@ -40,9 +51,17 @@ const aviationBody = {
   ],
 }
 
+function radarSnapshot(status: string, aircraft: unknown[]) {
+  return { aircraft, source: 'ADSB.lol', retrievedAt: '2026-11-22T10:00:00.000Z', status, refreshing: false, history: [] as [] }
+}
+
 beforeEach(() => {
   localStorage.clear()
   sessionStorage.clear()
+  authState.user = { email: 'test@example.test', name: 'Test', role: 'PUBLIC', plan: 'FREE' }
+  authState.token = 'test-token'
+  radarState.snapshot = radarSnapshot('connected', aviationBody.aircraft)
+  __resetIndiaGeoJsonCache()
   fetchMock.mockReset()
   fetchMock.mockResolvedValue(new Response(JSON.stringify({ features: [] })))
   vi.stubGlobal('fetch', fetchMock)
@@ -57,7 +76,6 @@ beforeEach(() => {
   })
   vi.mocked(api.apiFares).mockResolvedValue({ observations: [], total: 0, page: 1, page_size: 200, note: '' })
   vi.mocked(api.apiPriceAlerts).mockResolvedValue({ alerts: [] })
-  vi.mocked(api.apiAviationLive).mockResolvedValue(aviationBody)
   // Default: a single published day, so the index KPI helper stays on
   // "Verified index pending" unless a test seeds two days.
   vi.mocked(api.apiIndexHistory).mockResolvedValue({
@@ -69,19 +87,63 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); vi.clearAllMocks(); vi.unstubAllGlobals() })
 
-test('M2: the Aircraft-tracked KPI comes from the authed aviation feed', async () => {
+test('M7: the state map uses the shared cached GeoJSON loader — one fetch across remounts', async () => {
+  // Track A shares one cached load of india-states-2019.geojson between
+  // the fare map, the radar map and this Overview map. A second mount must
+  // reuse the cached load instead of fetching the 271-feature file again.
+  const { unmount } = render(<Overview onNavigate={() => {}} />)
+  await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+  unmount()
   render(<Overview onNavigate={() => {}} />)
-  await waitFor(() => expect(api.apiAviationLive).toHaveBeenCalledWith('test-token'))
+  await screen.findByText('Popular Routes')
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+  expect(fetchMock).toHaveBeenCalledWith('/maps/india-states-2019.geojson')
+})
+
+test('D4: the Aircraft-tracked KPI comes from the shared radar store, not a page poller', async () => {
+  // The Overview no longer polls /api/aviation/live itself every 60 s —
+  // the shared radar store (single authed 30 s poll, M2-fixed) serves this
+  // KPI, the fare map and the radar map. The KPI still shows the live
+  // feed's aircraft count (3 here).
+  render(<Overview onNavigate={() => {}} />)
+  await waitFor(() => expect(radar.useAviationRadar).toHaveBeenCalledWith(true))
   const label = await screen.findByText('Aircraft tracked')
   expect(label.previousElementSibling?.textContent).toBe('3')
 })
 
-test('an aviation failure leaves the KPI blank instead of inventing a count', async () => {
-  vi.mocked(api.apiAviationLive).mockRejectedValue(new Error('feed unavailable'))
+test('D4: an unavailable radar feed leaves the KPI blank instead of inventing a count', async () => {
+  radarState.snapshot = radarSnapshot('unavailable', [])
   render(<Overview onNavigate={() => {}} />)
-  await waitFor(() => expect(api.apiAviationLive).toHaveBeenCalled())
   const label = await screen.findByText('Aircraft tracked')
   expect(label.previousElementSibling?.textContent).toBe('—')
+})
+
+test('D4: cached radar positions still count, and an empty feed honestly shows 0', async () => {
+  radarState.snapshot = radarSnapshot('cached', aviationBody.aircraft.slice(0, 2))
+  const { rerender } = render(<Overview onNavigate={() => {}} />)
+  const label = await screen.findByText('Aircraft tracked')
+  expect(label.previousElementSibling?.textContent).toBe('2')
+  radarState.snapshot = radarSnapshot('empty', [])
+  rerender(<Overview onNavigate={() => {}} />)
+  await waitFor(() => expect(label.previousElementSibling?.textContent).toBe('0'))
+})
+
+test('D4 + ITEM 4: a guest never polls the radar and never sees a stale aircraft count', async () => {
+  // No token: the radar hook stays disabled, so no unauthenticated poll
+  // fires a 401 — and the KPI stays blank even though the shared store
+  // still holds positions from an earlier signed-in session.
+  authState.user = null
+  authState.token = null
+  radarState.snapshot = radarSnapshot('connected', aviationBody.aircraft)
+  render(<Overview onNavigate={() => {}} />)
+  await waitFor(() => expect(radar.useAviationRadar).toHaveBeenCalledWith(false))
+  const label = await screen.findByText('Aircraft tracked')
+  expect(label.previousElementSibling?.textContent).toBe('—')
+  // The guest Overview also skips the auth-gated index history (ITEM 4):
+  // firing it token-less would log a pointless 401 on every guest visit.
+  await waitFor(() => expect(api.apiDashboard).toHaveBeenCalled())
+  expect(api.apiIndexHistory).not.toHaveBeenCalled()
+  expect(api.apiPriceAlerts).not.toHaveBeenCalled()
 })
 
 test('Aircraft tracked and Fare observations are two different figures', async () => {
@@ -103,13 +165,27 @@ function fareRow(id: string, totalFare: number): FareObservationApi {
     departure_time: null, arrival_time: null, stops: 0, travel_date: '2026-12-01',
     advance_days: 7, fare_family: 'ECONOMY', cabin: 'ECONOMY', base_fare: totalFare,
     taxes: 0, total_fare: totalFare, currency: 'INR', source: 'Google Flights',
-    data_origin: 'PUBLIC_INTERFACE', collected_at: '2026-11-22T13:44:34Z', quality_flags: [],
+    data_origin: 'PUBLIC_INTERFACE', collected_at: '2026-09-28T10:00:00Z', quality_flags: [],
   }
 }
 
 const faresResponse = (fares: number[]) => ({
   observations: fares.map((total_fare, index) => fareRow(`OBS-${index}`, total_fare)),
   total: fares.length, page: 1, page_size: 200, note: '',
+})
+
+test('ITEM 3: every loaded route card shows a freshness badge from its latest collection', async () => {
+  vi.mocked(api.apiFares).mockImplementation(async () => faresResponse([5000, 6000]))
+  render(<Overview onNavigate={() => {}} />)
+  await waitFor(() => expect(screen.getAllByText('₹5,500').length).toBeGreaterThan(0), { timeout: 5000 })
+  // One DataFreshness badge per card (role="status"), each stamped from
+  // the newest collected_at of that card's fares — same pattern as
+  // LiveFares. The fixture rows carry the live data's newest collection
+  // (28 Sep 2026), so the badge reads STALE with an "ago" age rather than
+  // pretending to be current.
+  expect(screen.getAllByRole('status')).toHaveLength(3)
+  expect(screen.getAllByText('STALE')).toHaveLength(3)
+  expect(screen.getAllByText(/ago/)).toHaveLength(3)
 })
 
 test('a cold-start route failure retries once and recovers', async () => {

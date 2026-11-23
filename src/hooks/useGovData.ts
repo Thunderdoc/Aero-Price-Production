@@ -41,15 +41,33 @@ export function useGovData(): GovDataState {
   async function fetchAll() {
     setIsLoading(true)
     try {
-      const withTimeout = <T,>(promise: Promise<T>, ms = 8000) =>
-        Promise.race([promise, new Promise<T>((_, reject) => setTimeout(() => reject(new Error('Request timed out')), ms))])
+      // S5: the race aborts the underlying fetch on timeout instead of
+      // abandoning it. Each call gets its own AbortController, threaded
+      // through the gov helpers' signal param (api.ts combines it with
+      // the 12 s apiFetch timeout — neither replaces the other). The race
+      // timer is cleared as soon as the call settles, so a fast source
+      // leaves no orphaned timer behind, and the late AbortError from an
+      // aborted call is swallowed by the .then handlers below (the race
+      // has already rejected with 'Request timed out').
+      const withTimeout = <T,>(fn: (signal: AbortSignal) => Promise<T>, ms = 8000) =>
+        new Promise<T>((resolve, reject) => {
+          const controller = new AbortController()
+          const timer = setTimeout(() => {
+            controller.abort()
+            reject(new Error('Request timed out'))
+          }, ms)
+          fn(controller.signal).then(
+            value => { clearTimeout(timer); resolve(value) },
+            error => { clearTimeout(timer); reject(error) },
+          )
+        })
       const results = await Promise.allSettled([
-        withTimeout(apiGovDatasets(token ?? undefined)),
-        withTimeout(apiDgcaMonthly(token ?? undefined)),
-        withTimeout(apiDgcaCirculars(token ?? undefined)),
-        withTimeout(apiMospiCpi(token ?? undefined)),
-        withTimeout(apiPpacAtf(token ?? undefined)),
-        withTimeout(apiDataGovAviation(token ?? undefined)),
+        withTimeout(signal => apiGovDatasets(token ?? undefined, signal)),
+        withTimeout(signal => apiDgcaMonthly(token ?? undefined, signal)),
+        withTimeout(signal => apiDgcaCirculars(token ?? undefined, signal)),
+        withTimeout(signal => apiMospiCpi(token ?? undefined, signal)),
+        withTimeout(signal => apiPpacAtf(token ?? undefined, signal)),
+        withTimeout(signal => apiDataGovAviation(token ?? undefined, signal)),
       ])
       const value = <T,>(index: number): T | null => results[index].status === 'fulfilled' ? results[index].value as T : null
       const registry = value<any>(0)

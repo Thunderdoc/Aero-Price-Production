@@ -11,6 +11,10 @@ class IndexObservation(Base):
     publication_id      = Column(String(36), nullable=False, index=True)
     observation_period  = Column(String(10), nullable=False)  # YYYY-MM-DD
     calculation_ts      = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    # Row-creation timestamp from migration 0001 (server default). Kept in
+    # the model so it maps the migrations-built table exactly; calculation_ts
+    # remains the timestamp the app uses. (Track C alignment.)
+    created_at          = Column(DateTime(timezone=True), nullable=True, server_default=func.now())
 
     # Index value
     index_value         = Column(Float, nullable=True)   # None = INSUFFICIENT_DATA

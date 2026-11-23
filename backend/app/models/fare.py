@@ -46,6 +46,10 @@ class FareObservation(Base):
     travel_date    = Column(String(10), nullable=False, index=True)  # YYYY-MM-DD
     advance_days   = Column(Integer, nullable=False, index=True)     # T+1, T+7...
     collected_at   = Column(DateTime(timezone=True), nullable=False, default=func.now(), index=True)
+    # Row-creation timestamp from migration 0001 (server default). Kept in
+    # the model so it maps the migrations-built table exactly; collected_at
+    # remains the observation timestamp the app uses. (Track C alignment.)
+    created_at     = Column(DateTime(timezone=True), nullable=True, server_default=func.now())
 
     # Fare
     fare_family = Column(String(32), nullable=True)   # SAVER, FLEX, BUSINESS

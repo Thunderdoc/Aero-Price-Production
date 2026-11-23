@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { cleanup, render } from '@testing-library/react'
-import { AerialArc, medianWindowLabel, registerArcAnimator, unregisterArcAnimator } from './AirfareMap'
+import { AerialArc, arcHeading, arcPoints, buildMapCorridors, corridorStrokeWidth, medianWindowLabel, registerArcAnimator, unregisterArcAnimator } from './AirfareMap'
 
 // Leaflet is stubbed: polylines/markers record their calls and expose the
 // internals AerialArc touches (_path for the dash, the marker element for
@@ -149,4 +149,76 @@ test('M5: median label follows the sample window', () => {
   expect(medianWindowLabel(undefined)).toBe('Latest-day median')
   expect(medianWindowLabel(7)).toBe('7-day median')
   expect(medianWindowLabel(3)).toBe('3-day median')
+})
+
+// M6: corridors must carry the route's configured weight (from
+// /api/index/basket — the AAI gravity weights), not a hardcoded 1.
+const basketRoutes = [
+  { route: 'DEL-BOM', origin: 'DEL', destination: 'BOM', origin_name: 'Delhi', destination_name: 'Mumbai', observations_7d: 42, has_data: true, status: 'ACTIVE' },
+  { route: 'CCU-GAU', origin: 'CCU', destination: 'GAU', origin_name: 'Kolkata', destination_name: 'Guwahati', observations_7d: 18, has_data: true, status: 'ACTIVE' },
+]
+const summaries = {
+  'DEL-BOM': { median: 5200, min: 4100, max: 7800, count: 42, sample_period: 'Sep 2026', last_collected_at: '2026-09-28T10:00:00Z' },
+  'CCU-GAU': { median: 3900, min: 3100, max: 5100, count: 18, sample_period: 'Sep 2026', last_collected_at: '2026-09-28T10:00:00Z' },
+}
+// Real configured weights (backend/app/config/weights.py, aai-gravity-v1):
+// the busiest corridor outweighs a minor one ~5x.
+const configuredWeights = new Map([['DEL-BOM', 0.0969], ['CCU-GAU', 0.0206]])
+
+test('M6: the corridor builder passes each route\'s configured weight through', () => {
+  const corridors = buildMapCorridors(basketRoutes, null, summaries, configuredWeights)
+  expect(corridors).toHaveLength(2)
+  const delBom = corridors.find(c => c.id === 'DEL-BOM')!
+  const ccuGau = corridors.find(c => c.id === 'CCU-GAU')!
+  expect(delBom.weight).toBe(0.0969)
+  expect(ccuGau.weight).toBe(0.0206)
+  expect(delBom.weight).toBeGreaterThan(ccuGau.weight)
+})
+
+test('M6: a route missing from the weights map gets the equal share (1/N)', () => {
+  const corridors = buildMapCorridors(basketRoutes, null, summaries, new Map([['DEL-BOM', 0.0969]]))
+  expect(corridors.find(c => c.id === 'CCU-GAU')!.weight).toBe(0.5)
+})
+
+test('M6: a failed basket fetch renders every corridor at the equal share', () => {
+  const corridors = buildMapCorridors(basketRoutes, null, summaries, new Map())
+  expect(corridors.map(c => c.weight)).toEqual([0.5, 0.5])
+})
+
+test('M6: stroke width spans 1.5 px (quietest) to 4 px (busiest)', () => {
+  expect(corridorStrokeWidth(0.0206, 0.0206, 0.0969)).toBe(1.5)
+  expect(corridorStrokeWidth(0.0969, 0.0206, 0.0969)).toBe(4)
+  expect(corridorStrokeWidth(0.05875, 0.0206, 0.0969)).toBeCloseTo(2.75, 10)
+})
+
+test('M6: equal weights render at the old uniform 2.2 px', () => {
+  expect(corridorStrokeWidth(0.5, 0.5, 0.5)).toBe(2.2)
+  expect(corridorStrokeWidth(Number.NaN, 0.0206, 0.0969)).toBe(2.2)
+})
+
+// M8: a same-airport route has dist === 0; the arc math divides by dist,
+// so without a guard every point is NaN and the whole map render breaks.
+test('M8: a same-airport route produces a finite straight line, never NaN', () => {
+  const pts = arcPoints([28.5562, 77.1], [28.5562, 77.1])
+  expect(pts).toHaveLength(61)
+  expect(pts.every(([lat, lng]) => lat === 28.5562 && lng === 77.1)).toBe(true)
+  expect(pts.every(([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng))).toBe(true)
+})
+
+test('M8: the heading of a same-airport route is finite (0°), never NaN', () => {
+  expect(arcHeading([28.5562, 77.1], [28.5562, 77.1], 0.5)).toBe(0)
+})
+
+test('M8: a normal arc is unchanged — endpoints match and the midpoint bulges off the chord', () => {
+  const pts = arcPoints([28.5562, 77.1], [19.0896, 72.8656])
+  expect(pts).toHaveLength(61)
+  expect(pts[0]).toEqual([28.5562, 77.1])
+  expect(pts[60]).toEqual([19.0896, 72.8656])
+  expect(pts.every(([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng))).toBe(true)
+  // The bezier midpoint is deflected perpendicular to the chord, so it is
+  // not the straight midpoint of the endpoints.
+  const [midLat, midLng] = pts[30]
+  expect(midLat).not.toBeCloseTo((28.5562 + 19.0896) / 2, 5)
+  expect(midLng).not.toBeCloseTo((77.1 + 72.8656) / 2, 5)
+  expect(Number.isFinite(arcHeading([28.5562, 77.1], [19.0896, 72.8656], 0.5))).toBe(true)
 })

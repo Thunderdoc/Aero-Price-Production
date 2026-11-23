@@ -207,7 +207,15 @@ async function fetchWithAuthRefresh(url: string, token?: string, init?: RequestI
   const requestInit: RequestInit = {
     ...init,
     cache: 'no-store',
-    signal: init?.signal ?? controller.signal,
+    // S5: a caller signal must COMBINE with the timeout, not replace it.
+    // The old `init?.signal ?? controller.signal` silently disabled the
+    // timeout whenever a caller passed a signal — so the government hook's
+    // 8 s race could never abort the fetch AND the 12 s backstop vanished.
+    // AbortSignal.any aborts the request when either side fires; the
+    // catch below still reports a timeout only when the timeout fired.
+    signal: init?.signal
+      ? AbortSignal.any([init.signal, controller.signal])
+      : controller.signal,
     headers: { ...authHeaders(token), ...(init?.headers ?? {}) },
   }
   try {
@@ -249,8 +257,9 @@ async function fetchWithAuthRefresh(url: string, token?: string, init?: RequestI
 }
 
 // `timeoutMs` overrides the 12 s abort for a single call. It exists for the
-// live-fares scrape (R1), whose server round-trip can take up to 45 s — every
-// other endpoint keeps the global 12 s abort.
+// calls whose server round-trip legitimately exceeds 12 s — the live-fares
+// scrape (R1, 50 s), the aviation feed (30 s), and the government refresh
+// (D5, 120 s). Every other endpoint keeps the global 12 s abort.
 async function apiFetch<T>(path: string, token?: string, init?: RequestInit, forceNetwork = false, timeoutMs: number = API_REQUEST_TIMEOUT_MS): Promise<T> {
   const method = (init?.method || 'GET').toUpperCase()
   const cacheKey = `${method}:${path}:${token || 'public'}`
@@ -536,12 +545,19 @@ export interface AviationLiveResponse {
   aircraft: AviationAircraft[]
 }
 
+// /aviation/live fans out to up to three ADS-B providers sequentially on a
+// cold cache miss (8 s each ≈ 24 s worst case — backend/app/api/routes/
+// aviation.py), and /aviation/schedules allows its provider 20 s. Both get
+// a 30 s budget so a slow-but-successful provider round-trip is not cut off
+// by the 12 s global abort. Only these two calls get the longer budget.
+export const AVIATION_TIMEOUT_MS = 30_000
+
 // M2: /api/aviation/live requires auth (401 without a token). Every caller
 // goes through here so the signed-in user's Bearer token is always sent.
 // forceNetwork: live positions must never come from the 20 s GET cache —
 // a CACHED-retry that reads the cache would re-read its own stale response.
 export async function apiAviationLive(token?: string, limit = 150): Promise<AviationLiveResponse> {
-  return apiFetch(`/api/aviation/live?limit=${limit}`, token, undefined, true)
+  return apiFetch(`/api/aviation/live?limit=${limit}`, token, undefined, true, AVIATION_TIMEOUT_MS)
 }
 
 export interface AviationScheduleFlight {
@@ -572,7 +588,7 @@ export interface AviationSchedulesResponse {
 export async function apiAviationSchedules(departure: string, arrival: string | undefined, token?: string): Promise<AviationSchedulesResponse> {
   const params = new URLSearchParams({ departure, limit: '25' })
   if (arrival) params.set('arrival', arrival)
-  return apiFetch(`/api/aviation/schedules?${params}`, token, undefined, true)
+  return apiFetch(`/api/aviation/schedules?${params}`, token, undefined, true, AVIATION_TIMEOUT_MS)
 }
 
 export async function apiFareSummary(route: string, token?: string) {
@@ -741,32 +757,47 @@ export interface GovDatasetApi {
   reference_period: string | null
 }
 
-export async function apiGovDatasets(token?: string): Promise<{ datasets: GovDatasetApi[] }> {
-  return apiFetch('/api/government/datasets', token)
+// S5: the six government read helpers take an optional AbortSignal so the
+// useGovData 8 s race can abort the underlying fetch on timeout instead of
+// abandoning it. The signal combines with (never replaces) the 12 s
+// apiFetch timeout — see fetchWithAuthRefresh.
+export async function apiGovDatasets(token?: string, signal?: AbortSignal): Promise<{ datasets: GovDatasetApi[] }> {
+  return apiFetch('/api/government/datasets', token, signal ? { signal } : undefined)
 }
 
-export async function apiDgcaMonthly(token?: string) {
-  return apiFetch('/api/government/dgca/monthly', token)
+export async function apiDgcaMonthly(token?: string, signal?: AbortSignal) {
+  return apiFetch('/api/government/dgca/monthly', token, signal ? { signal } : undefined)
 }
 
-export async function apiMospiCpi(token?: string) {
-  return apiFetch('/api/government/mospi/cpi', token)
+export async function apiMospiCpi(token?: string, signal?: AbortSignal) {
+  return apiFetch('/api/government/mospi/cpi', token, signal ? { signal } : undefined)
 }
 
-export async function apiDgcaCirculars(token?: string) {
-  return apiFetch('/api/government/dgca/circulars', token)
+export async function apiDgcaCirculars(token?: string, signal?: AbortSignal) {
+  return apiFetch('/api/government/dgca/circulars', token, signal ? { signal } : undefined)
 }
 
-export async function apiPpacAtf(token?: string) {
-  return apiFetch<{ count: number; data_origin: string; measure: string; unit: string; note: string; records: Array<{ effective_date: string; atf_export_duty_per_litre: number }> }>('/api/government/ppac/atf', token)
+export async function apiPpacAtf(token?: string, signal?: AbortSignal) {
+  return apiFetch<{ count: number; data_origin: string; measure: string; unit: string; note: string; records: Array<{ effective_date: string; atf_export_duty_per_litre: number }> }>('/api/government/ppac/atf', token, signal ? { signal } : undefined)
 }
 
-export async function apiDataGovAviation(token?: string) {
-  return apiFetch<{ count: number; data_origin: string; records: Array<{ resource_id: string; record: Record<string, unknown> }> }>('/api/government/data-gov/aviation', token)
+export async function apiDataGovAviation(token?: string, signal?: AbortSignal) {
+  return apiFetch<{ count: number; data_origin: string; records: Array<{ resource_id: string; record: Record<string, unknown> }> }>('/api/government/data-gov/aviation', token, signal ? { signal } : undefined)
 }
+
+// D5: the server-side gov refresh runs six official-source fetches
+// SEQUENTIALLY (run_gov_fetches in backend/app/services/gov_fetcher.py),
+// each with up to 3 attempts × a 30 s timeout plus backoff — a
+// slow-but-successful refresh legitimately takes well over the 12 s global
+// abort, so the old call always timed out client-side. 120 s lets refreshes
+// completing within two minutes succeed. Two honest limits remain: on
+// Vercel the 60 s serverless function limit still binds first, and a
+// refresh slower than 120 s still aborts — the real fix is async server-side
+// (202 + poll), which is backend work outside this client-side change.
+export const GOV_REFRESH_TIMEOUT_MS = 120_000
 
 export async function apiGovRefresh(token?: string) {
-  return apiFetch('/api/government/refresh', token, { method: 'POST' })
+  return apiFetch('/api/government/refresh', token, { method: 'POST' }, false, GOV_REFRESH_TIMEOUT_MS)
 }
 
 // ── Historical snapshots ───────────────────────────────────────────────────

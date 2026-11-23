@@ -56,3 +56,28 @@ test('a radar failure keeps the last dashboard status instead of flipping to off
   await waitFor(() => expect(result.current.connectionStatus).toBe('live'))
   expect(result.current.liveFlights).toEqual([])
 })
+
+test('D3: a 60 s tick that arrives while a fetch is in flight is skipped, not overlapped', async () => {
+  vi.useFakeTimers()
+  try {
+    // Hold the first dashboard response until the test releases it.
+    let releaseDashboard!: (value: typeof dashboardBody) => void
+    const dashboardDeferred = new Promise<typeof dashboardBody>(resolve => { releaseDashboard = resolve })
+    vi.mocked(api.apiDashboard).mockReturnValue(dashboardDeferred)
+    renderHook(() => useLiveData())
+    await vi.advanceTimersByTimeAsync(0)
+    expect(api.apiDashboard).toHaveBeenCalledTimes(1)
+
+    // The 60 s tick fires while the first fetch is still in flight: the
+    // guard skips it, so no second dashboard request starts.
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(api.apiDashboard).toHaveBeenCalledTimes(1)
+
+    // Once the first fetch completes, the next tick polls again.
+    releaseDashboard(dashboardBody)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(api.apiDashboard).toHaveBeenCalledTimes(2)
+  } finally {
+    vi.useRealTimers()
+  }
+})

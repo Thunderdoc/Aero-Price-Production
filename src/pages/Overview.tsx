@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ArrowRight, BarChart3, Bell, CalendarDays, CheckCircle2, GitBranch, Map as MapIcon, Plane, Tag, TrendingDown, TrendingUp } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
-import { apiAviationLive, apiDashboard, apiFareMovement, apiFares, apiIndexHistory, apiPriceAlerts } from '../services/api'
+import { apiDashboard, apiFareMovement, apiFares, apiIndexHistory, apiPriceAlerts } from '../services/api'
+import { useAviationRadar } from '../services/aviationRadar'
+import { useIndiaGeoJson } from '../services/indiaGeoJson'
+import DataFreshness from '../components/DataFreshness'
 import { median } from '../lib/liveStatus'
 
 // Version the public hero asset so Vercel/browser caches cannot keep an older
@@ -12,7 +15,7 @@ import type { Page } from '../components/AppShell'
 import indiaMap from '../assets/india_map_clean.png'
 
 type Props = { onNavigate: (p: Page) => void }
-type RouteCard = { key: string; code: string; name: string; fare: number | null; minFare: number | null; maxFare: number | null; sampleCount: number }
+type RouteCard = { key: string; code: string; name: string; fare: number | null; minFare: number | null; maxFare: number | null; sampleCount: number; latestCollectedAt: string | null }
 type GeoFeature = { properties?: Record<string, unknown>; geometry?: { type?: string; coordinates?: unknown } }
 type GeoCollection = { features?: GeoFeature[] }
 
@@ -21,7 +24,6 @@ const routeSpecs = [
   { key: 'DEL-BLR', code: 'DEL → BLR', name: 'Delhi to Bengaluru' },
   { key: 'DEL-MAA', code: 'DEL → MAA', name: 'Delhi to Chennai' },
 ]
-const GEOJSON_URL = '/maps/india-states-2019.geojson'
 const ROUTE_CACHE_KEY = 'aeroprice:verified-route-cards:v1'
 const DASHBOARD_CACHE_KEY = 'aeroprice:verified-dashboard:v1'
 // Delay before a failed route-card fetch retries once. A Vercel cold start
@@ -45,7 +47,11 @@ function formatFare(fare: number | null) {
 function readRouteCache(): RouteCard[] | null {
   try {
     const value = JSON.parse(sessionStorage.getItem(ROUTE_CACHE_KEY) || 'null')
-    return Array.isArray(value) && value.length === routeSpecs.length ? value : null
+    if (!Array.isArray(value) || value.length !== routeSpecs.length) return null
+    // Snapshots cached before latestCollectedAt existed carry no freshness
+    // timestamp — normalise to null so those cards render without a badge
+    // instead of crashing on an undefined field.
+    return value.map(card => ({ ...card, latestCollectedAt: typeof card.latestCollectedAt === 'string' ? card.latestCollectedAt : null }))
   } catch { return null }
 }
 
@@ -88,18 +94,13 @@ function featurePath(feature: GeoFeature, project: (point: [number, number]) => 
 }
 
 function FareMovementMap({ movement }: { movement: FareMovementResponse | null }) {
-  const [geoData, setGeoData] = useState<GeoCollection | null>(null)
-  const [mapFailed, setMapFailed] = useState(false)
-  useEffect(() => {
-    const controller = new AbortController()
-    fetch(GEOJSON_URL, { signal: controller.signal })
-      .then(response => { if (!response.ok) throw new Error('state map unavailable'); return response.json() as Promise<GeoCollection> })
-      .then(data => { if (!data.features?.length) throw new Error('state map has no features'); setGeoData(data) })
-      .catch(error => { if (error.name !== 'AbortError') setMapFailed(true) })
-    return () => controller.abort()
-  }, [])
-
-  const features = geoData?.features ?? []
+  // M7: state boundaries load through the shared cached loader — one
+  // request for all three maps instead of one each. A load that returns no
+  // features still counts as failed here (as before), so the fallback image
+  // keeps its "could not load locally" notice.
+  const { data: geoData, failed: geoFailed } = useIndiaGeoJson()
+  const features = (geoData as GeoCollection | null)?.features ?? []
+  const mapFailed = geoFailed || (geoData != null && features.length === 0)
   const points: Array<[number, number]> = []
   features.forEach(feature => nestedPoints(feature.geometry?.coordinates, points))
   const bounds = points.length
@@ -189,8 +190,19 @@ export default function Overview({ onNavigate }: Props) {
   const [indexChangePct, setIndexChangePct] = useState<number | null>(null)
   const [activeAlerts, setActiveAlerts] = useState<number | null>(null)
   const [fareMovement, setFareMovement] = useState<FareMovementResponse | null>(null)
-  const [routeCards, setRouteCards] = useState<RouteCard[]>(() => readRouteCache() ?? routeSpecs.map(route => ({ ...route, fare: null, minFare: null, maxFare: null, sampleCount: 0 })))
-  const [liveAircraft, setLiveAircraft] = useState<number | null>(null)
+  const [routeCards, setRouteCards] = useState<RouteCard[]>(() => readRouteCache() ?? routeSpecs.map(route => ({ ...route, fare: null, minFare: null, maxFare: null, sampleCount: 0, latestCollectedAt: null })))
+  // D4: the "Aircraft tracked" KPI reads the shared radar store instead of
+  // this page's own 60 s poller — one authed 30 s poll serves the Overview,
+  // the fare map and the radar map. Enabled only with a token: a guest must
+  // never trigger an unauthenticated poll (401 every 30 s), and without a
+  // token the KPI stays "—" even if the store still holds positions from an
+  // earlier signed-in session. 'connected'/'cached'/'empty' all carry a real
+  // count (empty = the provider returned zero); 'loading'/'unavailable' do
+  // not, so they stay blank exactly as the old poller's failure path did.
+  const radar = useAviationRadar(!!token)
+  const liveAircraft = token && (radar.status === 'connected' || radar.status === 'cached' || radar.status === 'empty')
+    ? radar.aircraft.length
+    : null
   const [compactDashboard, setCompactDashboard] = useState(() => localStorage.getItem('aeroprice_compact_mode') === 'true')
   const [dataSaver, setDataSaver] = useState(() => localStorage.getItem('aeroprice_data_saver') === 'true')
 
@@ -237,14 +249,21 @@ export default function Overview({ onNavigate }: Props) {
     // the two latest daily values give the % change vs the prior published
     // day. Fewer than two published days (or any failure) leaves the KPI
     // on "Verified index pending" — no change figure is invented.
-    ;(apiIndexHistory(token ?? undefined) as Promise<IndexHistoryResponse>).then(data => {
-      if (!active) return
-      const values = (data.observations ?? [])
-        .map(observation => observation.value)
-        .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
-      if (values.length < 2 || values[1] <= 0) { setIndexChangePct(null); return }
-      setIndexChangePct(((values[0] - values[1]) / values[1]) * 100)
-    }).catch(() => { if (active) setIndexChangePct(null) })
+    // ITEM 4: /index/history requires auth — a guest (no token) must not
+    // fire it at all, or every guest Overview visit logs a pointless 401.
+    // The effect re-runs when a token appears, so a sign-in still loads it.
+    if (token) {
+      ;(apiIndexHistory(token) as Promise<IndexHistoryResponse>).then(data => {
+        if (!active) return
+        const values = (data.observations ?? [])
+          .map(observation => observation.value)
+          .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+        if (values.length < 2 || values[1] <= 0) { setIndexChangePct(null); return }
+        setIndexChangePct(((values[0] - values[1]) / values[1]) * 100)
+      }).catch(() => { if (active) setIndexChangePct(null) })
+    } else {
+      setIndexChangePct(null)
+    }
     return () => { active = false }
   }, [token])
 
@@ -253,8 +272,12 @@ export default function Overview({ onNavigate }: Props) {
     const loadRoute = async (spec: (typeof routeSpecs)[number], attempt = 0): Promise<RouteCard> => {
       try {
         const response = await apiFares({ route: spec.key, limit: 200 }, token ?? undefined)
-        const fares = response.observations.filter(observation => observation.data_origin === 'REAL' || observation.data_origin === 'OFFICIAL' || observation.data_origin === 'PUBLIC_INTERFACE').map(observation => Number(observation.total_fare)).filter(Number.isFinite)
-        return { ...spec, fare: median(fares), minFare: fares.length ? Math.min(...fares) : null, maxFare: fares.length ? Math.max(...fares) : null, sampleCount: fares.length }
+        const eligible = response.observations.filter(observation => observation.data_origin === 'REAL' || observation.data_origin === 'OFFICIAL' || observation.data_origin === 'PUBLIC_INTERFACE')
+        const fares = eligible.map(observation => Number(observation.total_fare)).filter(Number.isFinite)
+        // ITEM 3: keep the newest collection timestamp so the route card
+        // can show a DataFreshness badge (same pattern as LiveFares).
+        const latestCollectedAt = eligible.map(observation => observation.collected_at).filter(Boolean).sort().at(-1) ?? null
+        return { ...spec, fare: median(fares), minFare: fares.length ? Math.min(...fares) : null, maxFare: fares.length ? Math.max(...fares) : null, sampleCount: fares.length, latestCollectedAt }
       } catch {
         // One retry: a cold-start failure must not pin the route as
         // unavailable — the retry usually lands on a warm backend.
@@ -262,7 +285,7 @@ export default function Overview({ onNavigate }: Props) {
           await new Promise(resolve => setTimeout(resolve, ROUTE_CARD_RETRY_MS))
           if (active) return loadRoute(spec, 1)
         }
-        return { ...spec, fare: null, minFare: null, maxFare: null, sampleCount: 0 }
+        return { ...spec, fare: null, minFare: null, maxFare: null, sampleCount: 0, latestCollectedAt: null }
       }
     }
     Promise.all(routeSpecs.map(spec => loadRoute(spec))).then(next => {
@@ -280,22 +303,6 @@ export default function Overview({ onNavigate }: Props) {
       }
     })
     return () => { active = false }
-  }, [token])
-
-  useEffect(() => {
-    let active = true
-    const loadLiveAircraft = async () => {
-      try {
-        // M2: /api/aviation/live requires auth — the old bare fetch() sent no
-        // Authorization header and 401d, leaving "Aircraft tracked" blank
-        // forever. Route through the authed helper with the user's token.
-        const payload = await apiAviationLive(token ?? undefined)
-        if (active) setLiveAircraft(Array.isArray(payload.aircraft) ? payload.aircraft.length : 0)
-      } catch { if (active) setLiveAircraft(null) }
-    }
-    void loadLiveAircraft()
-    const timer = window.setInterval(loadLiveAircraft, 60_000)
-    return () => { active = false; window.clearInterval(timer) }
   }, [token])
 
   const availableRoutes = useMemo(() => routeCards.filter(route => route.fare != null), [routeCards])
@@ -319,7 +326,7 @@ export default function Overview({ onNavigate }: Props) {
       <div style={{ background: 'linear-gradient(180deg, #ffffff 0%, #f7fbff 100%)', border: '1px solid #dbe7f2', borderRadius: 14, padding: 14, boxShadow: '0 5px 15px rgba(25,71,130,.05)' }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}><div><h2 style={{ margin: 0, fontSize: 18, color: '#102e70' }}>Popular Routes</h2><p style={{ margin: '4px 0 0', fontSize: 11, color: '#7890ae' }}>Verified fare medians, range and latest movement</p></div><div style={{ display: 'flex', gap: 6, alignItems: 'center' }}><span style={{ background: '#1769e8', color: '#fff', padding: '6px 12px', borderRadius: 8, fontSize: 11, fontWeight: 800 }}>Domestic</span><button onClick={() => onNavigate('routes')} style={{ border: 0, background: 'none', color: '#1265db', fontWeight: 800, cursor: 'pointer' }}>View All →</button></div></div><div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10 }}>{routeCards.map(route => {
         const routeMovement = movementForRoute(route.key)
         const lineColor = routeMovement?.change_pct == null ? '#9ec8f6' : routeMovement.change_pct < 0 ? '#39a978' : routeMovement.change_pct > 0 ? '#ef7661' : '#4d8ec4'
-        return <div key={route.code} style={{ border: '1px solid #e0eaf4', borderRadius: 12, padding: 13, background: '#fbfdff', minWidth: 0, minHeight: 206, display: 'flex', flexDirection: 'column' }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}><div><div style={{ fontSize: 17, fontWeight: 850 }}>{route.code}</div><div style={{ fontSize: 11, color: '#7083a0', marginTop: 3 }}>{route.name}</div></div><span style={{ width: 30, height: 30, borderRadius: 50, display: 'grid', placeItems: 'center', background: '#edf5ff', color: '#1769e8' }}><Plane size={15} /></span></div><div style={{ marginTop: 14, fontSize: 22, fontWeight: 850, color: '#0d3076' }}>{formatFare(route.fare)}</div>{route.fare != null ? <><div style={{ marginTop: 4 }}><ChangeLabel change={routeMovement?.change_pct} /></div><div style={{ display: 'grid', gridTemplateColumns: '1fr 96px', gap: 10, alignItems: 'end', marginTop: 'auto' }}><div style={{ display: 'grid', gap: 4, fontSize: 10, color: '#647a98' }}><span>Range <b style={{ color: '#173b78' }}>{formatFare(route.minFare)} - {formatFare(route.maxFare)}</b></span><span>{route.sampleCount} verified observations</span></div><span style={{ width: 96, textAlign: 'right', fontSize: 10, color: '#8194ad' }}>{routeMovement?.change_pct == null ? 'Comparison pending' : 'Backend movement'}</span></div></> : <div style={{ marginTop: 6, color: '#7b8da5', fontSize: 11, lineHeight: 1.45 }}>No verified observation for this route yet.</div>}<button onClick={() => onNavigate('routes')} style={{ width: '100%', marginTop: 12, border: 0, borderRadius: 8, padding: 8, background: '#eff6ff', color: '#1265db', fontWeight: 800, cursor: 'pointer' }}>View Route →</button></div>
+        return <div key={route.code} style={{ border: '1px solid #e0eaf4', borderRadius: 12, padding: 13, background: '#fbfdff', minWidth: 0, minHeight: 206, display: 'flex', flexDirection: 'column' }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}><div><div style={{ fontSize: 17, fontWeight: 850 }}>{route.code}</div><div style={{ fontSize: 11, color: '#7083a0', marginTop: 3 }}>{route.name}</div></div><span style={{ width: 30, height: 30, borderRadius: 50, display: 'grid', placeItems: 'center', background: '#edf5ff', color: '#1769e8' }}><Plane size={15} /></span></div><div style={{ marginTop: 14, fontSize: 22, fontWeight: 850, color: '#0d3076' }}>{formatFare(route.fare)}</div>{route.fare != null ? <><div style={{ marginTop: 4 }}><ChangeLabel change={routeMovement?.change_pct} /></div><div style={{ display: 'grid', gridTemplateColumns: '1fr 96px', gap: 10, alignItems: 'end', marginTop: 'auto' }}><div style={{ display: 'grid', gap: 4, fontSize: 10, color: '#647a98' }}><span>Range <b style={{ color: '#173b78' }}>{formatFare(route.minFare)} - {formatFare(route.maxFare)}</b></span><span>{route.sampleCount} verified observations</span>{route.latestCollectedAt && <DataFreshness minutesAgo={Math.max(0, Math.floor((Date.now() - new Date(route.latestCollectedAt).getTime()) / 60000))} />}</div><span style={{ width: 96, textAlign: 'right', fontSize: 10, color: '#8194ad' }}>{routeMovement?.change_pct == null ? 'Comparison pending' : 'Backend movement'}</span></div></> : <div style={{ marginTop: 6, color: '#7b8da5', fontSize: 11, lineHeight: 1.45 }}>No verified observation for this route yet.</div>}<button onClick={() => onNavigate('routes')} style={{ width: '100%', marginTop: 12, border: 0, borderRadius: 8, padding: 8, background: '#eff6ff', color: '#1265db', fontWeight: 800, cursor: 'pointer' }}>View Route →</button></div>
       })}</div></div>
       <div style={{ background: '#fff', border: '1px solid #dbe7f2', borderRadius: 14, padding: 16, boxShadow: '0 5px 15px rgba(25,71,130,.05)' }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><h2 style={{ margin: 0, fontSize: 18, color: '#102e70' }}>India Fare Movement <span title="Colors are calculated from verified collection medians" style={{ fontSize: 12, color: '#7d91ad' }}>ⓘ</span></h2><span style={{ fontSize: 11, background: '#1769e8', color: '#fff', borderRadius: 8, padding: '6px 10px', fontWeight: 800 }}>Domestic</span></div><FareMovementMap movement={fareMovement} /></div>
     </section>

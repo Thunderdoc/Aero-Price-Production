@@ -226,7 +226,7 @@ export default function Exports() {
           About These Exports
         </h2>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)', fontSize: 'var(--text-body-size)', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', lineHeight: 1.65 }}>
-          <p style={{ margin: 0 }}>Fare observation exports include <strong style={{ color: 'var(--color-text-primary)' }}>data_origin</strong> on every row — only <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>REAL</code> and <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>OFFICIAL</code> records enter live analytical exports.</p>
+          <p style={{ margin: 0 }}>Fare observation exports include <strong style={{ color: 'var(--color-text-primary)' }}>data_origin</strong> on every row — <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>REAL</code>, <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>OFFICIAL</code> and <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>PUBLIC_INTERFACE</code> records enter live analytical exports. <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>PUBLIC_INTERFACE</code> rows are scraped Google Flights fares, honestly labelled with their origin.</p>
           <p style={{ margin: 0 }}>Publication IDs follow the format <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>AP-YYYY-MM-DD-NNN</code> where NNN is a daily sequence number.</p>
           <p style={{ margin: 0 }}>If no eligible records exist for an export, the backend returns an empty file instead of generated rows.</p>
         </div>
