@@ -9,6 +9,8 @@ from app.core.config import settings
 from app.core.rate_limit import rate_limited_user
 from app.models.fare import FareObservation
 from app.collectors.aggregators.fast_flights import FastFlightsAdapter
+from app.collectors.aggregators.scrapling_google_flights import ScraplingGoogleFlightsAdapter
+from app.collectors.base import CollectionResult
 from app.processing.quality import validate_batch
 
 router = APIRouter(prefix="/fares", tags=["fares"])
@@ -270,7 +272,38 @@ async def live_fares(
     if parsed <= date.today():
         return {"status": "INVALID_DATE", "route": normalized_route, "observations": [], "message": "travel_date must be in the future"}
     advance = max(1, (parsed - date.today()).days)
-    result = await FastFlightsAdapter().collect(normalized_route, travel, advance, str(uuid.uuid4()))
+    run_id = str(uuid.uuid4())
+    # Primary: fast-flights. Google throttles it after the daily sweep
+    # volume (fast FAILED, "no flights found; received error" — Google's
+    # own payload flags the error), so a failure here usually means
+    # throttling, not "no flights exist". A raised adapter must not 500
+    # the endpoint — synthesise the FAILED result and fall through to the
+    # fallback below.
+    try:
+        result = await FastFlightsAdapter().collect(normalized_route, travel, advance, run_id)
+    except Exception as exc:
+        result = CollectionResult(
+            FastFlightsAdapter.source_id, normalized_route, travel, advance,
+            "FAILED", error=str(exc)[:500],
+        )
+    fallback_error: Optional[str] = None
+    if result.status in ("FAILED", "NO_DATA"):
+        # Fallback: the second keyless Google Flights source (scrapling
+        # adapter, shipped 23 Nov). It runs ONLY on a primary failure —
+        # never a double scrape on success (a retry would hammer Google
+        # harder during throttling). The fallback's own failure is
+        # swallowed here: both-fail reporting below stays honest about the
+        # primary attempt.
+        try:
+            fallback = await ScraplingGoogleFlightsAdapter().collect(
+                normalized_route, travel, advance, run_id
+            )
+        except Exception:
+            fallback = None
+        if fallback is not None and fallback.records:
+            result = fallback
+        elif fallback is not None:
+            fallback_error = fallback.error
     valid, rejected, rejected_count = validate_batch(result.records)
     return {
         "status": result.status if valid else ("NO_DATA" if not result.error else result.status),
@@ -283,7 +316,11 @@ async def live_fares(
         "data_origin": valid[0].data_origin if valid else "NO_DATA",
         "observations": [_fare_record_dict(record) for record in valid],
         "rejected_count": rejected_count,
-        "error": result.error,
+        # Both attempts produced no fares: report the primary (fast-flights)
+        # error. The fallback error only fills a blank — e.g. primary
+        # NO_DATA with no message, where the status honestly stays NO_DATA
+        # (both sources agree there are no fares) rather than FAILED.
+        "error": result.error or fallback_error,
         "latency_ms": result.latency_ms,
     }
 

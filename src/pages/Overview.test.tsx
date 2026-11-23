@@ -12,6 +12,7 @@ vi.mock('../services/api', () => ({
   apiFares: vi.fn(),
   apiPriceAlerts: vi.fn(),
   apiAviationLive: vi.fn(),
+  apiIndexHistory: vi.fn(),
 }))
 
 const api = await import('../services/api')
@@ -57,6 +58,14 @@ beforeEach(() => {
   vi.mocked(api.apiFares).mockResolvedValue({ observations: [], total: 0, page: 1, page_size: 200, note: '' })
   vi.mocked(api.apiPriceAlerts).mockResolvedValue({ alerts: [] })
   vi.mocked(api.apiAviationLive).mockResolvedValue(aviationBody)
+  // Default: a single published day, so the index KPI helper stays on
+  // "Verified index pending" unless a test seeds two days.
+  vi.mocked(api.apiIndexHistory).mockResolvedValue({
+    frequency: 'daily', count: 1,
+    observations: [
+      { period: '2026-11-23', value: 100.56, status: 'PUBLISHED', route_count: 12, observation_count: 601, data_origin: 'DERIVED' },
+    ],
+  })
 })
 afterEach(() => { cleanup(); vi.clearAllMocks(); vi.unstubAllGlobals() })
 
@@ -150,4 +159,58 @@ test('a refetch failure keeps the previously loaded fare', async () => {
   await waitFor(() => expect(screen.getAllByText('₹7,000').length).toBeGreaterThan(0), { timeout: 5000 })
   expect(screen.getAllByText('₹5,500').length).toBeGreaterThan(0)
   expect(screen.queryByText('No verified observation for this route yet.')).toBeNull()
+})
+
+test('the index KPI shows the index\'s own change from history, not the route mean', async () => {
+  // 23 Nov 2026: the mean of route-level fare changes was +42.3% while the
+  // index itself FELL 106.20 → 100.56. The KPI must show the index's own
+  // change (↓5.3%), and the trend-card Movement the same figure (−5.31%).
+  vi.mocked(api.apiFareMovement).mockResolvedValue({
+    available: true, price_drops: 0,
+    routes: [
+      { route: 'DEL-BOM', previous_fare: 6234, current_fare: 8877, change_pct: 42.3, status: 'SIGNIFICANT_INCREASE' },
+      { route: 'DEL-BLR', previous_fare: 6234, current_fare: 8877, change_pct: 42.3, status: 'SIGNIFICANT_INCREASE' },
+    ],
+    states: {},
+  })
+  vi.mocked(api.apiIndexHistory).mockResolvedValue({
+    frequency: 'daily', count: 2,
+    observations: [
+      { period: '2026-11-23', value: 100.56, status: 'PUBLISHED', route_count: 12, observation_count: 601, data_origin: 'DERIVED' },
+      { period: '2026-11-22', value: 106.20, status: 'PUBLISHED', route_count: 12, observation_count: 387, data_origin: 'DERIVED' },
+    ],
+  })
+  render(<Overview onNavigate={() => {}} />)
+  await screen.findByText('↓ 5.3% vs prior collection')
+  expect(screen.queryByText('↑ 42.3% vs prior collection')).toBeNull()
+  await screen.findByText('-5.31%')
+})
+
+test('a single published day leaves the index KPI on "Verified index pending"', async () => {
+  // Even with route movement available, one published day means no index
+  // change figure exists — the KPI must not fall back to the route mean.
+  vi.mocked(api.apiFareMovement).mockResolvedValue({
+    available: true, price_drops: 0,
+    routes: [
+      { route: 'DEL-BOM', previous_fare: 6234, current_fare: 8877, change_pct: 42.3, status: 'SIGNIFICANT_INCREASE' },
+    ],
+    states: {},
+  })
+  vi.mocked(api.apiIndexHistory).mockResolvedValue({
+    frequency: 'daily', count: 1,
+    observations: [
+      { period: '2026-11-23', value: 100.56, status: 'PUBLISHED', route_count: 12, observation_count: 601, data_origin: 'DERIVED' },
+    ],
+  })
+  render(<Overview onNavigate={() => {}} />)
+  await waitFor(() => expect(api.apiIndexHistory).toHaveBeenCalled())
+  await screen.findByText('Verified index pending')
+  expect(screen.queryByText('↑ 42.3% vs prior collection')).toBeNull()
+})
+
+test('a failed history fetch leaves the index KPI on "Verified index pending"', async () => {
+  vi.mocked(api.apiIndexHistory).mockRejectedValue(new Error('history unavailable'))
+  render(<Overview onNavigate={() => {}} />)
+  await waitFor(() => expect(api.apiIndexHistory).toHaveBeenCalled())
+  await screen.findByText('Verified index pending')
 })
