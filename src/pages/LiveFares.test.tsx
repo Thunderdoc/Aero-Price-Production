@@ -74,3 +74,35 @@ test('S6: two consecutive failures produce an honest error and no third attempt'
   expect(api.apiFares).toHaveBeenCalledTimes(2)
   expect(screen.getByRole('alert')).toBeTruthy()
 })
+
+// ── Loading states (follow-up, 23 Nov 2026 — Ankit's order: no
+// "Data unavailable" / "0 matched" text while a fetch is still in flight) ──
+
+test('loading: while fares load, the count and pagination lines show a loading state, not "0 matched"', async () => {
+  let resolveFares!: (value: Awaited<ReturnType<typeof api.apiFares>>) => void
+  const faresPromise = new Promise<Awaited<ReturnType<typeof api.apiFares>>>(res => { resolveFares = res })
+  vi.mocked(api.apiFares).mockReturnValue(faresPromise)
+  render(<LiveFares />)
+  // Count line + pagination line both read as loading while in flight…
+  expect(await screen.findAllByText('Loading verified fares…')).toHaveLength(2)
+  expect(screen.getByText('Loading verified fare observations…')).toBeTruthy()
+  // …and no zero-count or empty-state text appears before the fetch settles.
+  expect(screen.queryByText('Showing 0 matched flight fares')).toBeNull()
+  expect(screen.queryByText('NO VERIFIED FARES AVAILABLE')).toBeNull()
+  await resolveFares({
+    observations: [fareRow('OBS-1', 'DEL-BOM', 5200), fareRow('OBS-2', 'DEL-BLR', 4800)],
+    total: 2, page: 1, page_size: 100, note: '',
+  })
+  await screen.findByText('OBS-1')
+  expect(screen.getByText('Showing 2 matched flight fares')).toBeTruthy()
+  expect(screen.queryByText('Loading verified fares…')).toBeNull()
+  expect(screen.queryByText('Loading verified fare observations…')).toBeNull()
+})
+
+test('loading: after the retries genuinely fail, the count line honestly shows 0', async () => {
+  vi.mocked(api.apiFares).mockRejectedValue(new Error('The verified fare service is temporarily unavailable.'))
+  render(<LiveFares />)
+  await screen.findByText('The verified fare service is temporarily unavailable.', {}, { timeout: 3000 })
+  expect(screen.getByText('Showing 0 matched flight fares')).toBeTruthy()
+  expect(screen.queryByText('Loading verified fares…')).toBeNull()
+})

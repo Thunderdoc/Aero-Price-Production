@@ -108,6 +108,13 @@ function AppContent() {
   const routerNavigate = useNavigate()
   const currentPage = pathToPage(location.pathname)
   const restoredRef = useRef(false)
+  // Set when the visitor deliberately chooses Sign in (the guest banner's
+  // button, or a guest asking for an account-only page). It stops the
+  // deep-link auto-enter below from bouncing them straight back into guest
+  // mode on the same guest page — without it, Sign in could never land on
+  // the login page. It stays set for the session: after a deliberate
+  // sign-in choice (or a sign-out), the login page is the right screen.
+  const suppressAutoGuestRef = useRef(false)
 
   // Bare '/' load: restore the last-visited page from storage (the pre-router
   // behaviour). A real deep link always wins over the stored page.
@@ -125,8 +132,11 @@ function AppContent() {
 
   function navigate(page: Page) {
     // A guest asking for a page outside the public set wants an account
-    // feature — take them to the login page instead of a dead end.
+    // feature — take them to the login page instead of a dead end. The
+    // suppress flag keeps the deep-link auto-enter below from immediately
+    // re-entering guest mode on the guest page they came from.
     if (!user && guest && !GUEST_PAGES.includes(page)) {
+      suppressAutoGuestRef.current = true
       setGuest(false)
       return
     }
@@ -147,6 +157,28 @@ function AppContent() {
       routerNavigate('/', { replace: true })
     }
   }, [currentPage, user, guest, routerNavigate])
+
+  // A signed-out visitor who deep-links to a public page lands in guest
+  // mode instead of the sign-in wall — the page they linked to reads only
+  // public endpoints, so there is no reason to bounce them through login
+  // first. The home page ('/') is deliberately excluded: the login page
+  // stays the first screen for a bare visit. This also covers the restore
+  // above: a bare load that restores a stored guest page enters guest mode
+  // once the URL changes. The suppress flag is what lets a deliberate
+  // Sign in choice stick (see suppressAutoGuestRef).
+  useEffect(() => {
+    if (!user && !guest && !suppressAutoGuestRef.current && currentPage !== 'overview' && GUEST_PAGES.includes(currentPage)) {
+      setGuest(true)
+    }
+  }, [currentPage, user, guest])
+
+  // Leaving guest mode for the login page (banner Sign in / shell sign-in):
+  // the suppress flag stops the auto-enter above from bouncing straight
+  // back into guest mode on the same guest page.
+  function exitGuestToSignIn() {
+    suppressAutoGuestRef.current = true
+    setGuest(false)
+  }
 
   useEffect(() => {
     if (!user && !guest) {
@@ -205,8 +237,8 @@ function AppContent() {
     if (guest) {
       const guestPage = GUEST_PAGES.includes(currentPage) ? currentPage : 'overview'
       return (
-        <AppShell currentPage={guestPage} onNavigate={navigate} guest onSignIn={() => setGuest(false)}>
-          <GuestBanner onSignIn={() => setGuest(false)} />
+        <AppShell currentPage={guestPage} onNavigate={navigate} guest onSignIn={exitGuestToSignIn}>
+          <GuestBanner onSignIn={exitGuestToSignIn} />
           <div key={guestPage} style={{ minWidth: 0 }}>
             <Suspense fallback={<PageLoading />}>{pageElement(guestPage)}</Suspense>
           </div>

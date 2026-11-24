@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import RouteExplorer from './RouteExplorer'
 import type { FareObservationApi } from '../services/api'
 
-vi.mock('../contexts/AuthContext', () => ({
-  useAuth: () => ({ user: { email: 'test@example.test', name: 'Test', role: 'PUBLIC', plan: 'FREE' }, token: 'test-token' }),
+const authState = vi.hoisted(() => ({
+  user: { email: 'test@example.test', name: 'Test', role: 'PUBLIC', plan: 'FREE' } as { email: string; name: string; role: string; plan: string } | null,
+  token: 'test-token' as string | null,
 }))
+vi.mock('../contexts/AuthContext', () => ({ useAuth: () => authState }))
 vi.mock('../services/api', () => ({
   apiAnomalies: vi.fn(),
   apiFares: vi.fn(),
@@ -61,6 +63,8 @@ function makeDeferred<T>(): Deferred<T> {
 beforeEach(() => {
   localStorage.clear()
   sessionStorage.clear()
+  authState.user = { email: 'test@example.test', name: 'Test', role: 'PUBLIC', plan: 'FREE' }
+  authState.token = 'test-token'
   vi.mocked(api.isBackendAvailable).mockResolvedValue(true)
   vi.mocked(api.apiForecast).mockResolvedValue({
     status: 'INSUFFICIENT_DATA', route: 'DEL-BOM', advance_days: 7, cabin: 'ECONOMY',
@@ -93,7 +97,9 @@ test('R2: a slow stale route response never overwrites the current route fares',
   // The initial DEL-BOM load is still in flight (deferred); switch routes.
   const blrChip = await screen.findByText('DEL → BLR')
   fireEvent.click(blrChip)
-  expect(api.apiLiveFares).toHaveBeenCalledWith('DEL-BLR', expect.any(String), 'test-token')
+  // The cached-first mount calls the live upgrade only after the stored
+  // rows resolve, so the call lands a microtask after the click.
+  await waitFor(() => expect(api.apiLiveFares).toHaveBeenCalledWith('DEL-BLR', expect.any(String), 'test-token'))
 
   // The current route's fares land first.
   await act(async () => {
@@ -123,9 +129,10 @@ test('R3: the route picker comes from GET /api/routes, including routes no fare 
   // 600-row fare sample could never have offered it.
   await screen.findByText('CCU → GAU')
   expect(api.apiRouteBasket).toHaveBeenCalledWith('test-token')
-  // The picker no longer fetches fares to build its options, and the live
-  // search succeeded so no cached-fares fallback ran either.
-  expect(api.apiFares).not.toHaveBeenCalled()
+  // The cached-first mount loads stored rows before the live upgrade, so
+  // apiFares IS called — but the picker still comes from the basket, not
+  // from any fare sample.
+  expect(api.apiFares).toHaveBeenCalledWith({ route: 'DEL-BOM', limit: 1000 }, 'test-token')
 })
 
 function anomalyRow(route: string, totalFare: number, id: string) {
@@ -214,7 +221,10 @@ test('P5: live rows keep their own median — the stored summary never overrides
   render(<RouteExplorer />)
   expect(await screen.findAllByText('₹5,000')).toHaveLength(2)
   expect(screen.queryByText('₹7,500')).toBeNull()
-  expect(api.apiFares).not.toHaveBeenCalled()
+  // The cached-first mount fetched stored rows (empty) before the live
+  // upgrade supplied the scrape — the summary still never overrides it.
+  expect(api.apiFares).toHaveBeenCalledWith({ route: 'DEL-BOM', limit: 1000 }, 'test-token')
+  expect(api.apiLiveFares).toHaveBeenCalledWith('DEL-BOM', expect.any(String), 'test-token')
 })
 
 test('P5: a failed summary falls back to the row figures instead of blanking the headline', async () => {
@@ -231,4 +241,118 @@ test('P5: a failed summary falls back to the row figures instead of blanking the
 
   render(<RouteExplorer />)
   expect(await screen.findAllByText('₹5,000')).toHaveLength(2)
+})
+
+// ── Cached-first mount (follow-up, 23 Nov 2026): the old mount called the
+// live-first loadRoute, which has no retry — a mount-time live failure plus
+// a cold-start cached failure left the page empty forever, until the user
+// clicked Search. The mount now loads stored rows first (one retry), then
+// upgrades to live rows in the background. ────────────────────────────────
+
+test('cached-first mount: stored rows render before the live call resolves, then live rows swap in', async () => {
+  vi.mocked(api.apiRouteBasket).mockResolvedValue({
+    routes: [basketItem('DEL-BOM')],
+    total: 1, advance_windows: [1, 7], basket_version: 'v1.0', timestamp: '',
+  })
+  // Cached rows median to ₹5,500; the live scrape medians to ₹4,200.
+  vi.mocked(api.apiFares).mockResolvedValue({
+    observations: [fareRow('DEL-BOM', 5000, 'OBS-C1'), fareRow('DEL-BOM', 6000, 'OBS-C2')],
+    total: 2, page: 1, page_size: 1000, note: '',
+  })
+  const live = makeDeferred<ReturnType<typeof livePayload>>()
+  vi.mocked(api.apiLiveFares).mockReturnValue(live.promise)
+
+  render(<RouteExplorer />)
+  // The page populates from the cache while the live call is still pending.
+  expect(await screen.findAllByText('₹5,500')).toHaveLength(2)
+  expect(screen.getByText('2 verified records loaded')).toBeTruthy()
+  // The mount logged the cached load (the live upgrade is a background
+  // refresh, not a second search).
+  const activity = JSON.parse(localStorage.getItem('aeroprice_route_activity:test@example.test') || '[]')
+  expect(activity).toHaveLength(1)
+  expect(activity[0].route).toBe('DEL-BOM')
+  expect(activity[0].resultCount).toBe(2)
+
+  await act(async () => { live.resolve(livePayload('DEL-BOM', [fareRow('DEL-BOM', 4200, 'OBS-L1')])) })
+  expect(await screen.findAllByText('₹4,200')).toHaveLength(2)
+  expect(screen.queryByText('₹5,500')).toBeNull()
+  expect(screen.getByText('1 verified records loaded')).toBeTruthy()
+})
+
+test('cached-first mount: a failed stored-rows fetch retries once and recovers', async () => {
+  vi.mocked(api.apiRouteBasket).mockResolvedValue({
+    routes: [basketItem('DEL-BOM')],
+    total: 1, advance_windows: [1, 7], basket_version: 'v1.0', timestamp: '',
+  })
+  vi.mocked(api.apiFares)
+    .mockRejectedValueOnce(new Error('cold start'))
+    .mockResolvedValue({
+      observations: [fareRow('DEL-BOM', 5000, 'OBS-1'), fareRow('DEL-BOM', 6000, 'OBS-2')],
+      total: 2, page: 1, page_size: 1000, note: '',
+    })
+  // The live source is down too — the page must still populate from the
+  // retried cache instead of settling empty.
+  vi.mocked(api.apiLiveFares).mockRejectedValue(new Error('live unavailable'))
+
+  render(<RouteExplorer />)
+  expect(await screen.findAllByText('₹5,500', {}, { timeout: 4000 })).toHaveLength(2)
+  expect(api.apiFares).toHaveBeenCalledTimes(2)
+  expect(screen.getByText('Live fare source is temporarily unavailable; showing cached verified observations.')).toBeTruthy()
+})
+
+test('cached-first mount: empty cache and empty live show the honest no-records message', async () => {
+  vi.mocked(api.apiRouteBasket).mockResolvedValue({
+    routes: [basketItem('DEL-BOM')],
+    total: 1, advance_windows: [1, 7], basket_version: 'v1.0', timestamp: '',
+  })
+  vi.mocked(api.apiFares).mockResolvedValue({ observations: [], total: 0, page: 1, page_size: 1000, note: '' })
+  vi.mocked(api.apiLiveFares).mockResolvedValue(livePayload('DEL-BOM', []))
+
+  render(<RouteExplorer />)
+  expect(await screen.findByText(/No verified fare records are available for DEL-BOM/)).toBeTruthy()
+  expect(screen.getByText('No verified records loaded')).toBeTruthy()
+})
+
+test('explicit search stays live-first: the live call runs before any cached fetch', async () => {
+  vi.mocked(api.apiRouteBasket).mockResolvedValue({
+    routes: [basketItem('DEL-BOM')],
+    total: 1, advance_windows: [1, 7], basket_version: 'v1.0', timestamp: '',
+  })
+  vi.mocked(api.apiFares).mockResolvedValue({
+    observations: [fareRow('DEL-BOM', 5000, 'OBS-C1'), fareRow('DEL-BOM', 6000, 'OBS-C2')],
+    total: 2, page: 1, page_size: 1000, note: '',
+  })
+  const live = makeDeferred<ReturnType<typeof livePayload>>()
+  vi.mocked(api.apiLiveFares).mockReturnValue(live.promise)
+
+  render(<RouteExplorer />)
+  expect(await screen.findAllByText('₹5,500')).toHaveLength(2)
+  // Forget the mount calls; the search below must start with the live call.
+  vi.clearAllMocks()
+  fireEvent.click(screen.getByRole('button', { name: 'Search Verified Fares' }))
+  await waitFor(() => expect(api.apiLiveFares).toHaveBeenCalledTimes(1))
+  // The live call is still pending — the cached fallback must not have run.
+  expect(api.apiFares).not.toHaveBeenCalled()
+  await act(async () => { live.resolve(livePayload('DEL-BOM', [fareRow('DEL-BOM', 4200, 'OBS-L1')])) })
+  expect(await screen.findAllByText('₹4,200')).toHaveLength(2)
+  expect(api.apiFares).not.toHaveBeenCalled()
+})
+
+test('guest mount: cached rows load and the live upgrade is never attempted', async () => {
+  authState.user = null
+  authState.token = null
+  vi.mocked(api.apiRouteBasket).mockResolvedValue({
+    routes: [basketItem('DEL-BOM')],
+    total: 1, advance_windows: [1, 7], basket_version: 'v1.0', timestamp: '',
+  })
+  vi.mocked(api.apiFares).mockResolvedValue({
+    observations: [fareRow('DEL-BOM', 5000, 'OBS-C1'), fareRow('DEL-BOM', 6000, 'OBS-C2')],
+    total: 2, page: 1, page_size: 1000, note: '',
+  })
+
+  render(<RouteExplorer />)
+  expect(await screen.findAllByText('₹5,500')).toHaveLength(2)
+  expect(api.apiLiveFares).not.toHaveBeenCalled()
+  // Live was never attempted, so there is no "temporarily unavailable" message.
+  expect(screen.queryByText(/temporarily unavailable/)).toBeNull()
 })

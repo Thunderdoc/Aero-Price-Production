@@ -34,6 +34,10 @@ interface RouteFareSummary {
 // route — the history, booking-window and collection-change figures derived
 // from rows are no longer truncated to a newest-first subsample.
 const CACHED_FARES_LIMIT = 1000
+// Cached-first mount: one retry after 1 s on a failed stored-rows fetch
+// (Overview's route-card pattern) — a cold start must not leave the page
+// empty when a single retry would populate it.
+const ROUTE_CACHED_RETRY_MS = 1000
 
 function changeBetweenCollections(rows: FareObservationApi[]) {
   const byDay = new Map<string, number[]>()
@@ -79,6 +83,79 @@ export default function RouteExplorer() {
   }, [basketRoutes, route])
   const [from, to] = route.split('-')
 
+  // Shared by the explicit search (loadRoute) and the cached-first mount
+  // (loadRouteCachedFirst): one recent-activity entry per load, deduped
+  // within 90 s for the same route.
+  function recordRouteActivity(date: string | undefined, resultCount: number) {
+    if (!user?.email) return
+    const key = `aeroprice_route_activity:${user.email}`
+    const activity = { id: `${route}-${Date.now()}`, route, searchedAt: new Date().toISOString(), travelDate: date ?? null, resultCount }
+    try {
+      const existing = JSON.parse(localStorage.getItem(key) || '[]') as typeof activity[]
+      const recentDuplicate = existing[0] && existing[0].route === route && Date.now() - new Date(existing[0].searchedAt).getTime() < 90_000
+      if (!recentDuplicate) localStorage.setItem(key, JSON.stringify([activity, ...existing].slice(0, 25)))
+    } catch { localStorage.setItem(key, JSON.stringify([activity])) }
+  }
+
+  // Cached-first mount (follow-up, 23 Nov 2026): the old mount called the
+  // live-first loadRoute, whose on-demand scrape takes up to 50 s and has
+  // NO retry — when the mount-time live call failed AND the immediate
+  // cached fallback also failed (cold start / transient 500, the exact
+  // condition Push 6 fixed server-side), the page settled empty and stayed
+  // empty until the user clicked Search. The mount now loads stored rows
+  // first (one retry after 1 s — the page populates in ~3 s), then
+  // upgrades to live rows in the background when a token is present. The
+  // explicit Search button still uses live-first loadRoute, unchanged.
+  async function loadRouteCachedFirst(date?: string) {
+    const requestId = ++requestIdRef.current
+    const isCurrent = () => requestId === requestIdRef.current
+    setLoading(true)
+    setMessage(null)
+    let cached: FareObservationApi[] = []
+    for (let attempt = 0; attempt < 2 && isCurrent(); attempt++) {
+      try {
+        const response = await apiFares({ route, limit: CACHED_FARES_LIMIT }, token ?? undefined)
+        cached = response.observations.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL' || row.data_origin === 'PUBLIC_INTERFACE')
+        break
+      } catch {
+        if (attempt === 0) await new Promise(resolve => setTimeout(resolve, ROUTE_CACHED_RETRY_MS))
+      }
+    }
+    if (!isCurrent()) return
+    setRows(cached)
+    setLiveRows(false)
+    setFilteredToDate(false)
+    recordRouteActivity(date, cached.length)
+    setLoading(false)
+    // Guests never attempt the live upgrade — /api/fares/live is
+    // auth-gated, so a guest call would only log a pointless 401. With
+    // cached rows there is no "temporarily unavailable" message either,
+    // because live was never attempted.
+    if (!token) {
+      if (!cached.length) setMessage(date ? `No verified fare records are available for ${route} on ${date}.` : `No verified fare records are available for ${route}.`)
+      return
+    }
+    try {
+      const response = await apiLiveFares(route, date ?? searchDate, token)
+      if (!isCurrent()) return
+      const live = response.observations.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL' || row.data_origin === 'PUBLIC_INTERFACE')
+      if (live.length) {
+        setRows(live)
+        setLiveRows(true)
+        setFilteredToDate(Boolean(date))
+        setMessage(null)
+      } else if (cached.length) {
+        setMessage('Live fare source is temporarily unavailable; showing cached verified observations.')
+      } else {
+        setMessage(date ? `No verified fare records are available for ${route} on ${date}.` : `No verified fare records are available for ${route}.`)
+      }
+    } catch {
+      if (!isCurrent()) return
+      if (cached.length) setMessage('Live fare source is temporarily unavailable; showing cached verified observations.')
+      else setMessage('The verified fare service is not available right now.')
+    }
+  }
+
   async function loadRoute(date?: string) {
     const requestId = ++requestIdRef.current
     const isCurrent = () => requestId === requestIdRef.current
@@ -103,15 +180,7 @@ export default function RouteExplorer() {
       }
       setRows(next)
       setFilteredToDate(Boolean(date))
-      if (user?.email) {
-        const key = `aeroprice_route_activity:${user.email}`
-        const activity = { id: `${route}-${Date.now()}`, route, searchedAt: new Date().toISOString(), travelDate: date ?? null, resultCount: next.length }
-        try {
-          const existing = JSON.parse(localStorage.getItem(key) || '[]') as typeof activity[]
-          const recentDuplicate = existing[0] && existing[0].route === route && Date.now() - new Date(existing[0].searchedAt).getTime() < 90_000
-          if (!recentDuplicate) localStorage.setItem(key, JSON.stringify([activity, ...existing].slice(0, 25)))
-        } catch { localStorage.setItem(key, JSON.stringify([activity])) }
-      }
+      recordRouteActivity(date, next.length)
       if (!next.length) setMessage(date ? `No verified fare records are available for ${route} on ${date}.` : `No verified fare records are available for ${route}.`)
     } catch {
       try {
@@ -143,7 +212,7 @@ export default function RouteExplorer() {
     return () => { active = false }
   }, [token])
 
-  useEffect(() => { void loadRoute(searchDate) }, [route, token, searchDate])
+  useEffect(() => { void loadRouteCachedFirst(searchDate) }, [route, token, searchDate])
 
   useEffect(() => {
     apiForecast(route, 7, token ?? undefined).then(setForecast).catch(() => setForecast(null))

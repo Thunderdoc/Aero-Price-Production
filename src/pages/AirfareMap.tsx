@@ -456,9 +456,13 @@ function MapControls({ filter, onChange }: MapControlsProps) {
 interface FlightsBadgeProps {
   count: number
   connectionStatus: 'live' | 'delayed' | 'offline'
+  // While the radar feed is still connecting, the badge must not read "0
+  // flight positions" — zero positions have been observed yet, so a
+  // measured-looking 0 would be wrong (same rule as the legend dashes).
+  loading?: boolean
 }
 
-function FlightsBadge({ count, connectionStatus }: FlightsBadgeProps) {
+function FlightsBadge({ count, connectionStatus, loading }: FlightsBadgeProps) {
   return (
     <div
       className="airfare-flight-status"
@@ -485,13 +489,15 @@ function FlightsBadge({ count, connectionStatus }: FlightsBadgeProps) {
         }}
       />
       <span style={{ fontSize: 'var(--text-caption-size)', fontWeight: 600 }}>
-        {count} flight positions over India
+        {loading ? 'Connecting to live aircraft feed…' : `${count} flight positions over India`}
       </span>
       <span
         style={{
           fontSize: 'var(--text-caption-size)',
           color:
-            connectionStatus === 'live'
+            loading
+              ? 'var(--color-warning)'
+              : connectionStatus === 'live'
               ? 'var(--color-success)'
               : connectionStatus === 'delayed'
               ? 'var(--color-warning)'
@@ -500,7 +506,7 @@ function FlightsBadge({ count, connectionStatus }: FlightsBadgeProps) {
           letterSpacing: '0.05em',
         }}
       >
-        {connectionStatus === 'live' ? 'LIVE' : connectionStatus}
+        {loading ? 'CONNECTING' : connectionStatus === 'live' ? 'LIVE' : connectionStatus}
       </span>
     </div>
   )
@@ -572,9 +578,12 @@ interface RouteSidebarProps {
   corridors: MapCorridor[]
   selectedId: string | null
   onSelect: (id: string) => void
+  // While the route summaries are still loading, the header must not read
+  // "0 routes with stored quotes" — zero routes have been observed yet.
+  loading?: boolean
 }
 
-function RouteSidebar({ corridors, selectedId, onSelect }: RouteSidebarProps) {
+function RouteSidebar({ corridors, selectedId, onSelect, loading }: RouteSidebarProps) {
   return (
     <div
       className="airfare-route-sidebar"
@@ -614,7 +623,7 @@ function RouteSidebar({ corridors, selectedId, onSelect }: RouteSidebarProps) {
           </span>
         </div>
         <span style={{ fontSize: 'var(--text-caption-size)', color: 'var(--color-text-tertiary)' }}>
-          {corridors.length} routes with stored quotes
+          {loading && !corridors.length ? 'Loading routes…' : `${corridors.length} routes with stored quotes`}
         </span>
       </div>
 
@@ -763,22 +772,28 @@ export function corridorStrokeWidth(weight: number, minWeight: number, maxWeight
 export default function AirfareMap() {
   const { token } = useAuth()
   const { connectionStatus } = useLiveData()
-  const radar = useAviationRadar(true)
-  const apiStatus: 'loading' | 'REAL' | 'UNAVAILABLE' = radar.status === 'connected'
-    ? 'REAL'
-    : radar.status === 'loading'
-      ? 'loading'
-      : 'UNAVAILABLE'
+  // D4 (same pattern as Overview): the radar poll runs only with a token —
+  // a guest must never trigger an unauthenticated poll (401 every 30 s).
+  // Without a token the feed reads UNAVAILABLE and no retained positions
+  // from an earlier signed-in session leak onto a guest's map.
+  const radar = useAviationRadar(!!token)
+  const apiStatus: 'loading' | 'REAL' | 'UNAVAILABLE' = !token
+    ? 'UNAVAILABLE'
+    : radar.status === 'connected'
+      ? 'REAL'
+      : radar.status === 'loading'
+        ? 'loading'
+        : 'UNAVAILABLE'
 
   // Use the backend's live ADS-B contract directly. This avoids requiring an
   // optional AviationStack schedules key just to place real aircraft markers.
-  const liveFlights = radar.aircraft.map(flight => ({
+  const liveFlights = token ? radar.aircraft.map(flight => ({
     icao24: flight.icao24 || flight.callsign,
     lat: flight.latitude,
     lng: flight.longitude,
     callsign: flight.callsign || flight.registration || flight.icao24,
     altitude: Math.max(0, Number(flight.altitude_ft ?? 0) * 0.3048),
-  }))
+  })) : []
   const realFlightCount = liveFlights.length
 
   const [corridors, setCorridors] = useState<MapCorridor[]>([])
@@ -790,15 +805,16 @@ export default function AirfareMap() {
 
   useEffect(() => {
     let active = true
-    if (!token) {
-      setCorridors([])
-      setRouteError('Sign in to load verified route observations.')
-      return () => { active = false }
-    }
-
+    // No token gate: the map is a guest page, and three of these four
+    // endpoints serve without auth (/api/routes, /api/routes/summary,
+    // /api/dashboard/fare-movement — verified 23 Nov 2026). Only
+    // /api/index/basket 401s for guests, and its .catch(() => null) below
+    // already falls back to equal-share weights (M6). The old early
+    // return showed every guest "Sign in to load verified route
+    // observations." for data that is public.
     setRoutesLoading(true)
     setRouteError(null)
-    Promise.all([apiRouteBasket(token), apiFareMovement(token).catch(() => null), apiRouteSummaries(token), apiIndexBasket(token).catch(() => null)])
+    Promise.all([apiRouteBasket(token ?? undefined), apiFareMovement(token ?? undefined).catch(() => null), apiRouteSummaries(token ?? undefined), apiIndexBasket(token ?? undefined).catch(() => null)])
       .then(([basket, movement, summaryResponse, indexBasket]) => {
         const weightsByRoute = new Map(indexBasket?.routes.map(row => [row.route, row.weight]) ?? [])
         if (active) setCorridors(buildMapCorridors(basket.routes, movement, summaryResponse.summaries, weightsByRoute))
@@ -1006,7 +1022,7 @@ export default function AirfareMap() {
 
         {/* Overlays (rendered outside MapContainer but inside relative wrapper) */}
         <MapControls filter={filter} onChange={setFilter} />
-        <FlightsBadge count={apiStatus === 'REAL' ? realFlightCount : liveFlights.length} connectionStatus={apiStatus === 'REAL' ? 'live' : connectionStatus} />
+        <FlightsBadge count={apiStatus === 'REAL' ? realFlightCount : liveFlights.length} connectionStatus={apiStatus === 'REAL' ? 'live' : connectionStatus} loading={apiStatus === 'loading'} />
         <Legend />
       </div>
 
@@ -1015,6 +1031,7 @@ export default function AirfareMap() {
         corridors={filteredCorridors}
         selectedId={selectedId}
         onSelect={handleRouteSelect}
+        loading={routesLoading}
       />
       </div>{/* end map+sidebar row */}
     </div>

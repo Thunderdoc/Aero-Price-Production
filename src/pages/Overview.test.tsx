@@ -290,3 +290,83 @@ test('a failed history fetch leaves the index KPI on "Verified index pending"', 
   await waitFor(() => expect(api.apiIndexHistory).toHaveBeenCalled())
   await screen.findByText('Verified index pending')
 })
+
+// ── Loading states (follow-up, 23 Nov 2026 — Ankit's order: no
+// "Data unavailable" text while a fetch is still in flight) ───────────────
+
+type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void }
+function makeDeferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(res => { resolve = res })
+  return { promise, resolve }
+}
+
+test('loading: route cards show a loading state, not "Data unavailable", while fares load', async () => {
+  const fares = makeDeferred<ReturnType<typeof faresResponse>>()
+  vi.mocked(api.apiFares).mockReturnValue(fares.promise)
+  render(<Overview onNavigate={() => {}} />)
+  expect(await screen.findAllByText('Loading verified fares…')).toHaveLength(3)
+  expect(screen.queryByText('Data unavailable')).toBeNull()
+  expect(screen.queryByText('No verified observation for this route yet.')).toBeNull()
+  await fares.resolve(faresResponse([5000, 6000]))
+  await waitFor(() => expect(screen.getAllByText('₹5,500').length).toBeGreaterThan(0), { timeout: 5000 })
+  expect(screen.queryByText('Loading verified fares…')).toBeNull()
+})
+
+test('loading: KPIs show "Loading…" while the dashboard loads, never "Data unavailable"', async () => {
+  const dashboard = makeDeferred<Awaited<ReturnType<typeof api.apiDashboard>>>()
+  const movement = makeDeferred<Awaited<ReturnType<typeof api.apiFareMovement>>>()
+  const history = makeDeferred<Awaited<ReturnType<typeof api.apiIndexHistory>>>()
+  const fares = makeDeferred<ReturnType<typeof faresResponse>>()
+  vi.mocked(api.apiDashboard).mockReturnValue(dashboard.promise)
+  vi.mocked(api.apiFareMovement).mockReturnValue(movement.promise)
+  vi.mocked(api.apiIndexHistory).mockReturnValue(history.promise)
+  vi.mocked(api.apiFares).mockReturnValue(fares.promise)
+  render(<Overview onNavigate={() => {}} />)
+  // Every in-flight surface shows a loading state…
+  expect(await screen.findAllByText('Loading verified fares…')).toHaveLength(3)
+  expect(screen.getAllByText('Loading…').length).toBeGreaterThan(0)
+  expect(screen.getByText('Loading index…')).toBeTruthy()
+  expect(screen.getByText('Loading verified movements…')).toBeTruthy()
+  // …and no settled-empty text appears anywhere while loading.
+  expect(screen.queryByText('Data unavailable')).toBeNull()
+  expect(screen.queryByText('No verified observation for this route yet.')).toBeNull()
+  expect(screen.queryByText('Movement data is not available yet')).toBeNull()
+  expect(screen.queryByText('Verified index pending')).toBeNull()
+  await dashboard.resolve({
+    real_observations: 3750, sources_live: 2, sources_challenge_detected: 0,
+    gov_datasets_connected: 1, collection_runs_today: 3, last_collection: '2026-09-28T10:00:00Z',
+    index_status: 'PUBLISHED', index_value: 101.2, routes_tracked: 12, price_drops: 2,
+    note: '', timestamp: '2026-11-22T10:00:00Z',
+  })
+  await movement.resolve({ available: true, price_drops: 2, routes: [], states: {} })
+  await history.resolve({
+    frequency: 'daily', count: 1,
+    observations: [
+      { period: '2026-11-23', value: 100.56, status: 'PUBLISHED', route_count: 12, observation_count: 601, data_origin: 'DERIVED' },
+    ],
+  })
+  await fares.resolve(faresResponse([5000, 6000]))
+  await waitFor(() => expect(screen.getByText('3,750')).toBeTruthy(), { timeout: 5000 })
+  expect(screen.queryByText('Loading…')).toBeNull()
+  expect(screen.getByText('Verified index pending')).toBeTruthy()
+})
+
+test('loading: the index helper reads "Loading index…" while history loads, then "Verified index pending"', async () => {
+  // One published day means no change figure exists — but while the
+  // history fetch is still in flight the helper must say it is loading,
+  // not that the index is pending. The two states are different facts.
+  const history = makeDeferred<Awaited<ReturnType<typeof api.apiIndexHistory>>>()
+  vi.mocked(api.apiIndexHistory).mockReturnValue(history.promise)
+  render(<Overview onNavigate={() => {}} />)
+  expect(await screen.findByText('Loading index…')).toBeTruthy()
+  expect(screen.queryByText('Verified index pending')).toBeNull()
+  await history.resolve({
+    frequency: 'daily', count: 1,
+    observations: [
+      { period: '2026-11-23', value: 100.56, status: 'PUBLISHED', route_count: 12, observation_count: 601, data_origin: 'DERIVED' },
+    ],
+  })
+  await screen.findByText('Verified index pending')
+  expect(screen.queryByText('Loading index…')).toBeNull()
+})

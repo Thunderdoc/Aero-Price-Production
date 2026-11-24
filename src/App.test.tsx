@@ -61,9 +61,12 @@ test('ITEM 4: a guest deep-linking LiveFares sees LiveFares — its endpoints ar
   // GET /api/fares carries no auth dependency and the health probe is
   // public, so a guest on this page fires no 401 at all. Clamping them to
   // Overview (which fires auth-gated index/aviation calls) was worse.
+  // Follow-up (23 Nov 2026): the deep link auto-enters guest mode — no
+  // click on the login page's "Browse as guest" link is needed, and the
+  // sign-in wall never appears.
   renderAt('/livefares')
-  await enterAsGuest()
   expect(await screen.findByText('LIVEFARES PAGE')).toBeTruthy()
+  expect(screen.queryByText('LOGIN PAGE')).toBeNull()
   expect(screen.queryByText('OVERVIEW PAGE')).toBeNull()
   expect(screen.getByTestId('shell').getAttribute('data-page')).toBe('livefares')
 })
@@ -81,17 +84,39 @@ test('ITEM 4: a guest deep-linking Aviation is clamped to the guest Overview —
 
 test('ITEM 4: a guest navigating to a non-guest page gets the honest sign-in prompt', async () => {
   renderAt('/routes')
-  await enterAsGuest()
   expect(await screen.findByText('ROUTEEXPLORER PAGE')).toBeTruthy()
   // The sidebar offers Aviation; a guest asking for it wants an account
   // feature, so App sends them back to the login page — never to a 401.
+  // The login page must STAY: without the suppress flag the deep-link
+  // auto-enter would bounce straight back to guest mode on /routes.
   fireEvent.click(screen.getByText('Go AviationLive'))
   expect(await screen.findByText('LOGIN PAGE')).toBeTruthy()
   expect(screen.queryByText('AVIATIONLIVE PAGE')).toBeNull()
+  expect(screen.queryByText('ROUTEEXPLORER PAGE')).toBeNull()
 })
 
 test('ITEM 4: a guest deep-linking a guest page renders it directly', async () => {
   renderAt('/routes')
-  await enterAsGuest()
   expect(await screen.findByText('ROUTEEXPLORER PAGE')).toBeTruthy()
+  expect(screen.queryByText('LOGIN PAGE')).toBeNull()
+})
+
+test('guest deep-link: a bare home load still shows the login page first', async () => {
+  // '/' (overview) is deliberately excluded from auto-enter: the login
+  // page stays the first screen for a bare visit. Only a real deep link
+  // to another guest page auto-enters guest mode.
+  renderAt('/')
+  expect(await screen.findByText('LOGIN PAGE')).toBeTruthy()
+  expect(screen.queryByText('OVERVIEW PAGE')).toBeNull()
+})
+
+test('guest deep-link: Sign in from a guest page shows the login page and it stays', async () => {
+  // The guest banner's Sign in button exits guest mode. The auto-enter
+  // must not bounce the visitor straight back into guest mode on the
+  // same guest page — otherwise Sign in could never land on login.
+  renderAt('/livefares')
+  expect(await screen.findByText('LIVEFARES PAGE')).toBeTruthy()
+  fireEvent.click(screen.getByText('Sign in'))
+  expect(await screen.findByText('LOGIN PAGE')).toBeTruthy()
+  expect(screen.queryByText('LIVEFARES PAGE')).toBeNull()
 })

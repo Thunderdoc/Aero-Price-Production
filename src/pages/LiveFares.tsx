@@ -390,7 +390,10 @@ export default function LiveFares() {
         </label>
 
         <div style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: 'var(--color-brand-primary)' }}>
-          Showing {filteredFares.length} matched flight fares
+          {/* While the first fetch is still in flight there is no count to
+              show — "Showing 0 matched flight fares" during loading reads
+              as an empty result, not a pending one. */}
+          {loading && !allFares.length ? 'Loading verified fares…' : `Showing ${filteredFares.length} matched flight fares`}
         </div>
       </div>
 
@@ -416,6 +419,11 @@ export default function LiveFares() {
               </tr>
             </thead>
             <tbody>
+              {loading && paginatedFares.length === 0 && (
+                <tr><td colSpan={TABLE_COLS.length} role="status" style={{ padding: '28px 14px', textAlign: 'center', color: 'var(--color-text-tertiary)', fontSize: 12 }}>
+                  Loading verified fare observations…
+                </td></tr>
+              )}
               {paginatedFares.map(o => (
                 <tr key={o.observation_id} style={{ borderBottom: '1px solid var(--color-border-primary)', transition: 'background 0.1s' }}>
                   <td style={{ padding: '12px 14px', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--color-text-tertiary)' }}>
@@ -483,7 +491,7 @@ export default function LiveFares() {
         {/* Pagination */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderTop: '1px solid var(--color-border-primary)', background: 'var(--color-surface-secondary)' }}>
           <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
-            Page {currentPage + 1} of {Math.max(1, totalPages)} ({filteredFares.length} total offers)
+            {loading && !allFares.length ? 'Loading verified fares…' : `Page ${currentPage + 1} of ${Math.max(1, totalPages)} (${filteredFares.length} total offers)`}
           </span>
           <div style={{ display: 'flex', gap: 8 }}>
             <button

@@ -55,6 +55,13 @@ export default function AviationRadarMap({ state, selected, onSelect, layer, ful
     return [...result.entries()].filter(([, points]) => points.length > 1)
   }, [state.history])
   const phases = ['airborne', 'descending', 'climbing', 'ground']
+  // Legend counts are only meaningful when the feed has positions to
+  // count: 'connected' / 'cached' / 'empty' all carry a measured set of
+  // aircraft ('empty' = the provider returned zero, a measured zero).
+  // While 'loading' or 'unavailable' there are no valid positions, so
+  // the legend shows a dash — the same rule the corridor dialogs already
+  // use — instead of a literal 0 that reads as a measured count.
+  const legendCountsAvailable = state.status === 'connected' || state.status === 'cached' || state.status === 'empty'
   const layerNotice: Partial<Record<RadarLayer, string>> = {
     Routes: paths.length ? 'Flight trails recorded during this session' : 'Flight trails build as fresh positions arrive. Origin and destination are not supplied by this feed.',
     Corridors: 'Indicative airport corridors are drawn for situational awareness; live aircraft remain provider positions.',
@@ -76,7 +83,7 @@ export default function AviationRadarMap({ state, selected, onSelect, layer, ful
     </MapContainer>
     {layerNotice[layer] && <div className="av-map-notice" role="status">{layerNotice[layer]}</div>}
     {(state.status !== 'connected' && state.status !== 'cached' || mapFailed) && <div className="av-map-connection" role="status">{mapFailed ? 'Basemap unavailable — aircraft positions remain visible' : state.status === 'loading' ? 'Connecting to aircraft feed…' : state.status === 'empty' ? 'Provider returned no aircraft positions' : 'Live tracking temporarily unavailable'}</div>}
-    <div className="av-map-legend">{phases.map((key, i) => <div key={key}><svg viewBox="0 0 20 21" width="17" height="17" fill={['#2ed75c', '#facc15', '#fb923c', '#93a9bc'][i]}>{/* same north-facing aircraft silhouette */}<path d="M10 1 8.6 4v4L1 13l7.6-2v4L6 19v1l4-1 4 1v-1l-2.6-2v-4l7.6 2v-2l-7.6-5V4Z"/></svg><span>{['Airborne', 'Descending', 'Climbing', 'On ground'][i]}</span><b>{state.aircraft.filter(a => flightPhase(a).key === key).length}</b></div>)}</div>
+    <div className="av-map-legend">{phases.map((key, i) => <div key={key}><svg viewBox="0 0 20 21" width="17" height="17" fill={['#2ed75c', '#facc15', '#fb923c', '#93a9bc'][i]}>{/* same north-facing aircraft silhouette */}<path d="M10 1 8.6 4v4L1 13l7.6-2v4L6 19v1l4-1 4 1v-1l-2.6-2v-4l7.6 2v-2l-7.6-5V4Z"/></svg><span>{['Airborne', 'Descending', 'Climbing', 'On ground'][i]}</span><b>{legendCountsAvailable ? state.aircraft.filter(a => flightPhase(a).key === key).length : '—'}</b></div>)}</div>
     <button className={`av-traffic-toggle ${trails ? 'active' : ''}`} onClick={() => setTrails(!trails)} aria-pressed={trails}><BarChart3 size={20}/>{trails ? 'Hide flight trails' : 'Show flight trails'}</button>
     <div className="av-radar-source">{state.source || 'ADS-B'} · {state.status === 'connected' ? 'Live positions' : state.status === 'cached' ? 'Provider reconnecting' : state.status === 'empty' ? 'No positions returned' : 'Awaiting feed'}</div>
   </div>

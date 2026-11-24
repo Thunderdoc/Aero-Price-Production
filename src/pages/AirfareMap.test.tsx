@@ -1,6 +1,34 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { cleanup, render } from '@testing-library/react'
-import { AerialArc, arcHeading, arcPoints, buildMapCorridors, corridorStrokeWidth, medianWindowLabel, registerArcAnimator, unregisterArcAnimator } from './AirfareMap'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import AirfareMap, { AerialArc, arcHeading, arcPoints, buildMapCorridors, corridorStrokeWidth, medianWindowLabel, registerArcAnimator, unregisterArcAnimator } from './AirfareMap'
+
+// Page-render tests (loading states + guest access) mock the page's data
+// sources; the helper tests below never render the page, so they are
+// unaffected by these mocks.
+const authState = vi.hoisted(() => ({ token: 'test-token' as string | null }))
+const radarState = vi.hoisted(() => ({
+  snapshot: { aircraft: [] as unknown[], source: '', retrievedAt: null as string | null, status: 'loading' as string, refreshing: false, history: [] as [] },
+}))
+vi.mock('../contexts/AuthContext', () => ({ useAuth: () => authState }))
+vi.mock('../hooks/useLiveData', () => ({ useLiveData: () => ({ connectionStatus: 'live' }) }))
+vi.mock('../services/aviationRadar', () => ({ useAviationRadar: vi.fn(() => radarState.snapshot) }))
+vi.mock('../services/indiaGeoJson', () => ({ useIndiaGeoJson: () => ({ data: null, failed: false }) }))
+vi.mock('../services/api', () => ({
+  apiRouteBasket: vi.fn(),
+  apiFareMovement: vi.fn(),
+  apiRouteSummaries: vi.fn(),
+  apiIndexBasket: vi.fn(),
+}))
+
+const api = await import('../services/api')
+const radar = await import('../services/aviationRadar')
+
+type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void }
+function makeDeferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(res => { resolve = res })
+  return { promise, resolve }
+}
 
 // Leaflet is stubbed: polylines/markers record their calls and expose the
 // internals AerialArc touches (_path for the dash, the marker element for
@@ -67,6 +95,14 @@ type StubMarker = {
 beforeEach(() => {
   polylineMock.mockClear()
   markerMock.mockClear()
+  authState.token = 'test-token'
+  radarState.snapshot = { aircraft: [], source: '', retrievedAt: null, status: 'loading', refreshing: false, history: [] }
+  vi.mocked(api.apiRouteBasket).mockResolvedValue({
+    routes: basketRoutes, total: 2, advance_windows: [1, 7, 15, 30, 45], basket_version: 'v1.0', timestamp: '',
+  })
+  vi.mocked(api.apiFareMovement).mockResolvedValue({ available: false, price_drops: null, routes: [], states: {} })
+  vi.mocked(api.apiRouteSummaries).mockResolvedValue({ summaries })
+  vi.mocked(api.apiIndexBasket).mockResolvedValue({ routes: [], total: 0 })
 })
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
@@ -221,4 +257,53 @@ test('M8: a normal arc is unchanged — endpoints match and the midpoint bulges 
   expect(midLat).not.toBeCloseTo((28.5562 + 19.0896) / 2, 5)
   expect(midLng).not.toBeCloseTo((77.1 + 72.8656) / 2, 5)
   expect(Number.isFinite(arcHeading([28.5562, 77.1], [19.0896, 72.8656], 0.5))).toBe(true)
+})
+
+// ── Page loading states + guest access (follow-up, 23 Nov 2026) ────────────
+
+test('loading: the sidebar shows a loading line, not "0 routes", while summaries load', async () => {
+  const basket = makeDeferred<Awaited<ReturnType<typeof api.apiRouteBasket>>>()
+  vi.mocked(api.apiRouteBasket).mockReturnValue(basket.promise)
+  render(<AirfareMap />)
+  expect(await screen.findByText('Loading routes…')).toBeTruthy()
+  expect(screen.queryByText('0 routes with stored quotes')).toBeNull()
+  await basket.resolve({
+    routes: basketRoutes, total: 2, advance_windows: [1, 7, 15, 30, 45], basket_version: 'v1.0', timestamp: '',
+  })
+  await waitFor(() => expect(screen.getByText('2 routes with stored quotes')).toBeTruthy())
+})
+
+test('loading: the flights badge shows connecting text, not "0 flight positions", while the radar loads', async () => {
+  radarState.snapshot = { aircraft: [], source: '', retrievedAt: null, status: 'loading', refreshing: false, history: [] }
+  render(<AirfareMap />)
+  expect(await screen.findByText('Connecting to live aircraft feed…')).toBeTruthy()
+  expect(screen.queryByText('0 flight positions over India')).toBeNull()
+  expect(screen.getByText('CONNECTING')).toBeTruthy()
+})
+
+test('loading: a settled empty basket honestly shows "0 routes"', async () => {
+  vi.mocked(api.apiRouteBasket).mockResolvedValue({
+    routes: [], total: 0, advance_windows: [1, 7, 15, 30, 45], basket_version: 'v1.0', timestamp: '',
+  })
+  render(<AirfareMap />)
+  await waitFor(() => expect(screen.getByText('0 routes with stored quotes')).toBeTruthy())
+  expect(screen.getByText('No verified route observations are available for the map.')).toBeTruthy()
+})
+
+test('guest: the map loads public route data without a token and never polls the radar', async () => {
+  // Three of the four map endpoints serve without auth (verified 23 Nov
+  // 2026); only /api/index/basket 401s, and its failure already falls back
+  // to equal-share weights. The old token gate showed every guest a
+  // sign-in notice for data that is public.
+  authState.token = null
+  vi.mocked(api.apiIndexBasket).mockRejectedValue(new Error('Not authenticated'))
+  render(<AirfareMap />)
+  await waitFor(() => expect(screen.getByText('2 routes with stored quotes')).toBeTruthy())
+  expect(api.apiRouteBasket).toHaveBeenCalledWith(undefined)
+  expect(api.apiRouteSummaries).toHaveBeenCalledWith(undefined)
+  expect(api.apiFareMovement).toHaveBeenCalledWith(undefined)
+  expect(screen.queryByText('Sign in to load verified route observations.')).toBeNull()
+  // The radar hook stays disabled for guests (D4 pattern): no
+  // unauthenticated poll, no 401 every 30 s.
+  expect(radar.useAviationRadar).toHaveBeenCalledWith(false)
 })
