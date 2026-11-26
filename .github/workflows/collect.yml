@@ -46,13 +46,17 @@ jobs:
       SINGLE_ROUTE: ${{ inputs.route }}
     steps:
       - name: Check secrets are configured
+        id: secrets-check
         run: |
           if [ -z "$API_BASE_URL" ] || [ -z "$CRON_SECRET" ]; then
             echo "::notice::Backup workflow is skipping because repo secrets are not configured."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          echo "configured=true" >> "$GITHUB_OUTPUT"
 
       - name: Fetch chunk plan from the API
+        if: steps.secrets-check.outputs.configured == 'true'
         id: plan
         run: |
           curl --fail --silent --show-error --max-time 30 \
@@ -68,6 +72,7 @@ jobs:
           echo "routes=$(wc -l < routes.txt) windows=$(wc -l < windows.txt)"
 
       - name: Collect chunks (one route+window per call, throttled)
+        if: steps.secrets-check.outputs.configured == 'true'
         run: |
           # Throttle: 5 s between chunk calls. The public-interface source
           # (fast-flights) must not be hammered, and each chunk itself takes
@@ -108,6 +113,7 @@ jobs:
           fi
 
       - name: Refresh government datasets
+        if: steps.secrets-check.outputs.configured == 'true'
         # Best-effort: gov sources are monthly context data, and a slow or
         # down publisher must not fail the fare sweep. Sources without
         # credentials report NOT_CONFIGURED honestly.
@@ -118,12 +124,14 @@ jobs:
             "$API_BASE_URL/api/collections/gov-refresh"
 
       - name: Finalize (publish index + evaluate price alerts)
+        if: steps.secrets-check.outputs.configured == 'true'
         run: |
           curl --fail --silent --show-error --max-time 55 \
             -X POST -H "Authorization: Bearer $CRON_SECRET" \
             "$API_BASE_URL/api/collections/finalize"
 
       - name: Health check (informational)
+        if: steps.secrets-check.outputs.configured == 'true'
         continue-on-error: true
         run: |
           curl --silent --show-error --max-time 30 "$API_BASE_URL/api/health" | head -c 2000
