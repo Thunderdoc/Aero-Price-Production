@@ -48,8 +48,8 @@ jobs:
       - name: Check secrets are configured
         run: |
           if [ -z "$API_BASE_URL" ] || [ -z "$CRON_SECRET" ]; then
-            echo "::error::Set AEROPRICE_API_BASE_URL and AEROPRICE_CRON_SECRET repo secrets. CRON_SECRET must match the Vercel env var of the same name."
-            exit 1
+            echo "::notice::Backup workflow is skipping because repo secrets are not configured."
+            exit 0
           fi
 
       - name: Fetch chunk plan from the API
