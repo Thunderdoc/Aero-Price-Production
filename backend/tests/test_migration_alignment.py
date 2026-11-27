@@ -1,23 +1,25 @@
-"""Model-vs-migration alignment pins (Track C).
+"""Model-vs-migration alignment pins.
 
-The Alembic chain (0001-0007) is the authority for a migrations-built DB.
-Where a migration adds a column the model lacks, the MODEL is aligned to
-the migration — this test proves the alignment by running the real chain
-on a scratch SQLite DB under tmp_path and comparing against the model
-metadata. It fails if the model drops one of the aligned columns.
+The Alembic chain is the authority for a migrations-built DB. Migration
+0008 reconciles that chain with the current SQLAlchemy models: every
+model table and column must exist after ``alembic upgrade head``, the
+redesigned tables must use the primary keys their models declare, and
+the legacy migration-only tables must remain in place. This test proves
+that by running the real chain on a scratch SQLite DB under tmp_path and
+comparing against the model metadata.
 
-Scope note: this pins ONLY the columns aligned to a migration (created_at
-on fare_observations and index_observations, both from 0001). The wider
-drift found by the Track C audit (model-only tables/columns, legacy
-migration-only tables, type/width mismatches) is reported as open items
-in the Track C notes file — fixing those needs a new migration, which
-Track C does not create.
+Scope note: table/column presence and the reconciled primary keys are
+pinned. Deliberately retained legacy tables/columns, wider legacy
+VARCHAR widths, and the legacy nullable ``raw_fare_payloads`` columns are
+documented in migration 0008 rather than treated as failures here.
 """
 import os
 from pathlib import Path
 
-from sqlalchemy import DateTime, MetaData, create_engine, text
+from sqlalchemy import DateTime, MetaData, String, create_engine, text
 
+from app.models.base import Base
+from app.models import access, auth_account, fare, feedback, collection, index, government, user  # noqa: F401
 from app.models.fare import FareObservation
 from app.models.index import IndexObservation
 
@@ -54,13 +56,13 @@ def _migrate_scratch_db(tmp_path):
     return db_path
 
 
-def test_migration_chain_head_is_0007(tmp_path):
+def test_migration_chain_head_is_0008(tmp_path):
     db_path = _migrate_scratch_db(tmp_path)
     engine = create_engine(f"sqlite:///{db_path}")
     with engine.connect() as conn:
         version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
     engine.dispose()
-    assert version == "0007"
+    assert version == "0008"
 
 
 def test_model_columns_aligned_to_migrations(tmp_path):
@@ -89,3 +91,40 @@ def test_model_columns_aligned_to_migrations(tmp_path):
             f"{table_name}.{column_name} nullability differs: "
             f"migration={mig_col.nullable} model={model_col.nullable}"
         )
+
+
+def test_0008_reconciles_model_tables_columns_and_primary_keys(tmp_path):
+    """A migrations-only DB contains the full model schema after 0008."""
+    db_path = _migrate_scratch_db(tmp_path)
+    engine = create_engine(f"sqlite:///{db_path}")
+    metadata = MetaData()
+    metadata.reflect(bind=engine)
+    engine.dispose()
+
+    for table_name, model_table in Base.metadata.tables.items():
+        assert table_name in metadata.tables, f"migrated DB lacks model table {table_name}"
+        migrated_columns = set(metadata.tables[table_name].columns.keys())
+        model_columns = set(model_table.columns.keys())
+        assert model_columns <= migrated_columns, (
+            f"{table_name} is missing model columns "
+            f"{sorted(model_columns - migrated_columns)}"
+        )
+
+    # Legacy migration-only tables are retained, not dropped by 0008.
+    for legacy_table in ("route_baskets", "dgca_monthly_records", "mospi_cpi_records"):
+        assert legacy_table in metadata.tables
+
+    expected_primary_keys = {
+        "index_observations": ["id"],
+        "index_publications": ["publication_id"],
+        "users": ["user_id"],
+        "dgca_circulars": ["id"],
+    }
+    for table_name, expected in expected_primary_keys.items():
+        actual = [column.name for column in metadata.tables[table_name].primary_key.columns]
+        assert actual == expected, f"{table_name} primary key is {actual}, expected {expected}"
+
+    assert isinstance(metadata.tables["dgca_circulars"].columns["id"].type, String)
+    assert metadata.tables["users"].columns["id"].nullable is True
+    assert metadata.tables["index_publications"].columns["id"].nullable is True
+    assert metadata.tables["index_publications"].columns["period"].nullable is True

@@ -47,7 +47,17 @@ export default function Forecast() {
     setAccessDenied(false)
     setMetrics(null)
     try {
-      const resp = await apiForecast(route, windowDays, token ?? undefined)
+      let resp: ForecastResponse
+      try {
+        resp = await apiForecast(route, windowDays, token ?? undefined)
+      } catch (error) {
+        // 403 is an access refusal — never retried. Transient failures get
+        // one retry after 1 s.
+        if (isForbiddenError(error)) throw error
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        if (requestSeq.current !== requestId) return
+        resp = await apiForecast(route, windowDays, token ?? undefined)
+      }
       if (requestSeq.current !== requestId) return
       setLastUpdated(new Date())
       if (resp && resp.status === 'FORECAST' && resp.forecasts?.length) {
@@ -319,7 +329,7 @@ export default function Forecast() {
                 const match = message.match(/Requires [≥>]?(\d+).*?Have (\d+)/i)
                 if (!match) return null
                 const required = Number(match[1]); const have = Number(match[2]); const progress = Math.min(100, Math.round((have / required) * 100))
-                return <div style={{ maxWidth: 390, margin: '18px auto 0', textAlign: 'left' }}><div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, fontWeight: 700, color: 'var(--color-text-secondary)', marginBottom: 6 }}><span>Verified history coverage</span><span>{have}/{required} days</span></div><div style={{ height: 8, borderRadius: 99, background: 'var(--color-border-secondary)', overflow: 'hidden' }}><div style={{ width: `${progress}%`, height: '100%', borderRadius: 99, background: 'var(--color-brand-primary)' }} /></div><div style={{ marginTop: 8, fontSize: 11, color: 'var(--color-text-tertiary)' }}>The model will unlock automatically when enough daily observations are available.</div></div>
+                return <div style={{ maxWidth: 390, margin: '18px auto 0', textAlign: 'left' }}><div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, fontWeight: 700, color: 'var(--color-text-secondary)', marginBottom: 6 }}><span>Verified history coverage</span><span>{have}/{required} days</span></div><div style={{ height: 8, borderRadius: 99, background: 'var(--color-border-secondary)', overflow: 'hidden' }}><div style={{ width: `${progress}%`, height: '100%', borderRadius: 99, background: 'var(--color-brand-primary)' }} /></div><div style={{ marginTop: 8, fontSize: 11, color: 'var(--color-text-tertiary)' }}>The model will unlock automatically when enough daily observations are available. Once unlocked it publishes +2, +7 and +14 day horizons with confidence bands.</div></div>
               })()}
             </div>
           )}

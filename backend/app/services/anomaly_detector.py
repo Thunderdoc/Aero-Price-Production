@@ -7,7 +7,7 @@ import math
 import json
 from datetime import datetime, timezone, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, func
+from sqlalchemy import select, and_, func, update
 from app.models.fare import FareObservation
 from app.services.index_engine import INDEX_ELIGIBLE_ORIGINS
 
@@ -26,16 +26,25 @@ async def detect_anomalies(db: AsyncSession, lookback_days: int = 30) -> dict:
     """
     since = datetime.now(timezone.utc) - timedelta(days=lookback_days)
 
-    # Get all index-eligible observations in lookback window
+    # Get all index-eligible observations in lookback window. Column-only
+    # select (26 Nov 2026 sweep): the bucket math needs six fields, not
+    # full ORM objects for the whole 30-day eligible set.
     rows = await db.execute(
-        select(FareObservation)
+        select(
+            FareObservation.observation_id,
+            FareObservation.total_fare,
+            FareObservation.route,
+            FareObservation.advance_days,
+            FareObservation.cabin,
+            FareObservation.quality_flags,
+        )
         .where(and_(
             FareObservation.data_origin.in_(list(INDEX_ELIGIBLE_ORIGINS)),
             FareObservation.is_valid == True,
             FareObservation.collected_at >= since,
         ))
     )
-    observations = rows.scalars().all()
+    observations = rows.all()
 
     if not observations:
         return {"status": "NO_DATA", "buckets_analyzed": 0, "anomalies_flagged": 0}
@@ -80,7 +89,11 @@ async def detect_anomalies(db: AsyncSession, lookback_days: int = 30) -> dict:
                     flags = []
                 if "OUTLIER" not in flags:
                     flags.append("OUTLIER")
-                    obs.quality_flags = json.dumps(flags)
+                    await db.execute(
+                        update(FareObservation)
+                        .where(FareObservation.observation_id == obs.observation_id)
+                        .values(quality_flags=json.dumps(flags))
+                    )
                     total_flagged += 1
 
     await db.commit()

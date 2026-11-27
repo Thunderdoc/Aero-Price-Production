@@ -6,7 +6,6 @@ vi.mock('../contexts/AuthContext', () => ({ useAuth: () => ({ token: 'test-token
 vi.mock('../services/api', () => ({
   apiDashboard: vi.fn(),
   apiAviationLive: vi.fn(),
-  isBackendAvailable: vi.fn(),
 }))
 
 const api = await import('../services/api')
@@ -35,7 +34,6 @@ const aviationBody = {
 }
 
 beforeEach(() => {
-  vi.mocked(api.isBackendAvailable).mockResolvedValue(true)
   vi.mocked(api.apiDashboard).mockResolvedValue(dashboardBody)
   vi.mocked(api.apiAviationLive).mockResolvedValue(aviationBody)
 })

@@ -7,10 +7,10 @@ type MethodologyStep = { step: number; title: string; description: string; categ
 const methodologySteps: MethodologyStep[] = [
   { step: 1, title: 'Source Registry', description: 'The backend records configured and public-interface sources separately. The no-key Google Flights connector is unofficial and can fail when the public interface changes. Blocked, stale, and unconfigured sources are not labelled live.', category: 'COLLECTION' },
   { step: 2, title: 'Normalization and Deduplication', description: 'Provider responses are normalized into the fare observation schema and duplicate fingerprints are removed before a row can enter the analytical path.', category: 'PROCESSING' },
-  { step: 3, title: 'Provenance Gate', description: 'REAL and OFFICIAL observations can enter production analytics. Generated test fixtures and sandbox responses are excluded from the live fare, index, forecast, and anomaly endpoints.', category: 'VALIDATION' },
+  { step: 3, title: 'Provenance Gate', description: 'REAL, OFFICIAL and PUBLIC_INTERFACE observations can enter production analytics. PUBLIC_INTERFACE rows are scraped Google Flights fares, labelled with their true origin under the disclosed demo methodology — never presented as verified REAL fares. Generated test fixtures and sandbox responses are excluded from the live fare, index, forecast, and anomaly endpoints.', category: 'VALIDATION' },
   { step: 4, title: 'Booking Window and Cabin Buckets', description: 'Verified observations are grouped by route, advance-days window, and cabin so displayed medians and comparisons are calculated from the selected backend slice.', category: 'PROCESSING' },
   { step: 5, title: 'Route and Fare Summaries', description: 'Route cards, fare ranges, movements, exports, and source counts are calculated from persisted observations returned by the backend; missing history is displayed as unavailable.', category: 'INDEXING' },
-  { step: 6, title: 'Matched-Sample Index', description: 'The index endpoint publishes a value only when the backend confirms enough matched REAL/OFFICIAL corridor observations. Otherwise it returns an explicit no-data state.', category: 'INDEXING' },
+  { step: 6, title: 'Matched-Sample Index', description: 'The index endpoint publishes a value only when the backend confirms enough matched REAL/OFFICIAL/PUBLIC_INTERFACE corridor observations (PUBLIC_INTERFACE = scraped Google Flights fares under the disclosed demo methodology). Otherwise it returns an explicit no-data state.', category: 'INDEXING' },
   { step: 7, title: 'Backend Anomaly Detection', description: 'Anomaly results are produced by the backend detector from eligible persisted observations. The interface does not invent expected fares, causes, deviations, or scores.', category: 'VALIDATION' },
   { step: 8, title: 'Freshness and Health', description: 'Health and source status distinguish a connected database, stored observations, and currently live provider data. Historical rows are never presented as live.', category: 'VALIDATION' },
 ]
@@ -54,7 +54,7 @@ where:
   n      = matched corridors with observations in both periods
   Π      = geometric product over all matched corridors i
 
-The index is published only when the backend confirms the required matched REAL/OFFICIAL observations.
+The index is published only when the backend confirms the required matched REAL/OFFICIAL/PUBLIC_INTERFACE observations (PUBLIC_INTERFACE = scraped Google Flights fares under the disclosed demo methodology).
 Route weights come from AAI airport domestic-passenger traffic (September 2026) via a gravity model: each route's weight is proportional to sqrt(passengers at origin × passengers at destination). This is a modelled proxy for route traffic, not DGCA route traffic (unavailable). This is an AeroPrice sample index, not an official DGCA or MoSPI index.`
 
 export default function Methodology({ onNavigate }: { onNavigate?: (page: Page) => void }) {

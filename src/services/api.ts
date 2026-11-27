@@ -52,8 +52,11 @@ export function clearApiAuthSession() {
   readInflight.clear()
 }
 // Keep the instant fallback short-lived so it masks cold-start latency without
-// making a page look current when its verified snapshot is old.
-const READ_SNAPSHOT_MAX_AGE_MS = 30_000
+// making a page look current when its verified snapshot is old. Ten minutes
+// covers reloads and page-to-page navigation in one session; every snapshot
+// render still starts a silent network refresh, and the pages show the
+// data's own collection timestamps.
+const READ_SNAPSHOT_MAX_AGE_MS = 10 * 60_000
 const READ_SNAPSHOT_PREFIX = 'aeroprice:api-snapshot:'
 const API_REQUEST_TIMEOUT_MS = 12_000
 
@@ -130,15 +133,18 @@ export interface TokenResponse {
 function snapshotKey(method: string, path: string, token?: string): string | null {
   if (method !== 'GET') return null
   if (!token) return `${method}:${path}:public`
+  // Signed-in read-only data gets the same instant snapshot as public data,
+  // keyed by account so one user's snapshot never renders for another.
+  // Live-scrape and identity endpoints are excluded: their responses must
+  // never be replayed as if they were just fetched.
   if (
-    path.startsWith('/api/admin/') ||
-    path.startsWith('/api/access-requests') ||
-    path.startsWith('/api/feedback/mine') ||
-    path.startsWith('/api/notifications')
+    path.startsWith('/api/auth/') ||
+    path.startsWith('/api/fares/live') ||
+    path.startsWith('/api/aviation/')
   ) {
-    return `${method}:${path}:auth:${tokenSubject(token)}`
+    return null
   }
-  return null
+  return `${method}:${path}:auth:${tokenSubject(token)}`
 }
 
 async function authRequest(path: string, init: RequestInit, failureLabel: string): Promise<TokenResponse> {
@@ -179,11 +185,21 @@ export async function apiFirebaseLogin(idToken: string): Promise<TokenResponse> 
 }
 
 export async function apiRegister(name: string, email: string, password: string, workspace: 'USER' | 'DGCA' = 'USER'): Promise<{ status: string; user: ApiUser }> {
-  const resp = await fetch(`${BASE_URL}/api/auth/register`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, email, password, workspace }),
-  })
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 15_000)
+  let resp: Response
+  try {
+    resp = await fetch(`${BASE_URL}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, email, password, workspace }),
+      signal: controller.signal,
+    })
+  } catch (error) {
+    throw new Error(error instanceof DOMException && error.name === 'AbortError' ? 'Registration timed out. Please try again.' : 'Unable to create account.')
+  } finally {
+    clearTimeout(timeout)
+  }
   if (!resp.ok) {
     const body = await resp.json().catch(() => null) as { detail?: string } | null
     throw new Error(body?.detail || 'Unable to create account.')
@@ -331,7 +347,7 @@ export async function apiHealth(): Promise<HealthResponse> {
 }
 
 export async function apiDownload(path: string, token?: string): Promise<Blob> {
-  const resp = await fetchWithAuthRefresh(`${BASE_URL}${path}`, token)
+  const resp = await fetchWithAuthRefresh(`${BASE_URL}${path}`, token, undefined, 60_000)
   if (!resp.ok) {
     const text = await resp.text().catch(() => resp.statusText)
     let detail = ''
@@ -813,6 +829,13 @@ export interface HistoricalSummary {
   min_fare?: number
   max_fare?: number
   note?: string
+  routes?: Array<{
+    route: string
+    records: number
+    average_fare?: number | null
+    min_fare?: number | null
+    max_fare?: number | null
+  }>
 }
 
 export async function apiHistoricalSummary(token?: string): Promise<HistoricalSummary> {

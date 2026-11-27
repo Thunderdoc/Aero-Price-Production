@@ -358,15 +358,26 @@ async def route_fare_summary(
         FareObservation.currency == "INR",
         FareObservation.cabin == "ECONOMY",
     )
-    latest_day = await db.scalar(
-        select(func.max(func.date(FareObservation.collected_at))).where(*eligible)
+    # One lightweight column query for the whole summary (26 Nov 2026 sweep):
+    # the old shape ran a latest-day full-ORM query plus one full-ORM query
+    # per advance window — ~48 row-loading queries when the Government page
+    # asked for 8 routes. Semantics are unchanged: overall = latest
+    # collection day, windows = all stored rows per advance window.
+    rows = (await db.execute(
+        select(
+            FareObservation.total_fare,
+            FareObservation.advance_days,
+            FareObservation.data_origin,
+            FareObservation.collected_at,
+        ).where(*eligible)
+    )).all()
+    latest_day = max(
+        (row.collected_at.date() for row in rows if row.collected_at), default=None
     )
-    latest_rows = (await db.execute(
-        select(FareObservation).where(
-            *eligible,
-            func.date(FareObservation.collected_at) == latest_day,
-        )
-    )).scalars().all() if latest_day else []
+    latest_rows = [
+        row for row in rows
+        if row.collected_at and row.collected_at.date() == latest_day
+    ] if latest_day else []
     latest_fares = sorted(row.total_fare for row in latest_rows)
     midpoint = len(latest_fares) // 2
     latest_median = (
@@ -378,7 +389,7 @@ async def route_fare_summary(
         "min": min(latest_fares) if latest_fares else None,
         "max": max(latest_fares) if latest_fares else None,
         "count": len(latest_fares),
-        "sample_period": latest_day,
+        "sample_period": latest_day.isoformat() if latest_day else None,
         "last_collected_at": max(
             (row.collected_at for row in latest_rows if row.collected_at), default=None
         ),
@@ -390,15 +401,7 @@ async def route_fare_summary(
 
     result = {}
     for window in ADVANCE_WINDOWS:
-        rows = await db.execute(
-            select(FareObservation).where(
-                and_(
-                    *eligible,
-                    FareObservation.advance_days == window,
-                )
-            )
-        )
-        obs = rows.scalars().all()
+        obs = [row for row in rows if row.advance_days == window]
         if obs:
             fares = [o.total_fare for o in obs]
             ordered_fares = sorted(fares)

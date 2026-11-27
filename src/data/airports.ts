@@ -288,6 +288,17 @@ export const AIRPORTS: Record<string, Airport> = {
     timezone: 'Asia/Kolkata',
     tier: 'LOW',
   },
+  IMF: {
+    iata: 'IMF',
+    name: 'Imphal International Airport',
+    city: 'Imphal',
+    state: 'Manipur',
+    lat: 24.7600,
+    lng: 93.8967,
+    elevationFt: 2540,
+    timezone: 'Asia/Kolkata',
+    tier: 'LOW',
+  },
 }
 
 export const AIRPORT_LIST: Airport[] = Object.values(AIRPORTS)

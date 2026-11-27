@@ -20,7 +20,7 @@ function statusMeta(s: string) {
 
 export default function AviationFlights() {
   const [flights, setFlights] = useState<LiveFlight[]>([])
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [lastFetch, setLastFetch] = useState<Date | null>(null)
@@ -36,8 +36,13 @@ export default function AviationFlights() {
       const results = await fetchAllCorridorFlights()
       const all = results.flatMap(r => r.flights)
       setFlights(all)
-      setLastFetch(new Date())
-      setFetchOk(true)
+      if (results.some(r => r.error || r.provider_status === 'ERROR')) {
+        setFetchOk(false)
+        setFetchFailed(true)
+      } else {
+        setLastFetch(new Date())
+        setFetchOk(true)
+      }
     } catch {
       setFetchOk(false)
       setFetchFailed(true)
@@ -123,7 +128,7 @@ export default function AviationFlights() {
           })}
         </div>
         <span style={{ fontSize:11, color:'var(--color-text-tertiary)', marginLeft:'auto', fontFamily:'var(--font-mono)' }}>
-          Showing {filtered.length} of {flights.length} flights
+          {loading && !flights.length ? 'Loading flights…' : `Showing ${filtered.length} of ${flights.length} flights`}
         </span>
       </div>
 

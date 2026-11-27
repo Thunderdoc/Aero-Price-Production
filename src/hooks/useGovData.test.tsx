@@ -59,11 +59,14 @@ test('S5: a hung government source gives up at 8s and the other sources still la
   await flushMicrotasks()
   expect(result.current.isLoading).toBe(true)
 
-  await act(async () => { vi.advanceTimersByTime(8000) })
+  // 8 s race, 1 s retry delay, second 8 s race. The async advance
+  // interleaves microtasks so the retry's timers get scheduled.
+  await act(async () => { await vi.advanceTimersByTimeAsync(18000) })
   await flushMicrotasks()
 
   expect(result.current.isLoading).toBe(false)
   expect(result.current.dgcaMonthly).toHaveLength(0)
+  expect(result.current.failedSources.dgcaMonthly).toBe(true)
   expect(result.current.mospiCpi).toHaveLength(1)
   expect(result.current.datasets).toHaveLength(1)
   expect(result.current.anyConnected).toBe(true)
@@ -96,7 +99,9 @@ test('S5: a timed-out government call aborts the underlying fetch', async () => 
   expect(capturedSignal).toBeDefined()
   expect(capturedSignal!.aborted).toBe(false)
 
-  await act(async () => { vi.advanceTimersByTime(8000) })
+  // 8 s race, 1 s retry delay, second 8 s race. The async advance
+  // interleaves microtasks so the retry's timers get scheduled.
+  await act(async () => { await vi.advanceTimersByTimeAsync(18000) })
   await flushMicrotasks()
 
   expect(capturedSignal!.aborted).toBe(true)

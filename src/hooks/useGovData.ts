@@ -12,6 +12,16 @@ export interface GovDataState {
   dataGovAviationCount: number
   isLoading: boolean
   anyConnected: boolean
+  // Per-source load failures from the last fetch: a rejected call must
+  // render as "could not load", never as NOT IMPORTED / 0 records.
+  failedSources: {
+    datasets: boolean
+    dgcaMonthly: boolean
+    dgcaCirculars: boolean
+    mospiCpi: boolean
+    ppacAtf: boolean
+    dataGovAviation: boolean
+  }
   lastFetch: string | null
   refresh: () => Promise<void>
   // True when the last government refresh was refused with a 403: the
@@ -36,6 +46,9 @@ export function useGovData(): GovDataState {
   const [isLoading, setIsLoading] = useState(true)
   const [lastFetch, setLastFetch] = useState<string | null>(null)
   const [hasLiveResponse, setHasLiveResponse] = useState(false)
+  const [failedSources, setFailedSources] = useState<GovDataState['failedSources']>({
+    datasets: false, dgcaMonthly: false, dgcaCirculars: false, mospiCpi: false, ppacAtf: false, dataGovAviation: false,
+  })
   const [refreshForbidden, setRefreshForbidden] = useState(false)
 
   async function fetchAll() {
@@ -61,14 +74,30 @@ export function useGovData(): GovDataState {
             error => { clearTimeout(timer); reject(error) },
           )
         })
+      const withRetry = async <T,>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+        try {
+          return await withTimeout(fn)
+        } catch (error) {
+          await new Promise(resolve => setTimeout(resolve, 1000))
+          return withTimeout(fn)
+        }
+      }
       const results = await Promise.allSettled([
-        withTimeout(signal => apiGovDatasets(token ?? undefined, signal)),
-        withTimeout(signal => apiDgcaMonthly(token ?? undefined, signal)),
-        withTimeout(signal => apiDgcaCirculars(token ?? undefined, signal)),
-        withTimeout(signal => apiMospiCpi(token ?? undefined, signal)),
-        withTimeout(signal => apiPpacAtf(token ?? undefined, signal)),
-        withTimeout(signal => apiDataGovAviation(token ?? undefined, signal)),
+        withRetry(signal => apiGovDatasets(token ?? undefined, signal)),
+        withRetry(signal => apiDgcaMonthly(token ?? undefined, signal)),
+        withRetry(signal => apiDgcaCirculars(token ?? undefined, signal)),
+        withRetry(signal => apiMospiCpi(token ?? undefined, signal)),
+        withRetry(signal => apiPpacAtf(token ?? undefined, signal)),
+        withRetry(signal => apiDataGovAviation(token ?? undefined, signal)),
       ])
+      setFailedSources({
+        datasets: results[0].status === 'rejected',
+        dgcaMonthly: results[1].status === 'rejected',
+        dgcaCirculars: results[2].status === 'rejected',
+        mospiCpi: results[3].status === 'rejected',
+        ppacAtf: results[4].status === 'rejected',
+        dataGovAviation: results[5].status === 'rejected',
+      })
       const value = <T,>(index: number): T | null => results[index].status === 'fulfilled' ? results[index].value as T : null
       const registry = value<any>(0)
       const pax = value<any>(1)
@@ -165,6 +194,7 @@ export function useGovData(): GovDataState {
     ppacAtf,
     dataGovAviationCount,
     isLoading,
+    failedSources,
     lastFetch,
     refresh,
     refreshForbidden,

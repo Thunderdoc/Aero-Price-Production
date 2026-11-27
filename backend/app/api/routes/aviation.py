@@ -4,6 +4,7 @@ The response intentionally distinguishes position telemetry from schedules and
 fares. ADS-B data does not reliably contain origin/destination airport data.
 """
 from datetime import datetime, timezone
+import asyncio
 import time
 from typing import Any
 
@@ -17,10 +18,33 @@ router = APIRouter(prefix="/aviation", tags=["aviation"])
 # Radius is 250 NM: the ADSB.lol anonymous tier rejects anything larger
 # with HTTP 403 "radius exceeds 250 NM" (the old /1000 URL 403d on every
 # call, which took the primary provider out of the chain entirely).
+# One 250 NM circle around central India only covers part of the country,
+# so the live feed queries several India coverage points and merges them.
 ADSB_LOL_URL = "https://api.adsb.lol/v2/point/22.9734/78.6569/250"
+INDIA_ADSB_CENTERS = (
+    (34.0064, 74.7742),  # Srinagar / north
+    (28.5562, 77.1000),  # Delhi
+    (26.8242, 75.8122),  # Jaipur
+    (26.7606, 80.8893),  # Lucknow
+    (25.5913, 85.0880),  # Patna
+    (22.6547, 88.4467),  # Kolkata
+    (26.1061, 91.5859),  # Guwahati / north-east
+    (23.0737, 72.6347),  # Ahmedabad
+    (19.0896, 72.8656),  # Mumbai
+    (17.2313, 78.4294),  # Hyderabad
+    (13.1986, 77.7066),  # Bengaluru
+    (13.0609, 80.2826),  # Chennai
+    (10.1520, 76.4019),  # Kochi / south-west
+)
+ADSB_LOL_URLS = [
+    f"https://api.adsb.lol/v2/point/{lat}/{lon}/250" for lat, lon in INDIA_ADSB_CENTERS
+]
 # AvioADSB exposes the same readsb-compatible aircraft shape and does not
 # require a credential. Keep it as a provider fallback, not as synthetic data.
 AVIOADSB_URL = "https://avioadsb.org/v1/point/22.9734/78.6569/100"
+AVIOADSB_URLS = [
+    f"https://avioadsb.org/v1/point/{lat}/{lon}/100" for lat, lon in INDIA_ADSB_CENTERS
+]
 OPENSKY_URL = "https://opensky-network.org/api/states/all"
 AVIATION_EDGE_URL = "https://aviation-edge.com/v2/public/flights"
 AVIATIONSTACK_URL = "https://api.aviationstack.com/v1/flights"
@@ -130,6 +154,66 @@ async def _adsb_compatible_aircraft(client: httpx.AsyncClient, url: str, limit: 
     return aircraft
 
 
+def _aircraft_key(item: dict) -> str:
+    icao = str(item.get("icao24") or item.get("hex") or "").strip().lower()
+    if icao:
+        return icao
+    callsign = str(item.get("callsign") or item.get("flight") or "").strip()
+    return f"{callsign}:{item.get('latitude', item.get('lat'))}:{item.get('longitude', item.get('lon'))}"
+
+
+def _merge_aircraft(groups: list[list[dict]], limit: int) -> list[dict]:
+    """Merge overlapping coverage-point results, keeping the freshest row."""
+    by_key: dict[str, dict] = {}
+    for group in groups:
+        for item in group:
+            key = _aircraft_key(item)
+            seen = item.get("seen_seconds")
+            seen_value = float(seen) if isinstance(seen, (int, float)) else float("inf")
+            existing = by_key.get(key)
+            if existing is None:
+                by_key[key] = item
+                continue
+            existing_seen = existing.get("seen_seconds")
+            existing_seen_value = float(existing_seen) if isinstance(existing_seen, (int, float)) else float("inf")
+            if seen_value < existing_seen_value:
+                by_key[key] = item
+    merged = sorted(
+        by_key.values(),
+        key=lambda item: (
+            float(item.get("seen_seconds")) if isinstance(item.get("seen_seconds"), (int, float)) else float("inf"),
+            str(item.get("callsign") or item.get("flight") or ""),
+            _aircraft_key(item),
+        ),
+    )
+    return merged[:limit]
+
+
+async def _adsb_multi_point_aircraft(client: httpx.AsyncClient, urls: list[str], limit: int) -> list[dict]:
+    """Fetch every India coverage point for one provider and merge the rows.
+
+    A single point is not India-wide: ADSB.lol's anonymous 250 NM circle
+    around central India misses Delhi, Kolkata, Guwahati and the far south
+    on many polls. Partial point failures are tolerated; the provider only
+    fails when every coverage point fails.
+    """
+    results = await asyncio.gather(
+        *(_adsb_compatible_aircraft(client, url, limit) for url in urls),
+        return_exceptions=True,
+    )
+    groups: list[list[dict]] = []
+    first_error: BaseException | None = None
+    for result in results:
+        if isinstance(result, BaseException):
+            if first_error is None:
+                first_error = result
+            continue
+        groups.append(result)
+    if not groups and first_error is not None:
+        raise first_error
+    return _merge_aircraft(groups, limit)
+
+
 @router.get("/schedules")
 async def flight_schedules(
     departure: str = Query(default="DEL", min_length=3, max_length=3),
@@ -236,8 +320,8 @@ async def live_aircraft(
         # anonymous OpenSky quota (~100 India requests/day) even when ADSB.lol
         # had already succeeded. A provider that errors is recorded and the
         # next one is tried; the 8 s client timeout bounds the worst case.
-        async def fetch_adsb(url: str):
-            return await _adsb_compatible_aircraft(client, url, limit)
+        async def fetch_adsb(urls: list[str]):
+            return await _adsb_multi_point_aircraft(client, urls, limit)
 
         async def fetch_opensky():
             response = await client.get(OPENSKY_URL, params={"lamin": 6, "lomin": 67, "lamax": 37.8, "lomax": 98})
@@ -245,8 +329,8 @@ async def live_aircraft(
             return _normalize_opensky_states(response.json().get("states", []), limit)
 
         for fetch, provider_name, data_origin, note in (
-            (lambda: fetch_adsb(ADSB_LOL_URL), "ADSB.lol", "LIVE_ADSB", "Live transponder positions; routes and fares are not inferred."),
-            (lambda: fetch_adsb(AVIOADSB_URL), "AvioADSB", "LIVE_ADSB", "Live transponder positions; routes and fares are not inferred."),
+            (lambda: fetch_adsb(ADSB_LOL_URLS), "ADSB.lol", "LIVE_ADSB", "Live transponder positions from India-wide ADS-B coverage points; routes and fares are not inferred."),
+            (lambda: fetch_adsb(AVIOADSB_URLS), "AvioADSB", "LIVE_ADSB", "Live transponder positions from India-wide ADS-B coverage points; routes and fares are not inferred."),
             (fetch_opensky, "OpenSky", "LIVE_OPENSKY", "Live OpenSky positions used as a public ADS-B fallback."),
         ):
             try:

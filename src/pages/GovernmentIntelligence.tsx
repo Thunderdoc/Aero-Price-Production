@@ -98,12 +98,12 @@ function badgeClass(ok: boolean) {
 
 export default function GovernmentIntelligence() {
   const { token } = useAuth()
-  const { datasets, dgcaMonthly, dgcaCirculars, mospiCpi, ppacAtf, dataGovAviationCount, isLoading, anyConnected, lastFetch, refresh, refreshForbidden } = useGovData()
+  const { datasets, dgcaMonthly, dgcaCirculars, mospiCpi, ppacAtf, dataGovAviationCount, isLoading, failedSources, anyConnected, lastFetch, refresh, refreshForbidden } = useGovData()
   const [indexStatus, setIndexStatus] = useState<IndexResponse | null>(null)
   const [routes, setRoutes] = useState<RouteBasketItem[]>([])
   const [summaries, setSummaries] = useState<FareSummary[]>([])
   const [selectedRoute, setSelectedRoute] = useState<string | null>(null)
-  const [fareLoading, setFareLoading] = useState(false)
+  const [fareLoading, setFareLoading] = useState(true)
   const [requestState, setRequestState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
 
   // The government refresh action stays analyst-gated even though the reads
@@ -291,7 +291,7 @@ export default function GovernmentIntelligence() {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 'var(--space-lg)' }}>
         <Panel title="DGCA Passenger Volume" eyebrow="OFFICIAL MONTHLY FEED" right={<span className={badgeClass(Boolean(dgcaMonthly.length))}>{dgcaMonthly.length ? 'OFFICIAL' : 'UNAVAILABLE'}</span>}>
-          {dgcaMonthly.length ? <DgcaBarChart records={dgcaMonthly} /> : <EmptyState title="DGCA MONTHLY NOT IMPORTED" detail="No DGCA monthly passenger records were returned by the backend." />}
+          {dgcaMonthly.length ? <DgcaBarChart records={dgcaMonthly} /> : failedSources.dgcaMonthly ? <EmptyState title="DGCA MONTHLY COULD NOT LOAD" detail="The DGCA monthly feed did not return a result. Refresh to retry." /> : <EmptyState title="DGCA MONTHLY NOT IMPORTED" detail="No DGCA monthly passenger records were returned by the backend." />}
         </Panel>
 
         <Panel title="MoSPI CPI Transport" eyebrow="OFFICIAL CPI SERIES" right={<span className={badgeClass(Boolean(latestCpi))}>{latestCpi ? 'OFFICIAL' : 'UNAVAILABLE'}</span>}>
@@ -302,7 +302,7 @@ export default function GovernmentIntelligence() {
               {latestCpi.source_url && <a href={latestCpi.source_url} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 12, fontSize: 11, color: 'var(--color-brand-primary)', textDecoration: 'none' }}><ExternalLink size={11} /> Official source</a>}
               <div style={{ marginTop: 10, fontSize: 10, color: 'var(--color-text-tertiary)' }}>This is transport CPI, not an airfare-only index.</div>
             </div>
-          ) : <EmptyState title="CPI NOT IMPORTED" detail="The backend did not return a MoSPI transport CPI record." />}
+          ) : failedSources.mospiCpi ? <EmptyState title="CPI COULD NOT LOAD" detail="The MoSPI CPI feed did not return a result. Refresh to retry." /> : <EmptyState title="CPI NOT IMPORTED" detail="The backend did not return a MoSPI transport CPI record." />}
         </Panel>
 
         <Panel title="PPAC ATF Duty" eyebrow="OFFICIAL FUEL DUTY SERIES" right={<span className={badgeClass(Boolean(latestPpac))}>{latestPpac ? 'OFFICIAL' : 'UNAVAILABLE'}</span>}>
@@ -312,7 +312,7 @@ export default function GovernmentIntelligence() {
               <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-text-secondary)' }}>ATF export duty per litre · {formatDate(latestPpac.effective_date)}</div>
               <div style={{ marginTop: 10, fontSize: 10, color: 'var(--color-text-tertiary)' }}>This is a fuel-duty indicator and is not displayed as a ticket fare.</div>
             </div>
-          ) : <EmptyState title="PPAC DATA NOT IMPORTED" detail="No ATF duty records were returned by the backend." />}
+          ) : failedSources.ppacAtf ? <EmptyState title="PPAC DATA COULD NOT LOAD" detail="The PPAC ATF feed did not return a result. Refresh to retry." /> : <EmptyState title="PPAC DATA NOT IMPORTED" detail="No ATF duty records were returned by the backend." />}
         </Panel>
       </div>
 

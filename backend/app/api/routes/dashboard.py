@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from app.core.database import get_db
 from app.models.fare import FareObservation
 from app.models.collection import CollectionRun, SourceHealth
@@ -53,7 +53,74 @@ def _movement_status(change_pct: float) -> str:
 
 
 async def calculate_fare_movement(db: AsyncSession) -> dict:
-    """Compare the latest two verified collection dates; never invent a trend."""
+    """Compare the latest two verified collection dates; never invent a trend.
+
+    Only the rows that can feed the comparison are loaded: the distinct
+    collection dates and the per-route date presence come from small GROUP BY
+    queries, and the fare rows themselves are fetched only for the two
+    comparable dates plus the latest period (for the modelled-states block).
+    The old shape loaded every stored observation (~5,200 rows) into Python
+    on every call; under a concurrent page-load burst that took 10–12 s and
+    the browser's 12 s client timeout aborted it, so the Overview showed
+    "Comparison pending" on reload even though the data was there (24 Nov
+    2026: sequential 2.5 s, concurrent burst 10.3–12.4 s).
+    """
+    # Distinct collection dates (cheap) — the only dates a comparison can
+    # ever use. func.date() returns a date on Postgres but a 'YYYY-MM-DD'
+    # string on SQLite (the test engine), so normalise to date objects —
+    # the grouped medians below are keyed by date.
+    date_rows = (await db.execute(
+        select(func.date(FareObservation.collected_at)).distinct()
+        .where(
+            FareObservation.data_origin.in_(list(_LIVE_ORIGINS)),
+            FareObservation.is_valid == True,
+            FareObservation.collected_at.is_not(None),
+        )
+    )).all()
+    periods = sorted({
+        day if isinstance(day, date) else date.fromisoformat(day)
+        for row in date_rows for day in [row[0]] if day is not None
+    })
+    if len(periods) < 2:
+        return {"available": False, "price_drops": None, "routes": [], "states": {}, "message": "A second verified collection is required before movement can be calculated."}
+
+    # Per-route date presence (routes x days, a few hundred rows) — enough
+    # to find the most recent *comparable* date pair without loading fares.
+    presence_rows = (await db.execute(
+        select(FareObservation.route, func.date(FareObservation.collected_at))
+        .where(
+            FareObservation.data_origin.in_(list(_LIVE_ORIGINS)),
+            FareObservation.is_valid == True,
+            FareObservation.collected_at.is_not(None),
+        )
+        .group_by(FareObservation.route, func.date(FareObservation.collected_at))
+    )).all()
+    dates_by_route: dict[str, set] = {}
+    for route, day in presence_rows:
+        # Same SQLite/Postgres func.date() normalisation as above.
+        norm_day = day if isinstance(day, date) else date.fromisoformat(day)
+        dates_by_route.setdefault(route, set()).add(norm_day)
+
+    # A fresh corridor collection may introduce a newer date with no matching
+    # previous collection for that route. Find the most recent *comparable*
+    # date pair instead of allowing that valid new data to blank the map.
+    previous_period = current_period = None
+    for current_candidate in reversed(periods):
+        for previous_candidate in reversed([day for day in periods if day < current_candidate]):
+            if any(previous_candidate in days and current_candidate in days for days in dates_by_route.values()):
+                previous_period, current_period = previous_candidate, current_candidate
+                break
+        if current_period is not None:
+            break
+    if previous_period is None or current_period is None:
+        return {"available": False, "price_drops": None, "routes": [], "states": {}, "modeled_states": {}, "message": "A comparable second verified collection is required before movement can be calculated."}
+
+    # Fetch fares only for the dates the comparison needs: the comparable
+    # pair plus the latest period (the modelled-states block compares the
+    # latest state medians against the latest national median — the latest
+    # period may differ from the comparable pair's current date).
+    latest_period = periods[-1]
+    needed_days = {previous_period, current_period, latest_period}
     rows = (await db.execute(
         select(
             FareObservation.route,
@@ -64,31 +131,15 @@ async def calculate_fare_movement(db: AsyncSession) -> dict:
         ).where(
             FareObservation.data_origin.in_(list(_LIVE_ORIGINS)),
             FareObservation.is_valid == True,
+            func.date(FareObservation.collected_at).in_(list(needed_days)),
         ).order_by(FareObservation.collected_at.asc())
     )).all()
-    periods = sorted({row.collected_at.date() for row in rows if row.collected_at})
-    if len(periods) < 2:
-        return {"available": False, "price_drops": None, "routes": [], "states": {}, "message": "A second verified collection is required before movement can be calculated."}
 
     grouped: dict[str, dict[object, list[float]]] = {}
     for row in rows:
         if not row.collected_at:
             continue
         grouped.setdefault(row.route, {}).setdefault(row.collected_at.date(), []).append(float(row.total_fare))
-
-    # A fresh corridor collection may introduce a newer date with no matching
-    # previous collection for that route. Find the most recent *comparable*
-    # date pair instead of allowing that valid new data to blank the map.
-    previous_period = current_period = None
-    for current_candidate in reversed(periods):
-        for previous_candidate in reversed([day for day in periods if day < current_candidate]):
-            if any(previous_candidate in values and current_candidate in values for values in grouped.values()):
-                previous_period, current_period = previous_candidate, current_candidate
-                break
-        if current_period is not None:
-            break
-    if previous_period is None or current_period is None:
-        return {"available": False, "price_drops": None, "routes": [], "states": {}, "modeled_states": {}, "message": "A comparable second verified collection is required before movement can be calculated."}
 
     route_changes = []
     state_changes: dict[str, list[float]] = {}
@@ -120,7 +171,8 @@ async def calculate_fare_movement(db: AsyncSession) -> dict:
     # until another collection runs. Expose a deterministic benchmark estimate
     # rather than pretending it is a verified movement. The estimate compares
     # each state's real latest median against the latest national route median.
-    latest_period = periods[-1]
+    # (latest_period was set above, before the rows were fetched — it is one
+    # of the fetched dates by construction, so these rows are present.)
     latest_state_prices: dict[str, list[float]] = {}
     latest_all_prices: list[float] = []
     for row in rows:

@@ -284,11 +284,61 @@ test('a single published day leaves the index KPI on "Verified index pending"', 
   expect(screen.queryByText('↑ 42.3% vs prior collection')).toBeNull()
 })
 
-test('a failed history fetch leaves the index KPI on "Verified index pending"', async () => {
+test('a failed history fetch leaves the index KPI on "Index change unavailable", not "Verified index pending"', async () => {
+  // Round 3: a fetch that fails twice (even after the one retry) is a
+  // load failure, not a data condition — "Verified index pending" must
+  // only appear when the fetch settled with fewer than two published days.
   vi.mocked(api.apiIndexHistory).mockRejectedValue(new Error('history unavailable'))
   render(<Overview onNavigate={() => {}} />)
-  await waitFor(() => expect(api.apiIndexHistory).toHaveBeenCalled())
-  await screen.findByText('Verified index pending')
+  await waitFor(() => expect(api.apiIndexHistory).toHaveBeenCalledTimes(2), { timeout: 5000 })
+  await screen.findByText('Index change unavailable', {}, { timeout: 5000 })
+  expect(screen.queryByText('Verified index pending')).toBeNull()
+})
+
+// ── Movement failure vs genuinely-insufficient (round 3, 24 Nov 2026) ─────
+// 24 Nov 2026: the movement endpoint took 10.3–12.4 s under a concurrent
+// page-load burst (vs 2.5 s sequential), so the 12 s client timeout aborted
+// it and the Overview showed "Comparison pending" on reload even though the
+// data was there. The fetch now retries once and says "Movement
+// unavailable" when it genuinely cannot load.
+
+const movementResponse = {
+  available: true, price_drops: 0,
+  routes: [
+    { route: 'DEL-BOM', previous_fare: 7601.5, current_fare: 7706, change_pct: 1.37, status: 'STABLE' as const },
+    { route: 'DEL-BLR', previous_fare: 11433, current_fare: 11510.5, change_pct: 0.68, status: 'STABLE' as const },
+    { route: 'DEL-MAA', previous_fare: 11687, current_fare: 12183.5, change_pct: 4.25, status: 'MODERATE_INCREASE' as const },
+  ],
+  states: {},
+}
+
+test('movement: a failed movement fetch retries once and recovers', async () => {
+  vi.mocked(api.apiFares).mockImplementation(async () => faresResponse([5000, 6000]))
+  vi.mocked(api.apiFareMovement)
+    .mockRejectedValueOnce(new Error('cold start timeout'))
+    .mockResolvedValue(movementResponse)
+  render(<Overview onNavigate={() => {}} />)
+  await waitFor(() => expect(api.apiFareMovement).toHaveBeenCalledTimes(2), { timeout: 5000 })
+  // All three route cards show their movement from the retry, with the
+  // "Backend movement" footer — no "Comparison pending" anywhere.
+  await waitFor(() => expect(screen.getAllByText('Backend movement')).toHaveLength(3), { timeout: 5000 })
+  expect(screen.queryByText('Comparison pending')).toBeNull()
+  expect(screen.queryByText('Movement unavailable')).toBeNull()
+})
+
+test('movement: a double-failed movement fetch says "Movement unavailable", never "Comparison pending"', async () => {
+  vi.mocked(api.apiFares).mockImplementation(async () => faresResponse([5000, 6000]))
+  vi.mocked(api.apiFareMovement).mockRejectedValue(new Error('cold start timeout'))
+  render(<Overview onNavigate={() => {}} />)
+  await waitFor(() => expect(api.apiFareMovement).toHaveBeenCalledTimes(2), { timeout: 5000 })
+  // ChangeLabel + footer on each of the three route cards.
+  await waitFor(() => expect(screen.getAllByText('Movement unavailable')).toHaveLength(6), { timeout: 5000 })
+  expect(screen.queryByText('Comparison pending')).toBeNull()
+  // The alerts empty state says the comparison could not be loaded — it
+  // must not blame a missing second collection for a failed fetch.
+  expect(screen.getByText('Movement data could not be loaded')).toBeTruthy()
+  expect(screen.queryByText('Movement data is not available yet')).toBeNull()
+  expect(screen.queryByText(/A second verified collection is required/)).toBeNull()
 })
 
 // ── Loading states (follow-up, 23 Nov 2026 — Ankit's order: no
@@ -369,4 +419,44 @@ test('loading: the index helper reads "Loading index…" while history loads, th
   })
   await screen.findByText('Verified index pending')
   expect(screen.queryByText('Loading index…')).toBeNull()
+})
+
+test('route contribution rows label origin and destination, not just the origin city', async () => {
+  render(<Overview onNavigate={vi.fn()} />)
+  await screen.findByText('Route Contribution to Index')
+  // The contribution row and the route card both carry the full corridor.
+  expect(screen.getAllByText('DEL → BOM').length).toBeGreaterThanOrEqual(2)
+  expect(screen.getAllByText('Delhi to Mumbai').length).toBeGreaterThanOrEqual(1)
+})
+
+test('a stale dashboard cache is ignored instead of painting old KPIs as current', async () => {
+  // 26 Nov 2026 live inspection: Overview showed index 102.98 and 5,219
+  // observations from an old localStorage dashboard while the API had
+  // already moved to 109.77 / 6,252. A cache without a fresh saved_at must
+  // not paint at all.
+  localStorage.setItem('aeroprice:verified-dashboard:v1', JSON.stringify({
+    routes_tracked: 24, real_observations: 5219, price_drops: 3, index_value: 102.98,
+  }))
+  const dashboard = makeDeferred<Awaited<ReturnType<typeof api.apiDashboard>>>()
+  vi.mocked(api.apiDashboard).mockReturnValue(dashboard.promise)
+  render(<Overview onNavigate={() => {}} />)
+  expect(screen.queryByText('102.98')).toBeNull()
+  expect(screen.queryByText('5219')).toBeNull()
+  expect(screen.getAllByText('Loading…').length).toBeGreaterThan(0)
+  await dashboard.resolve({
+    real_observations: 6252, sources_live: 1, sources_challenge_detected: 5,
+    gov_datasets_connected: 1, collection_runs_today: 44, last_collection: '2026-11-26T01:55:01Z',
+    index_status: 'PUBLISHED', index_value: 109.77, routes_tracked: 24, price_drops: 6,
+    note: '', timestamp: '2026-11-26T17:00:00Z',
+  })
+  await waitFor(() => expect(screen.getAllByText('109.77').length).toBeGreaterThan(0), { timeout: 5000 })
+  expect(screen.queryByText('102.98')).toBeNull()
+})
+
+test('a signed-in alerts failure retries once and never says "sign in"', async () => {
+  vi.mocked(api.apiPriceAlerts).mockRejectedValue(new Error('alerts unavailable'))
+  render(<Overview onNavigate={() => {}} />)
+  await waitFor(() => expect(api.apiPriceAlerts).toHaveBeenCalledTimes(2), { timeout: 5000 })
+  await screen.findByText('Alerts could not be loaded', {}, { timeout: 5000 })
+  expect(screen.queryByText('Sign in to view account alerts')).toBeNull()
 })

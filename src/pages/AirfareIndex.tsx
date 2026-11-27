@@ -20,19 +20,31 @@ export default function AirfareIndex() {
   const [frequency, setFrequency] = useState<IndexFrequency>('daily')
   // Start in a loading state so a cold backend never flashes "no data".
   const [loading, setLoading] = useState(true)
+  const [historyLoading, setHistoryLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
+  const [historyError, setHistoryError] = useState('')
+  const [basketError, setBasketError] = useState('')
   // null until the first successful index response — "VIEW LOADED" must never
   // show the page-load time as if data loaded (audit §2.9).
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null)
 
-  async function load() {
+  async function withOneRetry<T>(call: () => Promise<T>): Promise<T> {
+    try {
+      return await call()
+    } catch (error) {
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      return call()
+    }
+  }
+
+  async function loadCurrentAndBasket() {
     setLoading(true)
     setLoadError('')
+    setBasketError('')
     try {
-      const [indexResult, historyResult, basketResult] = await Promise.allSettled([
-        apiIndexCurrent(token ?? undefined),
-        apiIndexHistory(token ?? undefined, frequency) as Promise<IndexHistoryResponse>,
-        apiIndexBasket(token ?? undefined),
+      const [indexResult, basketResult] = await Promise.allSettled([
+        withOneRetry(() => apiIndexCurrent(token ?? undefined)),
+        withOneRetry(() => apiIndexBasket(token ?? undefined)),
       ])
       if (indexResult.status === 'fulfilled') {
         setCurrent(indexResult.value)
@@ -41,25 +53,52 @@ export default function AirfareIndex() {
         setCurrent(DEFAULT_INDEX_CURRENT)
         setLoadError('The index endpoint could not be reached. Check your session and backend connection.')
       }
-      setHistory(historyResult.status === 'fulfilled'
-        ? historyResult.value.observations.filter(row => row.status === 'PUBLISHED') : [])
-      setBasket(basketResult.status === 'fulfilled' ? basketResult.value.routes : [])
-      setDgcaWeightsNote(basketResult.status === 'fulfilled' ? (basketResult.value.dgca_weights_note ?? '') : '')
+      if (basketResult.status === 'fulfilled') {
+        setBasket(basketResult.value.routes)
+        setDgcaWeightsNote(basketResult.value.dgca_weights_note ?? '')
+      } else {
+        setBasket([])
+        setBasketError('The route basket could not be loaded. Please retry.')
+      }
     } finally {
       setLoading(false)
     }
+  }
+
+  async function loadHistory() {
+    setHistoryLoading(true)
+    setHistoryError('')
+    try {
+      const result = await withOneRetry(() => apiIndexHistory(token ?? undefined, frequency) as Promise<IndexHistoryResponse>)
+      setHistory(result.observations.filter(row => row.status === 'PUBLISHED'))
+    } catch {
+      setHistory([])
+      setHistoryError('Index history could not be loaded. Please retry.')
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
+  async function load() {
+    await Promise.all([loadCurrentAndBasket(), loadHistory()])
   }
 
   const isPublished = current.status === 'PUBLISHED' && current.index_value !== null
   const coverageLabel = current.coverage_pct != null
     ? `${current.coverage_pct.toFixed(1)}%`
     : current.covered_routes_count != null && current.required_routes
-      ? `${current.covered_routes_count}/${current.required_routes}`
+      ? `${current.covered_routes_count} of ${current.required_routes} routes with data`
       : '—'
   const currentStatusLabel = isPublished ? 'PUBLISHED · VERIFIED FARES' : current.status === 'INSUFFICIENT_DATA' ? 'AWAITING VERIFIED DATA' : 'NO VERIFIED INDEX'
 
   useEffect(() => {
-    void load()
+    void loadCurrentAndBasket()
+  }, [token])
+
+  // Only history depends on frequency — toggling it must not refetch the
+  // current index and basket.
+  useEffect(() => {
+    void loadHistory()
   }, [token, frequency])
 
   function exportHistoryCsv() {
@@ -146,12 +185,12 @@ export default function AirfareIndex() {
           </button>
           <button
             onClick={load}
-            disabled={loading}
+            disabled={loading || historyLoading}
             className="ap-button ap-button-primary"
             style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 18px', fontSize: 12 }}
           >
-            <RefreshCw size={14} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
-            {loading ? 'Loading…' : 'Refresh Index'}
+            <RefreshCw size={14} style={{ animation: loading || historyLoading ? 'spin 1s linear infinite' : 'none' }} />
+            {loading || historyLoading ? 'Loading…' : 'Refresh Index'}
           </button>
         </div>
       </div>
@@ -224,7 +263,7 @@ export default function AirfareIndex() {
               </div>
               <div>
                 <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: '#94a3b8', letterSpacing: '0.08em' }}>TRUNK CORRIDORS</div>
-                <div style={{ fontSize: 18, fontWeight: 800, fontFamily: 'var(--font-mono)', marginTop: 2 }}>{current.route_count ?? current.covered_routes_count ?? '—'} Routes</div>
+                <div style={{ fontSize: 18, fontWeight: 800, fontFamily: 'var(--font-mono)', marginTop: 2 }}>{current.required_routes ? `${current.covered_routes_count ?? current.route_count ?? '—'} of ${current.required_routes} routes with data` : `${current.route_count ?? current.covered_routes_count ?? '—'} Routes`}</div>
               </div>
               <div>
                 <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: '#94a3b8', letterSpacing: '0.08em' }}>SAMPLED FARES</div>
@@ -307,7 +346,7 @@ export default function AirfareIndex() {
             {history.length === 0 ? (
               <tr>
                 <td colSpan={7} style={{ padding: '28px 12px', textAlign: 'center', color: 'var(--color-text-secondary)' }}>
-                  No published index periods yet. Verified fare observations are being collected; insufficient-data attempts are not shown as published history.
+                  {historyLoading ? 'Loading index history…' : historyError || 'No published index periods yet. Verified fare observations are being collected; insufficient-data attempts are not shown as published history.'}
                 </td>
               </tr>
             ) : history.map((row, i) => {
@@ -359,6 +398,7 @@ export default function AirfareIndex() {
           {dgcaWeightsNote || current.weights?.dgca_weights_note ||
             'Route weights come from AAI airport domestic-passenger traffic (September 2026) via a gravity model — a modelled proxy, not DGCA route traffic, which remains unavailable. This is a stated limitation, not a DGCA-weighted index.'}
         </p>
+        {basketError && <div role="alert" style={{ marginBottom: 16, padding: '10px 12px', borderRadius: 9, background: 'var(--color-warning-bg)', color: 'var(--color-warning)', fontSize: 12 }}>{basketError}</div>}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
           {basket.map(rw => (
             <div
@@ -371,11 +411,11 @@ export default function AirfareIndex() {
               }}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                <span style={{ fontSize: 14, fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--color-text-primary)' }}>
+                <span style={{ fontSize: 14, fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--color-text-primary)', whiteSpace: 'nowrap' }}>
                   {rw.route}
                 </span>
                 <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-brand-primary)', fontFamily: 'var(--font-mono)' }}>
-                  Weight: {rw.weight}
+                  Weight: {(rw.weight * 100).toFixed(2)}%
                 </span>
               </div>
               <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', display: 'flex', justifyContent: 'space-between' }}>

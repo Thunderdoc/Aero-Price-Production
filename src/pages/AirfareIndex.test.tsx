@@ -49,3 +49,22 @@ test('ITEM 3: with no published observation period the spotlight shows no freshn
   await screen.findByText('No published index available yet')
   expect(screen.queryByRole('status')).toBeNull()
 })
+
+test('basket weights render as short percents and coverage counts routes with data', async () => {
+  vi.mocked(api.apiIndexCurrent).mockResolvedValue({
+    status: 'PUBLISHED', index_value: 109.77, base_value: 100,
+    base_period: 'First verified collection day', observation_period: '2026-11-26',
+    route_count: 12, covered_routes_count: 12, required_routes: 19,
+    observation_count: 6252, data_origin: 'DERIVED',
+    message: 'Calculated from matched, verified fare observations.',
+  })
+  vi.mocked(api.apiIndexBasket).mockResolvedValue({
+    routes: [{ route: 'DEL-BOM', weight: 0.0970873786407767, region: 'West', weight_source: 'AAI_GRAVITY' }],
+    total: 1, dgca_weights_note: '',
+  })
+  render(<AirfareIndex />)
+  expect(await screen.findByText('Weight: 9.71%')).toBeTruthy()
+  expect(screen.queryByText(/0\.097087/)).toBeNull()
+  expect(screen.getAllByText('12 of 19 routes with data').length).toBeGreaterThanOrEqual(1)
+  expect(screen.getByText('DEL-BOM')).toBeTruthy()
+})

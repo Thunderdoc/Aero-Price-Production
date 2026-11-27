@@ -23,6 +23,9 @@ export default function TravelHistory({ onNavigate }: { onNavigate: (page: Page)
   const [activity, setActivity] = useState<RouteActivity[]>([])
   const [alerts, setAlerts] = useState<PriceAlert[]>([])
   const [alertsDenied, setAlertsDenied] = useState(false)
+  const [alertsLoading, setAlertsLoading] = useState(true)
+  const [alertsError, setAlertsError] = useState(false)
+  const [alertsReload, setAlertsReload] = useState(0)
 
   useEffect(() => {
     const refresh = () => {
@@ -37,20 +40,32 @@ export default function TravelHistory({ onNavigate }: { onNavigate: (page: Page)
   // Saved alerts come from the server — the old localStorage key was never
   // written anywhere, so this section always showed "No saved alerts".
   useEffect(() => {
-    if (!token) { setAlerts([]); setAlertsDenied(false); return }
+    if (!token) { setAlerts([]); setAlertsDenied(false); setAlertsLoading(false); setAlertsError(false); return }
     let active = true
-    apiPriceAlerts(token)
-      .then(({ alerts: rows }) => {
+    setAlertsLoading(true)
+    setAlertsError(false)
+    const loadAlerts = async (attempt: number): Promise<void> => {
+      try {
+        const { alerts: rows } = await apiPriceAlerts(token)
         if (!active) return
         setAlerts(rows.map(row => ({ id: row.id, route: row.route, targetFare: row.target_fare, createdAt: row.created_at })))
         setAlertsDenied(false)
-      })
-      .catch(error => {
+        setAlertsLoading(false)
+      } catch (error) {
         if (!active) return
-        if (isForbiddenError(error)) { setAlerts([]); setAlertsDenied(true) }
-      })
+        if (isForbiddenError(error)) { setAlerts([]); setAlertsDenied(true); setAlertsLoading(false); return }
+        if (attempt === 0) {
+          await new Promise(resolve => setTimeout(resolve, 1000))
+          if (active) await loadAlerts(1)
+          return
+        }
+        setAlertsError(true)
+        setAlertsLoading(false)
+      }
+    }
+    void loadAlerts(0)
     return () => { active = false }
-  }, [token])
+  }, [token, alertsReload])
 
   return <div className="page-enter" style={{ maxWidth: 980, display: 'grid', gap: 18 }}>
     <section style={{ padding: '24px 26px', borderRadius: 16, background: 'linear-gradient(125deg, #0a1c38, #124a91)', color: '#fff', boxShadow: '0 14px 30px rgba(16,54,109,.20)' }}>
@@ -61,7 +76,7 @@ export default function TravelHistory({ onNavigate }: { onNavigate: (page: Page)
     </section>
 
     <section style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 12 }}>
-      {[{ icon: Search, label: 'Route searches', value: activity.length }, { icon: Bookmark, label: 'Saved alerts', value: alerts.length }, { icon: CalendarDays, label: 'Latest activity', value: activity[0] ? formatDateIST(activity[0].searchedAt) : '—' }].map(({ icon: Icon, label, value }) => <div key={label} style={{ padding: 16, borderRadius: 13, border: '1px solid var(--color-border-primary)', background: 'var(--color-surface-bg)' }}><Icon size={17} color="#1769e8" /><div style={{ marginTop: 10, fontSize: 20, fontWeight: 850, color: 'var(--color-text-primary)' }}>{value}</div><div style={{ marginTop: 3, color: 'var(--color-text-secondary)', fontSize: 11 }}>{label}</div></div>)}
+      {[{ icon: Search, label: 'Route searches', value: activity.length }, { icon: Bookmark, label: 'Saved alerts', value: token && !alertsLoading && !alertsError ? alerts.length : '—' }, { icon: CalendarDays, label: 'Latest activity', value: activity[0] ? formatDateIST(activity[0].searchedAt) : '—' }].map(({ icon: Icon, label, value }) => <div key={label} style={{ padding: 16, borderRadius: 13, border: '1px solid var(--color-border-primary)', background: 'var(--color-surface-bg)' }}><Icon size={17} color="#1769e8" /><div style={{ marginTop: 10, fontSize: 20, fontWeight: 850, color: 'var(--color-text-primary)' }}>{value}</div><div style={{ marginTop: 3, color: 'var(--color-text-secondary)', fontSize: 11 }}>{label}</div></div>)}
     </section>
 
     <section style={{ padding: 18, borderRadius: 14, border: '1px solid var(--color-border-primary)', background: 'var(--color-surface-bg)' }}>
@@ -71,7 +86,7 @@ export default function TravelHistory({ onNavigate }: { onNavigate: (page: Page)
 
     <section style={{ padding: 18, borderRadius: 14, border: '1px solid var(--color-border-primary)', background: 'var(--color-surface-bg)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><ShieldCheck size={18} color="#159669" /><div><h2 style={{ margin: 0, color: 'var(--color-text-primary)', fontSize: 17 }}>Your saved price alerts</h2><p style={{ margin: '4px 0 0', color: 'var(--color-text-secondary)', fontSize: 12 }}>Alerts are kept separately from the verified market feed.</p></div></div>
-      {alerts.length ? <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px,1fr))', gap: 10, marginTop: 14 }}>{alerts.map(alert => <div key={alert.id} style={{ padding: 13, borderRadius: 10, background: 'var(--color-surface-secondary)' }}><b style={{ color: 'var(--color-text-primary)', fontSize: 13 }}>{alert.route.replace('-', ' → ')}</b><div style={{ marginTop: 7, color: 'var(--color-text-secondary)', fontSize: 11 }}>Target below ₹{alert.targetFare.toLocaleString('en-IN')}</div><div style={{ marginTop: 4, color: 'var(--color-text-tertiary)', fontSize: 10 }}>Created {formatDateTimeIST(alert.createdAt)}</div></div>)}</div> : <div style={{ marginTop: 14, padding: 14, borderRadius: 9, color: 'var(--color-text-secondary)', background: 'var(--color-surface-secondary)', fontSize: 12 }}>{alertsDenied ? 'Price Alerts access is required to view saved alerts — request it from the Price Alerts page.' : 'No saved alerts yet. Create one from the Price Alerts page.'}</div>}
+      {alerts.length ? <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px,1fr))', gap: 10, marginTop: 14 }}>{alerts.map(alert => <div key={alert.id} style={{ padding: 13, borderRadius: 10, background: 'var(--color-surface-secondary)' }}><b style={{ color: 'var(--color-text-primary)', fontSize: 13 }}>{alert.route.replace('-', ' → ')}</b><div style={{ marginTop: 7, color: 'var(--color-text-secondary)', fontSize: 11 }}>Target below ₹{alert.targetFare.toLocaleString('en-IN')}</div><div style={{ marginTop: 4, color: 'var(--color-text-tertiary)', fontSize: 10 }}>Created {formatDateTimeIST(alert.createdAt)}</div></div>)}</div> : <div style={{ marginTop: 14, padding: 14, borderRadius: 9, color: 'var(--color-text-secondary)', background: 'var(--color-surface-secondary)', fontSize: 12 }}>{alertsDenied ? 'Price Alerts access is required to view saved alerts — request it from the Price Alerts page.' : alertsLoading ? 'Loading saved alerts…' : alertsError ? <>Saved alerts could not be loaded. <button type="button" onClick={() => setAlertsReload(value => value + 1)} style={{ border: 0, background: 'none', color: '#1769e8', fontWeight: 800, cursor: 'pointer', padding: 0 }}>Retry</button></> : 'No saved alerts yet. Create one from the Price Alerts page.'}</div>}
     </section>
   </div>
 }

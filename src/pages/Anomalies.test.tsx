@@ -6,6 +6,7 @@ vi.mock('../contexts/AuthContext', () => ({ useAuth: () => ({ token: 'test-token
 vi.mock('../services/api', () => ({
   apiAnomalies: vi.fn(),
   apiRunAnomalyDetection: vi.fn(),
+  isForbiddenError: (error: unknown) => Boolean(error && typeof error === 'object' && (error as { status?: number }).status === 403),
 }))
 
 const api = await import('../services/api')
@@ -37,4 +38,21 @@ test('P3: anomaly rows carry the API true data_origin — never a hardcoded REAL
   expect(screen.getAllByText('PUBLIC_INTERFACE')).toHaveLength(2)
   expect(screen.queryByText('REAL')).toBeNull()
   expect(screen.getByText('2')).toBeTruthy() // FLAGGED OUTLIERS count
+})
+
+test('a successful scan with no flagged rows shows the honest empty state', async () => {
+  vi.mocked(api.apiAnomalies).mockResolvedValue({
+    anomalies: [], total_shown: 0,
+    summary: { total_observations: 6252, flagged_anomalies: 0, flag_rate_pct: 0 },
+    method: 'z-score', threshold: 3, min_sample: 10, status: 'ACTIVE',
+  })
+  render(<Anomalies />)
+  expect(await screen.findByText('NO OUTLIERS DETECTED')).toBeTruthy()
+})
+
+test('while the detector call is in flight the table says it is loading, not empty', async () => {
+  vi.mocked(api.apiAnomalies).mockImplementation(() => new Promise(() => {}))
+  render(<Anomalies />)
+  expect(await screen.findByText('LOADING ANOMALY DATA')).toBeTruthy()
+  expect(screen.queryByText('NO OUTLIERS DETECTED')).toBeNull()
 })

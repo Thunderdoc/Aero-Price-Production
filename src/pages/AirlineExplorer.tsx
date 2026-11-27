@@ -30,12 +30,21 @@ export default function AirlineExplorer() {
     setLoading(true)
     setError('')
     try {
-      const [fares, currentHealth] = await Promise.all([
-        apiAirlineFares(token ?? undefined),
-        apiHealth(),
+      // Health is explanatory only — its failure must not zero the fares.
+      const [faresResult, healthResult] = await Promise.allSettled([
+        (async () => {
+          try {
+            return await apiAirlineFares(token ?? undefined)
+          } catch {
+            await new Promise(resolve => setTimeout(resolve, 1000))
+            return apiAirlineFares(token ?? undefined)
+          }
+        })(),
+        apiHealth().catch(() => null),
       ])
-      setData(fares)
-      setHealth(currentHealth)
+      if (faresResult.status === 'fulfilled') setData(faresResult.value)
+      else throw faresResult.reason
+      if (healthResult.status === 'fulfilled') setHealth(healthResult.value)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Airline observations could not be loaded.')
     } finally {
@@ -76,7 +85,7 @@ export default function AirlineExplorer() {
       )}
       {loading && !data && <div style={{ ...panel, padding: 24 }}>Loading stored fare observations…</div>}
       {!loading && !error && airlines.length === 0 && (
-        <div style={{ ...panel, padding: 28 }}>No valid real or official INR economy fare observations are stored yet.</div>
+        <div style={{ ...panel, padding: 28 }}>No valid REAL, OFFICIAL or PUBLIC_INTERFACE (Google Flights public interface) INR economy fare observations are stored yet.</div>
       )}
 
       {airline && (

@@ -67,12 +67,37 @@ async def historical_summary(
         func.avg(FareObservation.total_fare), func.min(FareObservation.total_fare),
         func.max(FareObservation.total_fare),
     ).where(origin_filter))).one()
+    # Per-route breakdown for the Historical Fares page (26 Nov 2026 visual
+    # sweep: the page showed only four aggregate cards over a blank area).
+    route_rows = (await db.execute(
+        select(
+            FareObservation.route,
+            func.count(),
+            func.avg(FareObservation.total_fare),
+            func.min(FareObservation.total_fare),
+            func.max(FareObservation.total_fare),
+        )
+        .where(origin_filter)
+        .group_by(FareObservation.route)
+        .order_by(func.count().desc())
+        .limit(24)
+    )).all()
     return {
         "status": "READY", "records": total, "source": source,
         "data_origin": "REAL/OFFICIAL/PUBLIC_INTERFACE" if source != SOURCE else ORIGIN,
         "period_start": stats[0], "period_end": stats[1],
         "average_fare": round(float(stats[2]), 2), "min_fare": float(stats[3]), "max_fare": float(stats[4]),
         "note": note,
+        "routes": [
+            {
+                "route": row[0],
+                "records": row[1],
+                "average_fare": round(float(row[2]), 2) if row[2] is not None else None,
+                "min_fare": float(row[3]) if row[3] is not None else None,
+                "max_fare": float(row[4]) if row[4] is not None else None,
+            }
+            for row in route_rows
+        ],
     }
 
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Download, Filter, RefreshCw } from 'lucide-react'
-import { apiFares, isBackendAvailable, resetBackendAvailability, type FareObservationApi } from '../services/api'
+import { apiFares, type FareObservationApi } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
 import LiveBadge from '../components/LiveBadge'
 import DataFreshness from '../components/DataFreshness'
@@ -63,14 +63,11 @@ export default function LiveFares() {
       let loaded = false
 
       // Vercel can briefly return 500 while a new worker is warming up. Retry
-      // once and re-check health so a transient failure cannot look like 0
-      // verified fares to the user.
+      // the fares call itself once so a transient failure cannot look like 0
+      // verified fares to the user. (No separate health probe: its 3 s
+      // timeout false-negatived on slow wakes and blocked the real call.)
       for (let attempt = 0; attempt < 2 && !loaded; attempt += 1) {
-        resetBackendAvailability()
         try {
-          const up = await isBackendAvailable()
-          if (!up) throw new Error('The verified fare service is temporarily unavailable.')
-
           // P1: no data_origin filter — the old REAL-only filter matched zero
           // rows (the live DB holds PUBLIC_INTERFACE fares) and left this
           // page permanently empty. The backend default already returns the
@@ -408,7 +405,7 @@ export default function LiveFares() {
         }}
       >
         <div style={{ overflowX: 'auto' }}>
-          <table className="ap-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <table className="ap-table" style={{ width: '100%', minWidth: 1180, borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>
               <tr style={{ background: 'var(--color-surface-secondary)', borderBottom: '1px solid var(--color-border-primary)' }}>
                 {TABLE_COLS.map(col => (
@@ -470,7 +467,7 @@ export default function LiveFares() {
                         PUBLIC_INTERFACE rows as verified REAL fares. The
                         ap-badge-real class has no CSS definition, so REAL
                         rows render exactly as before. */}
-                    <span className={o.data_origin === 'REAL' ? 'ap-badge ap-badge-real' : 'ap-badge'} style={{ fontSize: 9 }}>
+                    <span className={o.data_origin === 'REAL' ? 'ap-badge ap-badge-real' : 'ap-badge'} style={{ fontSize: 9, whiteSpace: 'normal', wordBreak: 'break-word', display: 'inline-block' }}>
                       {o.data_origin}
                     </span>
                   </td>

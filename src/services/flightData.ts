@@ -77,12 +77,15 @@ export async function fetchAllCorridorFlights(
   // Plain service function with no React context: the token defaults to the
   // persisted session token (same one AuthContext stores on sign-in).
   token: string | undefined = getStoredSessionToken(),
-): Promise<Array<{ flights: LiveFlight[]; source: 'REAL' }>> {
+): Promise<Array<{ flights: LiveFlight[]; source: 'REAL'; provider_status?: string; error?: string }>> {
   try {
     // M2: /api/aviation/live requires auth — the old bare fetch() sent no
     // Authorization header and 401d. Route through the authed helper.
     const body = await apiAviationLive(token)
     const aircraftList = body.aircraft ?? []
+    if (body.provider_status === 'ERROR') {
+      return [{ flights: [], source: 'REAL' as const, provider_status: body.provider_status, error: (body as { note?: string }).note || 'Live aircraft providers are temporarily unavailable.' }]
+    }
     if (aircraftList.length > 0) {
       const flights: LiveFlight[] = aircraftList.map(a => {
         const callsign = String(a.callsign ?? '').trim()
@@ -108,15 +111,14 @@ export async function fetchAllCorridorFlights(
           freshness: body.provider_status === 'CACHED' ? 'RECENT CACHE' : 'POSITION ONLY',
         }
       })
-      return [{ flights, source: 'REAL' as const }]
+      return [{ flights, source: 'REAL' as const, provider_status: body.provider_status }]
     }
-  } catch {
-    // Continue to fallback
+    return [{ flights: [], source: 'REAL' as const, provider_status: body.provider_status }]
+  } catch (error) {
+    // A failed feed is not a successful empty result: callers must be able
+    // to tell provider-down apart from "no flights right now".
+    return [{ flights: [], source: 'REAL' as const, provider_status: 'ERROR', error: error instanceof Error ? error.message : 'Live aircraft feed unavailable.' }]
   }
-
-  // Never substitute a simulated fleet for a provider response. Aviation screens
-  // must be honest when the live radar source has no rows available.
-  return [{ flights: [], source: 'REAL' as const }]
 }
 
 // ── EF API (ak_live_ key) ─────────────────────────────────────────────────────

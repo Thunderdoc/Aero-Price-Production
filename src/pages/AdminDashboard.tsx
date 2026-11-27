@@ -532,24 +532,24 @@ export default function AdminDashboard() {
 
         // backend state when Firebase has expired the admin session.
 
-        const healthResult = healthData
-          ? null
-          : await Promise.allSettled([apiHealth()])
+        // Start health, sources and dashboard together — awaiting health
+        // first serialised the whole pipeline panel behind one slow call.
+        const [healthResult, directoryResult, dashboardResult] =
+          await Promise.allSettled([
+            healthData ? Promise.resolve(null) : apiHealth(),
+            token ? apiSources(token) : Promise.resolve(null),
+            token ? apiDashboard(token) : Promise.resolve(null),
+          ])
 
-        if (healthResult?.[0].status === "fulfilled")
-          setHealthData(healthResult[0].value)
+        if (!healthData && healthResult.status === "fulfilled" && healthResult.value)
+          setHealthData(healthResult.value)
 
         if (!token) return
-
-        const [directoryResult, dashboardResult] = await Promise.allSettled([
-          apiSources(token),
-          apiDashboard(token),
-        ])
 
         if (dashboardResult.status === "fulfilled")
           setDashboardData(dashboardResult.value)
 
-        if (directoryResult.status === "fulfilled") {
+        if (directoryResult.status === "fulfilled" && directoryResult.value) {
           const directory = directoryResult.value
 
           const airfare = directory.airfare || directory.airfare_sources || []

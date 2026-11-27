@@ -290,6 +290,13 @@ test('loading: a settled empty basket honestly shows "0 routes"', async () => {
   expect(screen.getByText('No verified route observations are available for the map.')).toBeTruthy()
 })
 
+test('loading: summaries still draw routes when the basket call fails twice', async () => {
+  vi.mocked(api.apiRouteBasket).mockRejectedValue(new Error('basket unavailable'))
+  render(<AirfareMap />)
+  await waitFor(() => expect(screen.getByText('2 routes with stored quotes')).toBeTruthy(), { timeout: 3000 })
+  expect(api.apiRouteBasket).toHaveBeenCalledTimes(2)
+})
+
 test('guest: the map loads public route data without a token and never polls the radar', async () => {
   // Three of the four map endpoints serve without auth (verified 23 Nov
   // 2026); only /api/index/basket 401s, and its failure already falls back
@@ -306,4 +313,27 @@ test('guest: the map loads public route data without a token and never polls the
   // The radar hook stays disabled for guests (D4 pattern): no
   // unauthenticated poll, no 401 every 30 s.
   expect(radar.useAviationRadar).toHaveBeenCalledWith(false)
+})
+
+// ── Guest header honesty (round 3, 24 Nov 2026) ─────────────────────────────
+// A guest never gets live positions (the radar poll is token-gated), so the
+// header must say sign-in is required — "AIRSPACE DATA DEGRADED" / "No live
+// aircraft positions" read as a broken feed when the feed was never attempted.
+
+test('guest: the map header says sign-in is required, never "DEGRADED" or "No live aircraft positions"', async () => {
+  authState.token = null
+  render(<AirfareMap />)
+  expect(await screen.findByText('SIGN IN FOR LIVE AIRSPACE')).toBeTruthy()
+  expect(screen.getAllByText('Sign in for live aircraft positions')).toHaveLength(2)
+  expect(screen.queryByText('AIRSPACE DATA DEGRADED')).toBeNull()
+  expect(screen.queryByText('No live aircraft positions')).toBeNull()
+  expect(screen.queryByText('0 flight positions over India')).toBeNull()
+})
+
+test('signed-in: a down radar feed still reads "AIRSPACE DATA DEGRADED"', async () => {
+  radarState.snapshot = { aircraft: [], source: '', retrievedAt: null, status: 'unavailable', refreshing: false, history: [] }
+  render(<AirfareMap />)
+  expect(await screen.findByText('AIRSPACE DATA DEGRADED')).toBeTruthy()
+  expect(screen.getByText('No live aircraft positions')).toBeTruthy()
+  expect(screen.queryByText('SIGN IN FOR LIVE AIRSPACE')).toBeNull()
 })

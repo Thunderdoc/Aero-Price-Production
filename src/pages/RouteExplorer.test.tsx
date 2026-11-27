@@ -11,6 +11,7 @@ vi.mock('../contexts/AuthContext', () => ({ useAuth: () => authState }))
 vi.mock('../services/api', () => ({
   apiAnomalies: vi.fn(),
   apiFares: vi.fn(),
+  apiFareMovement: vi.fn(),
   apiFareSummary: vi.fn(),
   apiLiveFares: vi.fn(),
   apiForecast: vi.fn(),
@@ -76,6 +77,12 @@ beforeEach(() => {
     method: 'z-score', threshold: 3, min_sample: 10, status: 'ok',
   })
   vi.mocked(api.apiFares).mockResolvedValue({ observations: [], total: 0, page: 1, page_size: 200, note: '' })
+  // Default: the movement endpoint genuinely has no comparison (one
+  // collection day) — the local day-to-day computation is the fallback.
+  vi.mocked(api.apiFareMovement).mockResolvedValue({
+    available: false, price_drops: null, routes: [], states: {},
+    message: 'A second verified collection is required before movement can be calculated.',
+  })
   // Default: no summary figures — the headline falls back to the row median.
   vi.mocked(api.apiFareSummary).mockResolvedValue(fareSummary({ median: null, min: null, max: null, count: 0 }))
 })
@@ -355,4 +362,76 @@ test('guest mount: cached rows load and the live upgrade is never attempted', as
   expect(api.apiLiveFares).not.toHaveBeenCalled()
   // Live was never attempted, so there is no "temporarily unavailable" message.
   expect(screen.queryByText(/temporarily unavailable/)).toBeNull()
+})
+
+// ── Collection change from the movement endpoint (round 3, 24 Nov 2026) ────
+// The live rows cover a single travel date collected on one day, so the
+// local day-to-day computation always returned null ("A second collection
+// is required") even though two collections exist. The shared movement
+// endpoint compares the latest two comparable collection days instead.
+
+test('movement: the endpoint change is used when rows span a single day', async () => {
+  vi.mocked(api.apiFares).mockResolvedValue({
+    observations: [fareRow('DEL-BOM', 5000, 'OBS-C1'), fareRow('DEL-BOM', 6000, 'OBS-C2')],
+    total: 2, page: 1, page_size: 1000, note: '',
+  })
+  vi.mocked(api.apiLiveFares).mockResolvedValue(livePayload('DEL-BOM', [fareRow('DEL-BOM', 5200, 'OBS-L1')]))
+  vi.mocked(api.apiFareMovement).mockResolvedValue({
+    available: true, price_drops: 0,
+    routes: [{ route: 'DEL-BOM', previous_fare: 7601.5, current_fare: 7706, change_pct: 1.37, status: 'STABLE' }],
+    states: {},
+  })
+  render(<RouteExplorer />)
+  await screen.findByText('↑ 1.37% versus the previous verified collection')
+  expect(screen.queryByText('A second collection is required for movement.')).toBeNull()
+  expect(screen.queryByText('Movement comparison could not be loaded.')).toBeNull()
+})
+
+test('movement: a double-failed endpoint fetch says the comparison could not be loaded', async () => {
+  vi.mocked(api.apiFares).mockResolvedValue({
+    observations: [fareRow('DEL-BOM', 5000, 'OBS-C1'), fareRow('DEL-BOM', 6000, 'OBS-C2')],
+    total: 2, page: 1, page_size: 1000, note: '',
+  })
+  vi.mocked(api.apiLiveFares).mockResolvedValue(livePayload('DEL-BOM', [fareRow('DEL-BOM', 5200, 'OBS-L1')]))
+  vi.mocked(api.apiFareMovement).mockRejectedValue(new Error('cold start timeout'))
+  render(<RouteExplorer />)
+  await waitFor(() => expect(api.apiFareMovement).toHaveBeenCalledTimes(2), { timeout: 5000 })
+  await screen.findByText('Movement comparison could not be loaded.', {}, { timeout: 5000 })
+  // A failed fetch must never be blamed on a missing second collection.
+  expect(screen.queryByText('A second collection is required for movement.')).toBeNull()
+})
+
+test('movement: a genuinely insufficient endpoint keeps the "second collection" text', async () => {
+  // The endpoint honestly has no comparison AND the loaded rows span one
+  // day — here "A second collection is required" is the true statement.
+  vi.mocked(api.apiFares).mockResolvedValue({
+    observations: [fareRow('DEL-BOM', 5000, 'OBS-C1'), fareRow('DEL-BOM', 6000, 'OBS-C2')],
+    total: 2, page: 1, page_size: 1000, note: '',
+  })
+  vi.mocked(api.apiLiveFares).mockResolvedValue(livePayload('DEL-BOM', [fareRow('DEL-BOM', 5200, 'OBS-L1')]))
+  render(<RouteExplorer />)
+  await screen.findByText('A second collection is required for movement.')
+  expect(screen.queryByText('Movement comparison could not be loaded.')).toBeNull()
+})
+
+test('Price History uses stored collection days and Booking Windows use summary windows, not the live single-date rows', async () => {
+  const storedDay1 = { ...fareRow('DEL-BOM', 7000, 'S1'), collected_at: '2026-11-25T10:00:00Z' }
+  const storedDay2 = { ...fareRow('DEL-BOM', 7600, 'S2'), collected_at: '2026-11-26T10:00:00Z' }
+  vi.mocked(api.apiFares).mockResolvedValue({ observations: [storedDay1, storedDay2], total: 2, page: 1, page_size: 1000, note: '' })
+  vi.mocked(api.apiLiveFares).mockResolvedValue(livePayload('DEL-BOM', [fareRow('DEL-BOM', 8000, 'L1')]))
+  vi.mocked(api.apiFareSummary).mockResolvedValue({
+    ...fareSummary({ median: 7600, min: 7000, max: 8000, count: 2 }),
+    windows: {
+      'T+1': { median: 8200, min: 8000, max: 8400, count: 4, data_origin: 'PUBLIC_INTERFACE', status: 'AVAILABLE' },
+      'T+7': { median: 7600, min: 7000, max: 8000, count: 6, data_origin: 'PUBLIC_INTERFACE', status: 'AVAILABLE' },
+    },
+  })
+  render(<RouteExplorer />)
+  await screen.findByText(/verified records loaded/)
+  fireEvent.click(screen.getByText('Price History'))
+  expect(await screen.findByText('Verified collection history')).toBeTruthy()
+  expect(screen.queryByText(/At least two verified collection days/)).toBeNull()
+  fireEvent.click(screen.getByText('Booking Windows'))
+  expect(await screen.findByText('T+1d')).toBeTruthy()
+  expect(screen.getByText('T+7d')).toBeTruthy()
 })

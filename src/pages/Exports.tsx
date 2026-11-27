@@ -54,6 +54,24 @@ const EXPORT_DEFS: ExportEntry[] = [
     endpoint: '/api/exports/dgca-monthly',
     method: 'GET',
   },
+  {
+    id: 'dgca-report-csv',
+    label: 'DGCA Analyst Report (CSV)',
+    description: 'One combined analyst report: index history, latest-day route evidence with provenance, source health, AAI gravity weights, and the MoSPI benchmark note with the DGCA data gap stated.',
+    format: 'CSV',
+    icon: FileText,
+    endpoint: '/api/exports/dgca-report',
+    method: 'GET',
+  },
+  {
+    id: 'dgca-report-json',
+    label: 'DGCA Analyst Report (JSON)',
+    description: 'The same combined analyst report as structured JSON for programmatic review: index, route evidence, provenance counts, source health, weights and benchmark note.',
+    format: 'JSON',
+    icon: Code,
+    endpoint: '/api/exports/dgca-report',
+    method: 'GET',
+  },
 ]
 
 export default function Exports() {
@@ -101,9 +119,13 @@ export default function Exports() {
         ? '/api/exports/fares?fmt=csv'
         : entry.id === 'json'
           ? '/api/exports/index-history?fmt=json'
-          : '/api/exports/dgca-monthly?fmt=csv'
+          : entry.id === 'dgca-report-csv'
+            ? '/api/exports/dgca-report?fmt=csv'
+            : entry.id === 'dgca-report-json'
+              ? '/api/exports/dgca-report?fmt=json'
+              : '/api/exports/dgca-monthly?fmt=csv'
       const blob = await apiDownload(path, token ?? undefined)
-      const extension = entry.id === 'json' ? 'json' : 'csv'
+      const extension = entry.format.toLowerCase()
       downloadBlob(`aeroprice-${entry.id}-export.${extension}`, blob)
       setExportSucceededAt(new Date())
       setExportFailed(false)

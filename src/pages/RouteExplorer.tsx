@@ -3,7 +3,7 @@ import { AlertTriangle, ArrowLeftRight, Info, RefreshCw } from 'lucide-react'
 import { Button } from '../components/ui/Button'
 import { Modal } from '../components/ui/Modal'
 import { BarChart, LineChart } from '../components/MiniChart'
-import { apiAnomalies, apiFares, apiFareSummary, apiLiveFares, apiForecast, apiRouteBasket, isBackendAvailable, type AnomalyResponse, type FareObservationApi, type ForecastResponse } from '../services/api'
+import { apiAnomalies, apiFares, apiFareMovement, apiFareSummary, apiLiveFares, apiForecast, apiRouteBasket, type AnomalyResponse, type FareObservationApi, type ForecastResponse } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
 import DataFreshness from '../components/DataFreshness'
 import { buildDailyMedianSeries, collectionDays } from '../lib/fareSeries'
@@ -70,7 +70,13 @@ export default function RouteExplorer() {
   // It drives the headline ONLY on the cached path — live rows are a
   // complete scrape for the searched travel date and keep their own median.
   const [fareSummary, setFareSummary] = useState<RouteFareSummary | null>(null)
+  const [storedRows, setStoredRows] = useState<FareObservationApi[]>([])
   const [liveRows, setLiveRows] = useState(false)
+  // Round 3 (24 Nov 2026): the route's collection-to-collection change
+  // from the shared movement endpoint (see the effect below). Null until
+  // loaded; movementFailed says the endpoint could not be reached at all.
+  const [routeMovementChange, setRouteMovementChange] = useState<number | null>(null)
+  const [movementFailed, setMovementFailed] = useState(false)
   // R2: request-id guard — a slow loadRoute for a route the user has already
   // left must not overwrite the current route's fares when it lands.
   const requestIdRef = useRef(0)
@@ -123,6 +129,7 @@ export default function RouteExplorer() {
     }
     if (!isCurrent()) return
     setRows(cached)
+    setStoredRows(cached)
     setLiveRows(false)
     setFilteredToDate(false)
     recordRouteActivity(date, cached.length)
@@ -179,6 +186,7 @@ export default function RouteExplorer() {
         setLiveRows(true)
       }
       setRows(next)
+      if (!liveRows) setStoredRows(next)
       setFilteredToDate(Boolean(date))
       recordRouteActivity(date, next.length)
       if (!next.length) setMessage(date ? `No verified fare records are available for ${route} on ${date}.` : `No verified fare records are available for ${route}.`)
@@ -189,12 +197,14 @@ export default function RouteExplorer() {
         const next = cached.observations.filter(row => row.data_origin === 'REAL' || row.data_origin === 'OFFICIAL' || row.data_origin === 'PUBLIC_INTERFACE')
         setLiveRows(false)
         setRows(next)
+        setStoredRows(next)
         setFilteredToDate(false)
         setMessage(next.length ? 'Live fare source is temporarily unavailable; showing cached verified observations.' : 'No verified fare records are available for this route.')
       } catch {
         if (!isCurrent()) return
         setLiveRows(false)
         setRows([])
+        setStoredRows([])
         setMessage('The verified fare service is not available right now.')
       }
     } finally { if (isCurrent()) setLoading(false) }
@@ -202,10 +212,7 @@ export default function RouteExplorer() {
 
   useEffect(() => {
     let active = true
-    isBackendAvailable().then(available => {
-      if (!available) throw new Error('backend unavailable')
-      return apiRouteBasket(token ?? undefined)
-    }).then(response => {
+    apiRouteBasket(token ?? undefined).then(response => {
       if (!active || !response) return
       setBasketRoutes(response.routes.map(item => item.route).sort())
     }).catch(() => { if (active) setBasketRoutes([]) })
@@ -220,6 +227,32 @@ export default function RouteExplorer() {
     // P5: the summary is stored data, independent of the searched travel
     // date — one fetch per route, alongside forecast/anomalies.
     apiFareSummary(route, token ?? undefined).then(value => setFareSummary(value as RouteFareSummary)).catch(() => setFareSummary(null))
+    // Round 3: the route's collection-to-collection change comes from the
+    // shared movement endpoint, not from the loaded rows — the live rows
+    // cover a single travel date collected on one day, so the local
+    // day-to-day computation always returned null ("A second collection is
+    // required") even though two collections exist. The endpoint compares
+    // the latest two comparable collection days across all travel dates.
+    // One retry (the route-cards pattern); a double failure says so
+    // honestly instead of blaming a missing second collection.
+    let movementActive = true
+    setRouteMovementChange(null)
+    setMovementFailed(false)
+    const loadMovement = async (attempt = 0): Promise<void> => {
+      try {
+        const movement = await apiFareMovement(token ?? undefined)
+        if (!movementActive) return
+        setRouteMovementChange(movement.routes.find(item => item.route === route)?.change_pct ?? null)
+      } catch {
+        if (attempt === 0) {
+          await new Promise(resolve => setTimeout(resolve, ROUTE_CACHED_RETRY_MS))
+          if (movementActive) return loadMovement(1)
+        }
+        if (movementActive) setMovementFailed(true)
+      }
+    }
+    void loadMovement()
+    return () => { movementActive = false }
   }, [route, token])
 
   // R4: filter anomalies by route FIRST — the tab branches on this list,
@@ -237,16 +270,28 @@ export default function RouteExplorer() {
   const currentFare = summaryOverall?.median ?? median(fares)
   const minFare = summaryOverall?.min ?? (fares.length ? Math.min(...fares) : null)
   const maxFare = summaryOverall?.max ?? (fares.length ? Math.max(...fares) : null)
-  const collectionChange = changeBetweenCollections(verifiedRows)
+  // The movement endpoint is the primary source (it compares the latest
+  // two comparable collection days); the local day-to-day computation over
+  // the loaded rows is the fallback for a route the endpoint has no entry
+  // for. A null from both means either genuinely one collection day (the
+  // "second collection" text below) or a failed endpoint fetch (the
+  // "could not be loaded" text) — never the wrong one.
+  const collectionChange = routeMovementChange ?? changeBetweenCollections(verifiedRows)
   const carriers = [...new Set(verifiedRows.map(row => row.airline).filter(Boolean))]
   const sources = [...new Set(verifiedRows.map(row => row.source).filter(Boolean))]
   const latestCollectedAt = verifiedRows.map(row => row.collected_at).sort().at(-1) ?? null
   // Missing days are null in the series — the line breaks there instead of
   // plotting ₹0 or silently compressing the time axis (audit §2.11).
-  const historyDays = collectionDays(verifiedRows)
-  const dailyHistory = buildDailyMedianSeries(verifiedRows, [route], historyDays)[0]?.data ?? []
+  // Price History and Booking Windows describe the STORED history, not the
+  // single-travel-date live scrape shown in the overview: history comes from
+  // stored fares grouped by collection day, windows from the route summary's
+  // advance-purchase medians (stored grouping as fallback).
+  const historyRows = storedRows.length ? storedRows : verifiedRows
+  const historyDays = collectionDays(historyRows)
+  const dailyHistory = buildDailyMedianSeries(historyRows, [route], historyDays)[0]?.data ?? []
   const dailyHistoryPoints = dailyHistory.filter((value): value is number => value != null).length
-  const bookingWindows = [...new Set(verifiedRows.map(row => row.advance_days))].sort((a, b) => a - b).map(days => ({ label: `${days}d`, value: median(verifiedRows.filter(row => row.advance_days === days).map(row => row.total_fare)) ?? 0 })).filter(point => point.value > 0)
+  const summaryWindows = Object.entries(fareSummary?.windows ?? {}).filter(([, stats]) => stats.median != null && stats.median > 0).map(([label, stats]) => ({ label: `${label}d`, value: stats.median as number }))
+  const bookingWindows = summaryWindows.length ? summaryWindows : [...new Set(historyRows.map(row => row.advance_days))].sort((a, b) => a - b).map(days => ({ label: `${days}d`, value: median(historyRows.filter(row => row.advance_days === days).map(row => row.total_fare)) ?? 0 })).filter(point => point.value > 0)
   const sourceRows = sources.map(source => ({ source, count: verifiedRows.filter(row => row.source === source).length, latest: verifiedRows.filter(row => row.source === source).map(row => row.collected_at).sort().at(-1) }))
 
   const setRouteFromCodes = (nextFrom: string, nextTo: string) => {
@@ -269,14 +314,14 @@ export default function RouteExplorer() {
     <div style={{ ...card, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
       <div><label style={{ display: 'block', fontSize: 9, fontWeight: 700, letterSpacing: '.08em', color: 'var(--color-text-tertiary)', marginBottom: 3 }}>TRAVEL DATE</label><input type="date" value={searchDate} onChange={event => setSearchDate(event.target.value)} style={{ padding: '7px 10px', fontSize: 12, fontFamily: 'var(--font-mono)', border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-sm)', background: 'var(--color-surface-secondary)' }} /></div>
       <button onClick={() => void loadRoute(searchDate)} disabled={loading} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 16px', border: 0, borderRadius: 'var(--radius-md)', background: 'var(--color-brand-primary)', color: '#fff', fontWeight: 700, cursor: loading ? 'wait' : 'pointer', opacity: loading ? .7 : 1 }}><RefreshCw size={13} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />{loading ? 'Loading…' : 'Search Verified Fares'}</button>
-      <span style={{ fontSize: 11, color: verifiedRows.length ? 'var(--color-success)' : 'var(--color-text-tertiary)', fontWeight: 650 }}>{verifiedRows.length ? `${verifiedRows.length} verified records loaded` : 'No verified records loaded'}</span>
+      <span style={{ fontSize: 11, color: verifiedRows.length ? 'var(--color-success)' : 'var(--color-text-tertiary)', fontWeight: 650 }}>{verifiedRows.length ? `${verifiedRows.length} verified records loaded` : loading ? 'Loading verified records…' : 'No verified records loaded'}</span>
       {latestCollectedAt && <DataFreshness minutesAgo={Math.max(0, Math.floor((Date.now() - new Date(latestCollectedAt).getTime()) / 60000))} />}
       {filteredToDate && <button onClick={() => void loadRoute()} style={{ border: 0, background: 'transparent', color: 'var(--color-brand-primary)', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>Clear date filter</button>}
     </div>
 
     <div style={card}>
       <div className="flex items-start justify-between flex-wrap" style={{ gap: 'var(--space-lg)' }}>
-        <div><div className="flex items-center" style={{ gap: 9, marginBottom: 12 }}><span className="text-heading text-primary" style={{ fontWeight: 750 }}>{route.replace('-', ' → ')}</span><span style={{ borderRadius: 99, padding: '3px 8px', color: verifiedRows.length ? 'var(--color-success)' : 'var(--color-text-tertiary)', background: verifiedRows.length ? 'var(--color-success-bg)' : 'var(--color-surface-secondary)', fontSize: 10, fontWeight: 800 }}>{verifiedRows.length ? 'VERIFIED' : 'NO DATA'}</span></div><div className="flex items-baseline" style={{ gap: 12 }}><span style={{ fontSize: '2.5rem', fontWeight: 800, lineHeight: 1, color: 'var(--color-text-primary)' }}>{formatFare(currentFare)}</span><span className="text-caption text-secondary">Observed median</span></div><div style={{ marginTop: 13, fontSize: 12, color: collectionChange == null ? 'var(--color-text-tertiary)' : collectionChange < 0 ? 'var(--color-success)' : 'var(--color-danger)', fontWeight: 700 }}>{collectionChange == null ? 'A second collection is required for movement.' : `${collectionChange < 0 ? '↓' : '↑'} ${Math.abs(collectionChange).toFixed(2)}% versus the previous verified collection`}</div></div>
+        <div><div className="flex items-center" style={{ gap: 9, marginBottom: 12 }}><span className="text-heading text-primary" style={{ fontWeight: 750 }}>{route.replace('-', ' → ')}</span><span style={{ borderRadius: 99, padding: '3px 8px', color: verifiedRows.length ? 'var(--color-success)' : 'var(--color-text-tertiary)', background: verifiedRows.length ? 'var(--color-success-bg)' : 'var(--color-surface-secondary)', fontSize: 10, fontWeight: 800 }}>{verifiedRows.length ? 'VERIFIED' : loading ? 'LOADING' : 'NO DATA'}</span></div><div className="flex items-baseline" style={{ gap: 12 }}><span style={{ fontSize: '2.5rem', fontWeight: 800, lineHeight: 1, color: 'var(--color-text-primary)' }}>{loading && !verifiedRows.length ? 'Loading…' : formatFare(currentFare)}</span><span className="text-caption text-secondary">Observed median</span></div><div style={{ marginTop: 13, fontSize: 12, color: collectionChange == null ? 'var(--color-text-tertiary)' : collectionChange < 0 ? 'var(--color-success)' : 'var(--color-danger)', fontWeight: 700 }}>{collectionChange == null ? (movementFailed ? 'Movement comparison could not be loaded.' : 'A second collection is required for movement.') : `${collectionChange < 0 ? '↓' : '↑'} ${Math.abs(collectionChange).toFixed(2)}% versus the previous verified collection`}</div></div>
         <div style={{ textAlign: 'right' }}><div className="text-caption text-tertiary">OBSERVATIONS</div><div className="text-label text-primary" style={{ fontWeight: 700 }}>{verifiedRows.length.toLocaleString('en-IN')}</div><button onClick={() => setShowProv(true)} style={{ marginTop: 14, display: 'inline-flex', alignItems: 'center', gap: 5, border: 0, background: 'transparent', color: 'var(--color-brand-primary)', cursor: 'pointer' }}><Info size={13} />Data provenance</button></div>
       </div>
       {message && <div style={{ marginTop: 16, padding: 10, borderRadius: 8, color: 'var(--color-warning)', background: 'var(--color-warning-bg)', fontSize: 12 }}>{message}</div>}
@@ -286,10 +331,10 @@ export default function RouteExplorer() {
       <div className="flex overflow-x-auto" role="tablist" aria-label="Route detail tabs" style={{ borderBottom: '1px solid var(--color-border-primary)' }}>{TABS.map(item => <button key={item} role="tab" aria-selected={tab === item} onClick={() => setTab(item)} style={{ padding: '14px 20px', border: 0, borderBottom: `2px solid ${tab === item ? 'var(--color-brand-primary)' : 'transparent'}`, background: 'transparent', color: tab === item ? 'var(--color-brand-primary)' : 'var(--color-text-secondary)', fontWeight: tab === item ? 700 : 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>{item}</button>)}</div>
       <div style={{ padding: 'var(--space-xl)' }}>
         {tab === 'Overview' && <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))', gap: 14 }}>{[
-          ['Current Fare', formatFare(currentFare), 'Observed median'], ['Observed Range', minFare == null ? 'Data unavailable' : `${formatFare(minFare)} – ${formatFare(maxFare)}`, 'Minimum–maximum'], ['Collection Change', collectionChange == null ? 'Data unavailable' : `${collectionChange > 0 ? '+' : ''}${collectionChange.toFixed(2)}%`, 'Latest comparison'], ['Observations', verifiedRows.length.toLocaleString('en-IN'), 'Verified records'], ['Airlines', carriers.length.toLocaleString('en-IN'), 'Observed carriers'], ['Sources', sources.length.toLocaleString('en-IN'), 'Recorded sources'],
+          ['Current Fare', loading && !verifiedRows.length ? 'Loading…' : formatFare(currentFare), 'Observed median'], ['Observed Range', loading && !verifiedRows.length ? 'Loading…' : minFare == null ? 'Data unavailable' : `${formatFare(minFare)} – ${formatFare(maxFare)}`, 'Minimum–maximum'], ['Collection Change', loading && collectionChange == null ? 'Loading…' : collectionChange == null ? 'Data unavailable' : `${collectionChange > 0 ? '+' : ''}${collectionChange.toFixed(2)}%`, 'Latest comparison'], ['Observations', verifiedRows.length.toLocaleString('en-IN'), 'Verified records'], ['Airlines', carriers.length.toLocaleString('en-IN'), 'Observed carriers'], ['Sources', sources.length.toLocaleString('en-IN'), 'Recorded sources'],
         ].map(([label, value, sub]) => <div key={label} style={{ padding: 14, borderRadius: 'var(--radius-md)', background: 'var(--color-surface-secondary)' }}><div className="text-caption text-tertiary">{label}</div><div className="text-label text-primary" style={{ marginTop: 5, fontWeight: 700 }}>{value}</div><div className="text-caption text-tertiary">{sub}</div></div>)}</div>}
 
-        {tab === 'Price History' && (dailyHistoryPoints >= 2 ? <div><h3 className="text-label text-primary" style={{ fontWeight: 700 }}>Verified collection history</h3><p className="text-caption text-secondary" style={{ marginTop: 4 }}>Each point is the actual route median recorded on that collection day. Days with no observation break the line.</p><div style={{ marginTop: 18, overflowX: 'auto' }}><LineChart series={[{ name: route, data: dailyHistory, color: 'var(--color-brand-primary)' }]} labels={historyDays} width={720} height={220} /></div></div> : <p className="text-body text-secondary">At least two verified collection days are required to draw a history chart.</p>)}
+        {tab === 'Price History' && (dailyHistoryPoints >= 2 ? <div><h3 className="text-label text-primary" style={{ fontWeight: 700 }}>Verified collection history</h3><p className="text-caption text-secondary" style={{ marginTop: 4 }}>Each point is the actual route median recorded on that collection day. Days with no observation break the line.</p><div style={{ marginTop: 18, overflowX: 'auto' }}><LineChart series={[{ name: route, data: dailyHistory, color: 'var(--color-brand-primary)' }]} labels={historyDays} width={720} height={220} /></div></div> : <p className="text-body text-secondary">{loading ? 'Loading stored fare history…' : 'At least two verified collection days are required to draw a history chart.'}</p>)}
 
         {tab === 'Booking Windows' && (bookingWindows.length ? <div><h3 className="text-label text-primary" style={{ fontWeight: 700 }}>Observed advance-purchase windows</h3><p className="text-caption text-secondary" style={{ marginTop: 4 }}>Medians are calculated only from the fare records currently stored for this route.</p><div style={{ marginTop: 18, overflowX: 'auto' }}><BarChart data={bookingWindows} width={620} height={190} /></div></div> : <p className="text-body text-secondary">No verified booking-window records are available for this route.</p>)}
 
@@ -301,6 +346,6 @@ export default function RouteExplorer() {
       </div>
     </div>
 
-    <Modal isOpen={showProv} onClose={() => setShowProv(false)} title="Data Provenance" footer={<Button variant="neutral" onClick={() => setShowProv(false)}>Close</Button>}><div className="flex flex-col" style={{ gap: 12, fontSize: 13 }}><div><b>Route:</b> {route}</div><div><b>Origin:</b> REAL / OFFICIAL fare observations only</div><div><b>Verified records:</b> {verifiedRows.length}</div><div><b>Latest collection:</b> {latestCollectedAt ? formatDateTimeIST(latestCollectedAt) : 'Unavailable'}</div><div><b>Recorded sources:</b> {sources.join(', ') || 'Unavailable'}</div></div></Modal>
+    <Modal isOpen={showProv} onClose={() => setShowProv(false)} title="Data Provenance" footer={<Button variant="neutral" onClick={() => setShowProv(false)}>Close</Button>}><div className="flex flex-col" style={{ gap: 12, fontSize: 13 }}><div><b>Route:</b> {route}</div><div><b>Origin:</b> REAL / OFFICIAL / PUBLIC_INTERFACE fare observations (PUBLIC_INTERFACE = scraped Google Flights fares, shown with their true origin)</div><div><b>Verified records:</b> {verifiedRows.length}</div><div><b>Latest collection:</b> {latestCollectedAt ? formatDateTimeIST(latestCollectedAt) : 'Unavailable'}</div><div><b>Recorded sources:</b> {sources.join(', ') || 'Unavailable'}</div></div></Modal>
   </div>
 }

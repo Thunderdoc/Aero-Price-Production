@@ -14,7 +14,7 @@
  * No synthetic price variance. No fake LIVE indicators.
  */
 import { useEffect, useRef, useState } from 'react'
-import { apiAviationLive, apiDashboard, isBackendAvailable } from '../services/api'
+import { apiAviationLive, apiDashboard } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
 
 type Corridor = never
@@ -55,7 +55,7 @@ function formatTimestamp(): string {
 
 export function useLiveData(): UseLiveDataResult {
   const { token } = useAuth()
-  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('offline')
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('delayed')
   const [indexValue, setIndexValue] = useState<number | null>(null)
   const [indexChange7d] = useState<number | null>(null)
   const [realObservations, setRealObservations] = useState(0)
@@ -72,38 +72,31 @@ export function useLiveData(): UseLiveDataResult {
     if (inFlightRef.current) return
     inFlightRef.current = true
     try {
-      const up = await isBackendAvailable()
-      if (!up) {
-        setConnectionStatus('offline')
-        return
-      }
-      // Backend is reachable but the user is signed out: no data can flow,
-      // but the backend is NOT offline.
+      // No health-probe gate: its 3 s timeout false-negatived on slow wakes
+      // and marked the connection offline while the real calls would have
+      // succeeded. The dashboard result itself is the reachability signal.
       if (!token) {
         setConnectionStatus('delayed')
         return
       }
-      let dash
-      try {
-        dash = await apiDashboard(token)
-      } catch {
-        // Backend is up (isBackendAvailable passed) but the dashboard call
-        // failed — e.g. the database is down. That is "no data", not offline.
+      // Dashboard and aviation are independent — fetch them in parallel.
+      // A radar failure must not flip the fare status, and vice versa.
+      const [dashResult, flightResult] = await Promise.allSettled([
+        apiDashboard(token),
+        apiAviationLive(token),
+      ])
+      if (dashResult.status === 'rejected') {
         setConnectionStatus('delayed')
-        return
+      } else {
+        const dash = dashResult.value
+        setRealObservations(dash.real_observations ?? 0)
+        setSourcesLive(dash.sources_live ?? 0)
+        setIndexValue(dash.index_value ?? null)
+        setLastUpdated(formatTimestamp())
+        setConnectionStatus((dash.sources_live ?? 0) > 0 ? 'live' : 'delayed')
       }
-      setRealObservations(dash.real_observations ?? 0)
-      setSourcesLive(dash.sources_live ?? 0)
-      setIndexValue(dash.index_value ?? null)
-      setLastUpdated(formatTimestamp())
-      setConnectionStatus((dash.sources_live ?? 0) > 0 ? 'live' : 'delayed')
-      // The radar feed is independent of the fare dashboard: a radar failure
-      // must not flip the whole connection status to offline.
-      try {
-        // M2: /api/aviation/live requires auth — the old bare fetch() sent no
-        // Authorization header and 401d. Route through the authed helper
-        // with this hook's token, like apiDashboard above.
-        const flightBody = await apiAviationLive(token ?? undefined)
+      if (flightResult.status === 'fulfilled') {
+        const flightBody = flightResult.value
         const aircraft = flightBody.aircraft.map((item, index) => ({
           icao24: item.icao24 || item.registration || `live-${index}`,
           callsign: (item.callsign || item.registration || 'UNKNOWN').trim(),
@@ -112,9 +105,8 @@ export function useLiveData(): UseLiveDataResult {
           heading: Number(item.track_deg ?? 0), origin_country: 'Unknown',
         })).filter(item => Number.isFinite(item.lat) && Number.isFinite(item.lng))
         setLiveFlights(aircraft)
-      } catch {
-        // Keep the last known positions; the fare status above stands.
       }
+      // A rejected radar call keeps the last known positions.
     } catch {
       setConnectionStatus('offline')
     } finally {

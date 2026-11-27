@@ -1,10 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Calendar, TrendingDown, TrendingUp, Info } from 'lucide-react'
-import { apiFares, type FareObservationApi } from '../services/api'
+import { apiFareSummary } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
 import LiveBadge from '../components/LiveBadge'
 import DataFreshness from '../components/DataFreshness'
-import { median, type LiveCheck } from '../lib/liveStatus'
+import { type LiveCheck } from '../lib/liveStatus'
+
+interface FareSummaryResponse {
+  route: string
+  status: string
+  overall?: { median?: number | null; count?: number; last_collected_at?: string | null; data_origin?: string }
+  windows?: Record<string, { median?: number | null; count?: number; data_origin?: string }>
+}
 
 const WINDOWS = [
   { label:'T+1 day',  key:'1d',  advanceDays: 1,  description:'Last-minute', color:'var(--color-danger)' },
@@ -20,8 +27,8 @@ export default function BookingWindow() {
   const { token } = useAuth()
   const [activeRoute, setActiveRoute] = useState('DEL-BOM')
   const [hoveredWindow, setHoveredWindow] = useState<string|null>(null)
-  const [observations, setObservations] = useState<FareObservationApi[]>([])
-  const [loading, setLoading] = useState(false)
+  const [summary, setSummary] = useState<FareSummaryResponse | null>(null)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [fetchOk, setFetchOk] = useState(false)
   const [fetchFailed, setFetchFailed] = useState(false)
@@ -32,39 +39,47 @@ export default function BookingWindow() {
     setLoading(true)
     setError(null)
     setFetchFailed(false)
-    // P2: no data_origin filter — the old REAL-only filter matched zero rows
-    // (the live DB holds PUBLIC_INTERFACE fares) and left this page
-    // permanently empty. The backend default already returns the
-    // index-eligible set (REAL / OFFICIAL / PUBLIC_INTERFACE).
-    apiFares({ route: activeRoute, limit: 1000 }, token ?? undefined)
-      .then(result => {
+    // One small summary response instead of up to 1,000 fare rows. The
+    // backend summary already restricts to the index-eligible set
+    // (REAL / OFFICIAL / PUBLIC_INTERFACE) and labels each window's origin.
+    const loadSummary = async (attempt = 0): Promise<void> => {
+      try {
+        const result = await apiFareSummary(activeRoute, token ?? undefined) as FareSummaryResponse
         if (!active) return
-        setObservations(result.observations ?? [])
+        setSummary(result)
         setFetchOk(true)
         setCheckedAt(new Date())
-      })
-      .catch(() => { if (active) { setObservations([]); setFetchOk(false); setFetchFailed(true); setError('Verified fare data is unavailable for this route.') } })
-      .finally(() => { if (active) setLoading(false) })
+      } catch {
+        if (attempt === 0) {
+          await new Promise(resolve => setTimeout(resolve, 1000))
+          if (active) return loadSummary(1)
+          return
+        }
+        if (active) { setSummary(null); setFetchOk(false); setFetchFailed(true); setError('Verified fare data is unavailable for this route.') }
+      } finally {
+        if (active && attempt === 1) setLoading(false)
+        if (active && attempt === 0) setLoading(false)
+      }
+    }
+    void loadSummary()
     return () => { active = false }
   }, [activeRoute, token])
 
-  // "VERIFIED" is true only when the fetch succeeded AND observations exist.
-  const feedCheck: LiveCheck = { ok: fetchOk && observations.length > 0, checkedAt, loading, failed: fetchFailed }
-  const newestCollectedAt = observations.length
-    ? observations.reduce((latest, row) => row.collected_at > latest ? row.collected_at : latest, observations[0].collected_at)
-    : null
-
   const windowData = useMemo(() => WINDOWS.map(window => {
-    const rows = observations.filter(item => item.advance_days === window.advanceDays)
-    const values = rows.map(item => Number(item.total_fare)).filter(Number.isFinite).sort((a, b) => a - b)
-    // The true origins behind this window's median — never hardcoded REAL:
-    // the rows are whatever index-eligible origins the backend returned.
-    const origins = [...new Set(rows.map(item => item.data_origin).filter(Boolean))]
-    // Shared median (average of two middle values) — this page previously
-    // used the upper median, so the same route showed a different "median"
-    // here than everywhere else (audit §1.7).
-    return { ...window, median: median(values), count: values.length, origins }
-  }), [observations])
+    const bucket = summary?.windows?.[`T+${window.advanceDays}`]
+    const origin = bucket?.data_origin
+    return {
+      ...window,
+      median: bucket?.median ?? null,
+      count: bucket?.count ?? 0,
+      origins: origin && origin !== 'NO_DATA' ? [origin] : [],
+    }
+  }), [summary])
+  const totalObservations = windowData.reduce((sum, window) => sum + window.count, 0)
+  const newestCollectedAt = summary?.overall?.last_collected_at ?? null
+
+  // "VERIFIED" is true only when the fetch succeeded AND observations exist.
+  const feedCheck: LiveCheck = { ok: fetchOk && totalObservations > 0, checkedAt, loading, failed: fetchFailed }
   const baseRef = windowData[0]?.median ?? null
   function getMultiplier(windowIdx: number) {
     const value = windowData[windowIdx]?.median
@@ -115,11 +130,16 @@ export default function BookingWindow() {
           ))}
         </div>
         <div style={{ marginBottom: 16, padding: '10px 12px', borderRadius: 9, background: loading ? 'var(--color-info-bg)' : error ? 'var(--color-warning-bg)' : 'var(--color-surface-secondary)', color: error ? 'var(--color-warning)' : 'var(--color-text-secondary)', fontSize: 11, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <span>{loading ? 'Loading verified route observations…' : error ?? `${observations.length.toLocaleString('en-IN')} verified observations loaded for ${activeRoute}.`}</span>
+          <span>{loading ? 'Loading verified route observations…' : error ?? `${totalObservations.toLocaleString('en-IN')} verified observations loaded for ${activeRoute}.`}</span>
           {newestCollectedAt && <DataFreshness minutesAgo={Math.max(0, Math.floor((Date.now() - new Date(newestCollectedAt).getTime()) / 60000))} />}
         </div>
 
-        {/* Window cards */}
+        {/* Window cards — gated while loading so they never read 0 OBS */}
+        {loading && !summary ? (
+          <div style={{ padding: '18px 20px', background: 'var(--color-surface-bg)', border: '1px solid var(--color-border-primary)', borderRadius: 12, marginBottom: 24, color: 'var(--color-text-secondary)', fontSize: 12 }}>
+            Loading booking-window medians…
+          </div>
+        ) : (
         <div className="cards-grid-3" style={{ marginBottom: 24 }}>
           {WINDOWS.map((w, wi) => {
             const isHovered = hoveredWindow === w.key
@@ -174,6 +194,7 @@ export default function BookingWindow() {
             )
           })}
         </div>
+        )}
 
         {/* Elasticity chart placeholder */}
         <div style={{ padding:'18px 20px', background:'var(--color-surface-bg)',
@@ -292,7 +313,7 @@ export default function BookingWindow() {
                     {(windowData[i]?.origins ?? []).length > 0 && <span style={{ fontSize:9, marginLeft:5, color:'var(--color-info)', opacity:0.8 }}>{windowData[i].origins.join(' · ')}</span>}
                   </td>
                   <td style={{ padding:'10px 14px', fontSize:12, fontFamily:'var(--font-mono)',
-                    color:'var(--color-brand-primary)', fontWeight:600 }}>{count.toLocaleString('en-IN')}</td>
+                    color:'var(--color-brand-primary)', fontWeight:600 }}>{loading && !summary ? '—' : count.toLocaleString('en-IN')}</td>
                   <td style={{ padding:'10px 14px', fontSize:12, color:'var(--color-text-tertiary)' }}>
                     {medianFare == null ? '—' : 'Backend observation'}
                   </td>

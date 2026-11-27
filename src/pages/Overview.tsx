@@ -26,6 +26,12 @@ const routeSpecs = [
 ]
 const ROUTE_CACHE_KEY = 'aeroprice:verified-route-cards:v1'
 const DASHBOARD_CACHE_KEY = 'aeroprice:verified-dashboard:v1'
+// Dashboard KPIs are only painted from cache while the snapshot is fresh.
+// The 26 Nov 2026 live inspection showed a days-old localStorage dashboard
+// (index 102.98 / 5,219 observations) surviving reloads while the API had
+// already moved to 109.77 / 6,252 — an unbounded cache can present stale
+// figures as current. Ten minutes matches the API read-snapshot window.
+const DASHBOARD_CACHE_MAX_AGE_MS = 10 * 60 * 1000
 // Delay before a failed route-card fetch retries once. A Vercel cold start
 // can exceed the 12 s apiFetch abort on the first attempt; by the time the
 // retry runs the backend is warm, so a short delay is enough.
@@ -58,7 +64,13 @@ function readRouteCache(): RouteCard[] | null {
 function readDashboardCache(): { routes_tracked?: number; real_observations?: number; price_drops?: number; index_value?: number | null } | null {
   try {
     const value = JSON.parse(localStorage.getItem(DASHBOARD_CACHE_KEY) || 'null')
-    return value && typeof value === 'object' ? value : null
+    if (!value || typeof value !== 'object') return null
+    const savedAt = typeof value.saved_at === 'number' ? value.saved_at : null
+    if (savedAt == null || Date.now() - savedAt > DASHBOARD_CACHE_MAX_AGE_MS) {
+      localStorage.removeItem(DASHBOARD_CACHE_KEY)
+      return null
+    }
+    return value
   } catch { return null }
 }
 
@@ -93,7 +105,7 @@ function featurePath(feature: GeoFeature, project: (point: [number, number]) => 
   return ''
 }
 
-function FareMovementMap({ movement }: { movement: FareMovementResponse | null }) {
+function FareMovementMap({ movement, failed }: { movement: FareMovementResponse | null; failed?: boolean }) {
   // M7: state boundaries load through the shared cached loader — one
   // request for all three maps instead of one each. A load that returns no
   // features still counts as failed here (as before), so the fallback image
@@ -140,13 +152,16 @@ function FareMovementMap({ movement }: { movement: FareMovementResponse | null }
       {(['SIGNIFICANT_INCREASE', 'MODERATE_INCREASE', 'STABLE', 'MODERATE_DECREASE', 'SIGNIFICANT_DECREASE', 'NO_DATA'] as const).map(status => <span key={status}><i style={{ background: movementColors[status], display: 'inline-block', width: 9, height: 9, borderRadius: 3, marginRight: 7 }} />{movementLabels[status]}</span>)}
     </div>
     <div style={{ marginTop: 10, padding: '7px 10px', background: 'var(--color-surface-secondary)', borderRadius: 8, color: 'var(--color-text-secondary)', fontSize: 10, textAlign: 'center' }}>
-      {movement?.available && movement.previous_period && movement.current_period ? `State colors compare verified route medians from ${movement.previous_period} to ${movement.current_period}.` : 'State colors appear after two verified fare collections; uncovered states remain neutral.'}
+      {failed ? 'State colors could not be loaded — please reload the page.' : movement?.available && movement.previous_period && movement.current_period ? `State colors compare verified route medians from ${movement.previous_period} to ${movement.current_period}.` : 'State colors appear after two verified fare collections; uncovered states remain neutral.'}
     </div>
     {movement?.modeled_states && Object.keys(movement.modeled_states).length > 0 && <div style={{ marginTop: 8, padding: '7px 10px', borderRadius: 8, background: 'var(--color-info-bg)', color: 'var(--color-text-secondary)', fontSize: 10, lineHeight: 1.45 }}><b style={{ color: 'var(--color-text-primary)' }}>Dashed state boundaries = modelled price pressure.</b> These states have real current fare observations but need one more collection before a verified price-change movement can be calculated.</div>}
   </div>
 }
 
-function ChangeLabel({ change }: { change?: number }) {
+function ChangeLabel({ change, failed }: { change?: number; failed?: boolean }) {
+  // A failed fetch is not "pending": pending means the data genuinely is
+  // not there yet; a failure means the comparison could not be loaded.
+  if (change == null && failed) return <span style={{ color: '#8194ad', fontSize: 11 }}>Movement unavailable</span>
   if (change == null) return <span style={{ color: '#8194ad', fontSize: 11 }}>Comparison pending</span>
   const isDrop = change < 0
   const isStable = change === 0
@@ -206,6 +221,16 @@ export default function Overview({ onNavigate }: Props) {
   const [indexHistoryLoading, setIndexHistoryLoading] = useState(() => Boolean(token))
   const [alertsLoading, setAlertsLoading] = useState(() => Boolean(user?.email))
   const [routeCardsLoading, setRouteCardsLoading] = useState(true)
+  // Failed vs genuinely-insufficient (round 3, 24 Nov 2026): a transient
+  // failure (12 s client timeout under a concurrent page-load burst — the
+  // movement endpoint took 10.3–12.4 s when six Overview calls ran at once,
+  // vs 2.5 s sequential) must NEVER read as "no data". The failed flags
+  // below drive honest "unavailable / could not load" text; "Comparison
+  // pending" / "Verified index pending" appear only when the fetch settled
+  // with genuinely too little data.
+  const [movementFailed, setMovementFailed] = useState(false)
+  const [indexHistoryFailed, setIndexHistoryFailed] = useState(false)
+  const [alertsFailed, setAlertsFailed] = useState(false)
   // D4: the "Aircraft tracked" KPI reads the shared radar store instead of
   // this page's own 60 s poller — one authed 30 s poll serves the Overview,
   // the fare map and the radar map. Enabled only with a token: a guest must
@@ -232,15 +257,31 @@ export default function Overview({ onNavigate }: Props) {
 
   // "Active alerts" comes from the backend price-alerts list — the old
   // localStorage key was never written anywhere, so the KPI was stuck at 0.
-  // On 403 (no grant) or any error the KPI stays "Data unavailable".
+  // A signed-in load failure is not a sign-in problem: retry once, then say
+  // the alerts could not be loaded. Only a genuinely signed-out visitor is
+  // told to sign in (26 Nov 2026 live inspection: the evaluator was signed
+  // in, yet a failed alerts fetch read "Sign in to view account alerts").
   useEffect(() => {
-    if (!user?.email) { setActiveAlerts(null); setAlertsLoading(false); return }
+    if (!user?.email) { setActiveAlerts(null); setAlertsFailed(false); setAlertsLoading(false); return }
     let active = true
     setAlertsLoading(true)
-    apiPriceAlerts(token ?? undefined)
-      .then(data => { if (active) setActiveAlerts(Array.isArray(data.alerts) ? data.alerts.length : 0) })
-      .catch(() => { if (active) setActiveAlerts(null) })
-      .finally(() => { if (active) setAlertsLoading(false) })
+    setAlertsFailed(false)
+    const loadAlerts = async (attempt = 0): Promise<void> => {
+      try {
+        const data = await apiPriceAlerts(token ?? undefined)
+        if (active) setActiveAlerts(Array.isArray(data.alerts) ? data.alerts.length : 0)
+      } catch {
+        if (attempt === 0) {
+          await new Promise(resolve => setTimeout(resolve, ROUTE_CARD_RETRY_MS))
+          if (active) return loadAlerts(1)
+          return
+        }
+        if (active) { setActiveAlerts(null); setAlertsFailed(true) }
+      } finally {
+        if (active && attempt > 0) setAlertsLoading(false)
+      }
+    }
+    void loadAlerts().finally(() => { if (active) setAlertsLoading(false) })
     return () => { active = false }
   }, [user?.email, token])
 
@@ -248,26 +289,43 @@ export default function Overview({ onNavigate }: Props) {
     let active = true
     setDashboardLoading(true)
     setMovementLoading(true)
+    setMovementFailed(false)
+    setIndexHistoryFailed(false)
+    // One retry per fetch (the route cards' pattern): a cold-start abort
+    // must not pin a KPI or the movement layer as unavailable — the retry
+    // usually lands on a warm backend. A failure that survives the retry
+    // sets the failed flag, so the UI says "could not load" instead of
+    // inventing a "no data" story.
+    const withOneRetry = async <T,>(call: () => Promise<T>): Promise<T> => {
+      try {
+        return await call()
+      } catch (error) {
+        await new Promise(resolve => setTimeout(resolve, ROUTE_CARD_RETRY_MS))
+        if (!active) throw error
+        return call()
+      }
+    }
     // Do not gate these requests behind a short health probe. Vercel cold
     // starts can exceed the probe timeout while the actual API request still
     // succeeds, which previously left every dashboard KPI stuck at null.
-    apiDashboard(token ?? undefined).then(data => {
+    withOneRetry(() => apiDashboard(token ?? undefined)).then(data => {
       if (!active) return
       setRoutesTracked(data.routes_tracked ?? null)
       setVerifiedObservations(data.real_observations ?? null)
       setPriceDrops(data.price_drops ?? null)
       setLatestIndex(data.index_value ?? null)
-      try { localStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(data)) } catch { /* storage is optional */ }
+      try { localStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify({ ...data, saved_at: Date.now() })) } catch { /* storage is optional */ }
     }).catch(() => {}).finally(() => { if (active) setDashboardLoading(false) })
-    apiFareMovement(token ?? undefined).then(data => {
+    withOneRetry(() => apiFareMovement(token ?? undefined)).then(data => {
       if (!active) return
       setFareMovement(data)
       setPriceDrops(data.price_drops ?? null)
-    }).catch(() => {}).finally(() => { if (active) setMovementLoading(false) })
+    }).catch(() => { if (active) setMovementFailed(true) }).finally(() => { if (active) setMovementLoading(false) })
     // Index change from the index's own published history (newest-first):
     // the two latest daily values give the % change vs the prior published
-    // day. Fewer than two published days (or any failure) leaves the KPI
-    // on "Verified index pending" — no change figure is invented.
+    // day. Fewer than two published days leaves the KPI on "Verified index
+    // pending" — no change figure is invented. A fetch that fails twice
+    // leaves the helper on "Index change unavailable" instead.
     // ITEM 4: /index/history requires auth — a guest (no token) must not
     // fire it at all, or every guest Overview visit logs a pointless 401.
     // The effect re-runs when a token appears, so a sign-in still loads it.
@@ -277,14 +335,14 @@ export default function Overview({ onNavigate }: Props) {
     // pending". A guest never fetches, so the helper is pending at once.
     if (token) {
       setIndexHistoryLoading(true)
-      ;(apiIndexHistory(token) as Promise<IndexHistoryResponse>).then(data => {
+      withOneRetry(() => apiIndexHistory(token) as Promise<IndexHistoryResponse>).then(data => {
         if (!active) return
         const values = (data.observations ?? [])
           .map(observation => observation.value)
           .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
         if (values.length < 2 || values[1] <= 0) { setIndexChangePct(null); return }
         setIndexChangePct(((values[0] - values[1]) / values[1]) * 100)
-      }).catch(() => { if (active) setIndexChangePct(null) }).finally(() => { if (active) setIndexHistoryLoading(false) })
+      }).catch(() => { if (active) { setIndexChangePct(null); setIndexHistoryFailed(true) } }).finally(() => { if (active) setIndexHistoryLoading(false) })
     } else {
       setIndexChangePct(null)
       setIndexHistoryLoading(false)
@@ -345,8 +403,8 @@ export default function Overview({ onNavigate }: Props) {
       { icon: Plane, label: 'Verified routes', value: routesTracked == null ? (dashboardLoading ? 'Loading…' : 'Data unavailable') : routesTracked.toLocaleString('en-IN'), tone: '#1989e8', helper: 'Current monitored corridors' },
       { icon: CheckCircle2, label: 'Verified observations', value: verifiedObservations == null ? (dashboardLoading ? 'Loading…' : 'Data unavailable') : verifiedObservations.toLocaleString('en-IN'), tone: '#159669', helper: 'REAL / OFFICIAL / PUBLIC_INTERFACE rows' },
       { icon: Tag, label: 'Price drops', value: priceDrops == null ? (dashboardLoading ? 'Loading…' : 'Data unavailable') : priceDrops.toLocaleString('en-IN'), tone: '#7c55e8', helper: priceDrops == null ? (dashboardLoading ? 'Loading comparison…' : 'A comparison period is required') : 'Routes cheaper than the prior collection' },
-      { icon: Bell, label: 'Active alerts', value: activeAlerts == null ? (alertsLoading ? 'Loading…' : 'Data unavailable') : activeAlerts.toLocaleString('en-IN'), tone: '#f0a22b', helper: activeAlerts == null ? (alertsLoading ? 'Loading account alerts…' : 'Sign in to view account alerts') : 'Saved alerts for this account' },
-      { icon: TrendingUp, label: 'Airfare index (latest)', value: latestIndex == null ? (dashboardLoading ? 'Loading…' : 'Data unavailable') : latestIndex.toFixed(2), tone: '#159ed1', helper: indexChangePct == null ? (indexHistoryLoading ? 'Loading index…' : 'Verified index pending') : `${indexChangePct >= 0 ? '↑' : '↓'} ${Math.abs(indexChangePct).toFixed(1)}% vs prior collection` },
+      { icon: Bell, label: 'Active alerts', value: activeAlerts == null ? (alertsLoading ? 'Loading…' : 'Data unavailable') : activeAlerts.toLocaleString('en-IN'), tone: '#f0a22b', helper: activeAlerts == null ? (alertsLoading ? 'Loading account alerts…' : alertsFailed ? 'Alerts could not be loaded' : 'Sign in to view account alerts') : 'Saved alerts for this account' },
+      { icon: TrendingUp, label: 'Airfare index (latest)', value: latestIndex == null ? (dashboardLoading ? 'Loading…' : 'Data unavailable') : latestIndex.toFixed(2), tone: '#159ed1', helper: indexChangePct == null ? (indexHistoryLoading ? 'Loading index…' : indexHistoryFailed ? 'Index change unavailable' : 'Verified index pending') : `${indexChangePct >= 0 ? '↑' : '↓'} ${Math.abs(indexChangePct).toFixed(1)}% vs prior collection` },
     ].map(({ icon: Icon, label, value, tone, helper }) => <div key={label} style={{ background: '#fff', border: '1px solid #dbe7f2', borderRadius: 14, padding: '15px 17px', minHeight: 83, boxShadow: '0 5px 15px rgba(25,71,130,.05)', display: 'flex', gap: 12, alignItems: 'center' }}><div style={{ width: 38, height: 38, borderRadius: 11, display: 'grid', placeItems: 'center', background: `${tone}16`, color: tone, flexShrink: 0 }}><Icon size={19} /></div><div style={{ minWidth: 0 }}><div style={{ fontSize: 12, fontWeight: 700, color: '#19366f' }}>{label}</div><div style={{ marginTop: 5, fontSize: value === 'Data unavailable' || value === 'Loading…' ? 13 : 23, fontWeight: 850, color: '#0c2c6e', whiteSpace: 'nowrap' }}>{value}</div><div style={{ marginTop: 3, fontSize: 10, color: '#8194ad' }}>{helper}</div></div></div>)}</section>
 
     <section className="user-routes-layout" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2fr) minmax(360px, 1fr)', gap: 12, alignItems: 'stretch' }}>
@@ -357,15 +415,15 @@ export default function Overview({ onNavigate }: Props) {
         // settles — it shows a loading state, never "Data unavailable" or
         // "No verified observation", both of which are settled states.
         const cardLoading = route.fare == null && routeCardsLoading
-        return <div key={route.code} style={{ border: '1px solid #e0eaf4', borderRadius: 12, padding: 13, background: '#fbfdff', minWidth: 0, minHeight: 206, display: 'flex', flexDirection: 'column' }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}><div><div style={{ fontSize: 17, fontWeight: 850 }}>{route.code}</div><div style={{ fontSize: 11, color: '#7083a0', marginTop: 3 }}>{route.name}</div></div><span style={{ width: 30, height: 30, borderRadius: 50, display: 'grid', placeItems: 'center', background: '#edf5ff', color: '#1769e8' }}><Plane size={15} /></span></div><div role={cardLoading ? 'status' : undefined} style={{ marginTop: 14, fontSize: cardLoading ? 13 : 22, fontWeight: 850, color: cardLoading ? '#7b8da5' : '#0d3076' }}>{route.fare != null ? formatFare(route.fare) : cardLoading ? 'Loading verified fares…' : 'Data unavailable'}</div>{route.fare != null ? <><div style={{ marginTop: 4 }}><ChangeLabel change={routeMovement?.change_pct} /></div><div style={{ display: 'grid', gridTemplateColumns: '1fr 96px', gap: 10, alignItems: 'end', marginTop: 'auto' }}><div style={{ display: 'grid', gap: 4, fontSize: 10, color: '#647a98' }}><span>Range <b style={{ color: '#173b78' }}>{formatFare(route.minFare)} - {formatFare(route.maxFare)}</b></span><span>{route.sampleCount} verified observations</span>{route.latestCollectedAt && <DataFreshness minutesAgo={Math.max(0, Math.floor((Date.now() - new Date(route.latestCollectedAt).getTime()) / 60000))} />}</div><span style={{ width: 96, textAlign: 'right', fontSize: 10, color: '#8194ad' }}>{routeMovement?.change_pct == null ? 'Comparison pending' : 'Backend movement'}</span></div></> : cardLoading ? null : <div style={{ marginTop: 6, color: '#7b8da5', fontSize: 11, lineHeight: 1.45 }}>No verified observation for this route yet.</div>}<button onClick={() => onNavigate('routes')} style={{ width: '100%', marginTop: 12, border: 0, borderRadius: 8, padding: 8, background: '#eff6ff', color: '#1265db', fontWeight: 800, cursor: 'pointer' }}>View Route →</button></div>
+        return <div key={route.code} style={{ border: '1px solid #e0eaf4', borderRadius: 12, padding: 13, background: '#fbfdff', minWidth: 0, minHeight: 206, display: 'flex', flexDirection: 'column' }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}><div><div style={{ fontSize: 17, fontWeight: 850 }}>{route.code}</div><div style={{ fontSize: 11, color: '#7083a0', marginTop: 3 }}>{route.name}</div></div><span style={{ width: 30, height: 30, borderRadius: 50, display: 'grid', placeItems: 'center', background: '#edf5ff', color: '#1769e8' }}><Plane size={15} /></span></div><div role={cardLoading ? 'status' : undefined} style={{ marginTop: 14, fontSize: cardLoading ? 13 : 22, fontWeight: 850, color: cardLoading ? '#7b8da5' : '#0d3076' }}>{route.fare != null ? formatFare(route.fare) : cardLoading ? 'Loading verified fares…' : 'Data unavailable'}</div>{route.fare != null ? <><div style={{ marginTop: 4 }}><ChangeLabel change={routeMovement?.change_pct} failed={movementFailed} /></div><div style={{ display: 'grid', gridTemplateColumns: '1fr 96px', gap: 10, alignItems: 'end', marginTop: 'auto' }}><div style={{ display: 'grid', gap: 4, fontSize: 10, color: '#647a98' }}><span>Range <b style={{ color: '#173b78' }}>{formatFare(route.minFare)} - {formatFare(route.maxFare)}</b></span><span>{route.sampleCount} verified observations</span>{route.latestCollectedAt && <DataFreshness minutesAgo={Math.max(0, Math.floor((Date.now() - new Date(route.latestCollectedAt).getTime()) / 60000))} />}</div><span style={{ width: 96, textAlign: 'right', fontSize: 10, color: '#8194ad' }}>{routeMovement?.change_pct == null ? (movementFailed ? 'Movement unavailable' : 'Comparison pending') : 'Backend movement'}</span></div></> : cardLoading ? null : <div style={{ marginTop: 6, color: '#7b8da5', fontSize: 11, lineHeight: 1.45 }}>No verified observation for this route yet.</div>}<button onClick={() => onNavigate('routes')} style={{ width: '100%', marginTop: 12, border: 0, borderRadius: 8, padding: 8, background: '#eff6ff', color: '#1265db', fontWeight: 800, cursor: 'pointer' }}>View Route →</button></div>
       })}</div></div>
-      <div style={{ background: '#fff', border: '1px solid #dbe7f2', borderRadius: 14, padding: 16, boxShadow: '0 5px 15px rgba(25,71,130,.05)' }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><h2 style={{ margin: 0, fontSize: 18, color: '#102e70' }}>India Fare Movement <span title="Colors are calculated from verified collection medians" style={{ fontSize: 12, color: '#7d91ad' }}>ⓘ</span></h2><span style={{ fontSize: 11, background: '#1769e8', color: '#fff', borderRadius: 8, padding: '6px 10px', fontWeight: 800 }}>Domestic</span></div><FareMovementMap movement={fareMovement} /></div>
+      <div style={{ background: '#fff', border: '1px solid #dbe7f2', borderRadius: 14, padding: 16, boxShadow: '0 5px 15px rgba(25,71,130,.05)' }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><h2 style={{ margin: 0, fontSize: 18, color: '#102e70' }}>India Fare Movement <span title="Colors are calculated from verified collection medians" style={{ fontSize: 12, color: '#7d91ad' }}>ⓘ</span></h2><span style={{ fontSize: 11, background: '#1769e8', color: '#fff', borderRadius: 8, padding: '6px 10px', fontWeight: 800 }}>Domestic</span></div><FareMovementMap movement={fareMovement} failed={movementFailed} /></div>
     </section>
 
     <section className="user-analytics-layout overview-analytics" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.5fr) minmax(300px, 1fr) minmax(300px, 1fr)', gap: 12 }}>
       <div className="overview-analytics-card trend-card" style={{ background: '#fff', border: '1px solid #dbe7f2', borderRadius: 14, padding: 16, boxShadow: '0 5px 15px rgba(25,71,130,.05)' }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}><div><h2 style={{ margin: 0, fontSize: 18, color: '#102e70' }}>Latest route medians</h2><p style={{ margin: '4px 0 0', fontSize: 11, color: '#7890ae' }}>Verified medians from the latest fare collection</p></div></div><LatestRouteMedians routes={routeCards} loading={routeCardsLoading} />{latestIndex != null && <div className="trend-kpis" style={{ display: 'flex', justifyContent: 'flex-end', gap: 18, marginTop: -2, color: '#173b78' }}><span style={{ fontSize: 11 }}>Current Index<br/><b style={{ fontSize: 22 }}>{latestIndex.toFixed(2)}</b></span><span style={{ fontSize: 11 }}>Movement<br/><b style={{ fontSize: 16, color: (indexChangePct ?? 0) >= 0 ? '#d9343e' : '#07875d' }}>{indexChangePct == null ? '—' : `${indexChangePct > 0 ? '+' : ''}${indexChangePct.toFixed(2)}%`}</b></span></div>}</div>
-      <div className="overview-analytics-card route-contribution-card" style={{ background: '#fff', border: '1px solid #dbe7f2', borderRadius: 14, padding: 16, boxShadow: '0 5px 15px rgba(25,71,130,.05)' }}><div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 13 }}><div style={{ width: 38, height: 38, borderRadius: 11, display: 'grid', placeItems: 'center', background: '#eaf3ff', color: '#1769e8', fontSize: 20 }}>⌁</div><div style={{ flex: 1 }}><h2 style={{ margin: 0, fontSize: 18, color: '#102e70' }}>Route Contribution to Index <span title="How each verified route moves the index" style={{ color: '#7d91ad', fontSize: 12 }}>ⓘ</span></h2><p style={{ margin: '4px 0 0', fontSize: 11, color: '#7890ae' }}>Latest verified route movement · select a route to explore</p></div><button type="button" onClick={() => onNavigate('routes')} style={{ border: '1px solid #dbe7f2', borderRadius: 8, padding: '8px 10px', background: '#eff6ff', color: '#1265db', fontWeight: 800, cursor: 'pointer', whiteSpace: 'nowrap' }}>View All →</button></div><div style={{ display: 'grid', gridTemplateColumns: '70px 1fr 72px 18px', gap: 8, padding: '0 8px 7px', color: '#6882a4', fontSize: 10, fontWeight: 800 }}><span>Route</span><span>Contribution</span><span style={{ textAlign: 'right' }}>Change</span><span /></div>{routeCards.map(route => { const change = movementForRoute(route.key)?.change_pct ?? null; const positive = change != null && change >= 0; const cityByCode: Record<string, string> = { DEL: 'Delhi', BLR: 'Bengaluru', MAA: 'Chennai', BOM: 'Mumbai', HYD: 'Hyderabad', CCU: 'Kolkata' }; const city = cityByCode[route.code.split(' ')[0]] ?? 'India'; return <button type="button" key={route.code} onClick={() => onNavigate('routes')} title={`Open ${route.code} route details`} style={{ width: '100%', display: 'grid', gridTemplateColumns: '70px 1fr 72px 18px', gap: 8, alignItems: 'center', padding: '10px 8px', border: '1px solid #edf2f7', borderRadius: 10, marginBottom: 6, background: '#fbfdff', fontSize: 11, cursor: 'pointer', textAlign: 'left' }}><span><b style={{ display: 'block', color: '#173b78', fontSize: 13 }}>{route.code.split(' ')[0]}</b><small style={{ color: '#8aa0bb' }}>{city}</small></span><span style={{ height: 10, background: '#e6eef7', borderRadius: 99, overflow: 'hidden' }}><i style={{ display: 'block', width: `${change == null ? 0 : Math.min(100, Math.max(9, Math.abs(change) * 12))}%`, height: '100%', background: positive ? '#ef7661' : '#39a978', borderRadius: 99 }} /></span><span style={{ textAlign: 'right' }}><b style={{ display: 'block', color: change == null ? '#7890ae' : positive ? '#ef3f44' : '#07875d', fontSize: 13 }}>{change == null ? '—' : `${change > 0 ? '+' : ''}${change.toFixed(2)}`}</b><small style={{ color: change == null ? '#7890ae' : positive ? '#ef3f44' : '#07875d' }}>{change == null ? (movementLoading ? 'Loading…' : 'unavailable') : `${change > 0 ? '+' : ''}${change.toFixed(2)}%`}</small></span><span style={{ color: '#7890ae', fontSize: 20 }}>›</span></button> })}</div>
-      <div className="overview-analytics-card recent-alerts-card" style={{ background: '#fff', border: '1px solid #dbe7f2', borderRadius: 14, padding: 16, boxShadow: '0 5px 15px rgba(25,71,130,.05)' }}><div style={{ display: 'flex', justifyContent: 'space-between' }}><div><h2 style={{ margin: 0, fontSize: 18, color: '#102e70' }}>Recent Price Alerts</h2><p style={{ margin: '4px 0 0', fontSize: 11, color: '#7890ae' }}>Verified changes from the latest collection</p></div><button onClick={() => onNavigate('alerts')} style={{ border: 0, background: 'none', color: '#1265db', fontWeight: 800, cursor: 'pointer' }}>View All →</button></div>{priceDropEvents.length > 0 ? <div className="recent-alert-list" style={{ display: 'grid', gap: 9, marginTop: 13 }}>{priceDropEvents.slice(0, 3).map(event => <div className="recent-alert-row" key={event.route} style={{ display: 'grid', gridTemplateColumns: '20px 1fr auto', gap: 8, alignItems: 'center', padding: '7px 0', borderBottom: '1px solid #edf2f7' }}><TrendingDown size={18} color="#07875d" /><div><b style={{ display: 'block', fontSize: 11, color: '#173b78' }}>{event.route} fare dropped by {Math.abs(event.change_pct).toFixed(2)}%</b><span style={{ fontSize: 10, color: '#7185a2' }}>{formatFare(event.current_fare)} · verified collection</span></div><span style={{ fontSize: 10, color: '#7185a2' }}>{fareMovement?.current_period ?? ''}</span></div>)}</div> : <div style={{ marginTop: 18, padding: '18px 12px', borderRadius: 10, background: '#fbfdff', border: '1px dashed #dbe7f2', textAlign: 'center' }}><TrendingDown size={20} color="#91a4bd" /><div style={{ marginTop: 8, color: '#526987', fontSize: 12, fontWeight: 700 }}>{movementLoading ? 'Loading verified movements…' : fareMovement?.available ? 'No price drops in the latest collection' : 'Movement data is not available yet'}</div><div style={{ marginTop: 4, color: '#8194ad', fontSize: 11, lineHeight: 1.45 }}>{movementLoading ? 'Fetching the latest collection comparison.' : fareMovement?.message ?? 'A second verified collection is required before a price movement can be shown.'}</div></div>}<button onClick={() => onNavigate('alerts')} style={{ width: '100%', marginTop: 10, padding: 10, border: 0, borderRadius: 9, background: '#eaf3ff', color: '#1265db', fontWeight: 800, cursor: 'pointer' }}>+ Set New Price Alert</button></div>
+      <div className="overview-analytics-card route-contribution-card" style={{ background: '#fff', border: '1px solid #dbe7f2', borderRadius: 14, padding: 16, boxShadow: '0 5px 15px rgba(25,71,130,.05)' }}><div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 13 }}><div style={{ width: 38, height: 38, borderRadius: 11, display: 'grid', placeItems: 'center', background: '#eaf3ff', color: '#1769e8', fontSize: 20 }}>⌁</div><div style={{ flex: 1 }}><h2 style={{ margin: 0, fontSize: 18, color: '#102e70' }}>Route Contribution to Index <span title="How each verified route moves the index" style={{ color: '#7d91ad', fontSize: 12 }}>ⓘ</span></h2><p style={{ margin: '4px 0 0', fontSize: 11, color: '#7890ae' }}>Latest verified route movement · select a route to explore</p></div><button type="button" onClick={() => onNavigate('routes')} style={{ border: '1px solid #dbe7f2', borderRadius: 8, padding: '8px 10px', background: '#eff6ff', color: '#1265db', fontWeight: 800, cursor: 'pointer', whiteSpace: 'nowrap' }}>View All →</button></div><div style={{ display: 'grid', gridTemplateColumns: '92px 1fr 72px 18px', gap: 8, padding: '0 8px 7px', color: '#6882a4', fontSize: 10, fontWeight: 800 }}><span>Route</span><span>Contribution</span><span style={{ textAlign: 'right' }}>Change</span><span /></div>{routeCards.map(route => { const change = movementForRoute(route.key)?.change_pct ?? null; const positive = change != null && change >= 0; const city = route.name; return <button type="button" key={route.code} onClick={() => onNavigate('routes')} title={`Open ${route.code} route details`} style={{ width: '100%', display: 'grid', gridTemplateColumns: '92px 1fr 72px 18px', gap: 8, alignItems: 'center', padding: '10px 8px', border: '1px solid #edf2f7', borderRadius: 10, marginBottom: 6, background: '#fbfdff', fontSize: 11, cursor: 'pointer', textAlign: 'left' }}><span><b style={{ display: 'block', color: '#173b78', fontSize: 13, whiteSpace: 'nowrap' }}>{route.code}</b><small style={{ color: '#8aa0bb' }}>{city}</small></span><span style={{ height: 10, background: '#e6eef7', borderRadius: 99, overflow: 'hidden' }}><i style={{ display: 'block', width: `${change == null ? 0 : Math.min(100, Math.max(9, Math.abs(change) * 12))}%`, height: '100%', background: positive ? '#ef7661' : '#39a978', borderRadius: 99 }} /></span><span style={{ textAlign: 'right' }}><b style={{ display: 'block', color: change == null ? '#7890ae' : positive ? '#ef3f44' : '#07875d', fontSize: 13 }}>{change == null ? '—' : `${change > 0 ? '+' : ''}${change.toFixed(2)}`}</b><small style={{ color: change == null ? '#7890ae' : positive ? '#ef3f44' : '#07875d' }}>{change == null ? (movementLoading ? 'Loading…' : 'unavailable') : `${change > 0 ? '+' : ''}${change.toFixed(2)}%`}</small></span><span style={{ color: '#7890ae', fontSize: 20 }}>›</span></button> })}</div>
+      <div className="overview-analytics-card recent-alerts-card" style={{ background: '#fff', border: '1px solid #dbe7f2', borderRadius: 14, padding: 16, boxShadow: '0 5px 15px rgba(25,71,130,.05)' }}><div style={{ display: 'flex', justifyContent: 'space-between' }}><div><h2 style={{ margin: 0, fontSize: 18, color: '#102e70' }}>Recent Price Alerts</h2><p style={{ margin: '4px 0 0', fontSize: 11, color: '#7890ae' }}>Verified changes from the latest collection</p></div><button onClick={() => onNavigate('alerts')} style={{ border: 0, background: 'none', color: '#1265db', fontWeight: 800, cursor: 'pointer' }}>View All →</button></div>{priceDropEvents.length > 0 ? <div className="recent-alert-list" style={{ display: 'grid', gap: 9, marginTop: 13 }}>{priceDropEvents.slice(0, 3).map(event => <div className="recent-alert-row" key={event.route} style={{ display: 'grid', gridTemplateColumns: '20px 1fr auto', gap: 8, alignItems: 'center', padding: '7px 0', borderBottom: '1px solid #edf2f7' }}><TrendingDown size={18} color="#07875d" /><div><b style={{ display: 'block', fontSize: 11, color: '#173b78' }}>{event.route} fare dropped by {Math.abs(event.change_pct).toFixed(2)}%</b><span style={{ fontSize: 10, color: '#7185a2' }}>{formatFare(event.current_fare)} · verified collection</span></div><span style={{ fontSize: 10, color: '#7185a2' }}>{fareMovement?.current_period ?? ''}</span></div>)}</div> : <div style={{ marginTop: 18, padding: '18px 12px', borderRadius: 10, background: '#fbfdff', border: '1px dashed #dbe7f2', textAlign: 'center' }}><TrendingDown size={20} color="#91a4bd" /><div style={{ marginTop: 8, color: '#526987', fontSize: 12, fontWeight: 700 }}>{movementLoading ? 'Loading verified movements…' : movementFailed ? 'Movement data could not be loaded' : fareMovement?.available ? 'No price drops in the latest collection' : 'Movement data is not available yet'}</div><div style={{ marginTop: 4, color: '#8194ad', fontSize: 11, lineHeight: 1.45 }}>{movementLoading ? 'Fetching the latest collection comparison.' : movementFailed ? 'The comparison could not be loaded — please reload the page.' : fareMovement?.message ?? 'A second verified collection is required before a price movement can be shown.'}</div></div>}<button onClick={() => onNavigate('alerts')} style={{ width: '100%', marginTop: 10, padding: 10, border: 0, borderRadius: 9, background: '#eaf3ff', color: '#1265db', fontWeight: 800, cursor: 'pointer' }}>+ Set New Price Alert</button></div>
     </section>
   </div>
 }

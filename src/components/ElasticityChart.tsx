@@ -69,7 +69,7 @@ export default function ElasticityChart({ route, from, to, points, width = 320, 
               <g key={r}>
                 <line x1={0} y1={y} x2={innerW} y2={y} stroke="var(--color-border-primary)" strokeWidth={0.5} />
                 <text x={-8} y={y + 4} textAnchor="end" fontSize={9} fill="var(--color-text-tertiary)" fontFamily="var(--font-mono)">
-                  ₹{Math.round(fare / 100) * 100 >= 10000 ? `${(fare / 1000).toFixed(1)}k` : fare.toLocaleString('en-IN')}
+                  ₹{Math.round(fare / 100) * 100 >= 10000 ? `${(fare / 1000).toFixed(1)}k` : Math.round(fare).toLocaleString('en-IN')}
                 </text>
               </g>
             )

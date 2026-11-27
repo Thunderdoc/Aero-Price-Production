@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Button } from '../components/ui/Button'
 import { Play, RefreshCw, Database, Clock, Activity, ShieldCheck } from 'lucide-react'
-import { apiCollections, apiTriggerCollection, apiSourceHealth, isBackendAvailable } from '../services/api'
+import { apiCollections, apiTriggerCollection, apiSourceHealth } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
 import { formatDateTimeIST } from '../lib/liveStatus'
 
@@ -64,15 +64,20 @@ export default function Collection() {
   const { user, token } = useAuth()
   const [runs, setRuns] = useState<CollectionRun[]>([])
   const [sourceHealth, setSourceHealth] = useState<SourceHealthItem[]>([])
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [triggering, setTriggering] = useState(false)
   const [requestOpen, setRequestOpen] = useState(false)
   const [triggerMessage, setTriggerMessage] = useState<string | null>(null)
 
   const loadData = useCallback(async () => {
     setLoading(true)
+    setLoadError(null)
     try {
-      if (await isBackendAvailable()) {
+      // No health-probe gate: its 3 s timeout false-negatived on slow wakes
+      // and blanked this page with no error. Call the real endpoints
+      // directly; retry once after 1 s when both reject.
+      for (let attempt = 0; attempt < 2; attempt += 1) {
         const [runsResp, healthResp] = await Promise.allSettled([
           apiCollections(token ?? undefined),
           apiSourceHealth(token ?? undefined),
@@ -86,10 +91,12 @@ export default function Collection() {
           if (Array.isArray(raw)) setSourceHealth(raw)
           else if ('sources' in raw) setSourceHealth(raw.sources ?? [])
         }
+        if (runsResp.status === 'fulfilled' || healthResp.status === 'fulfilled') return
+        if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 1000))
       }
+      setLoadError('Collection runs and source health could not be loaded. Please retry.')
     } catch {
-      setRuns([])
-      setSourceHealth([])
+      setLoadError('Collection runs and source health could not be loaded. Please retry.')
     } finally {
       setLoading(false)
     }
@@ -169,6 +176,13 @@ export default function Collection() {
             <div>{triggering ? 'Sending request to backend collection worker...' : triggerMessage ?? 'No collection request is currently running.'}</div>
             <div style={{ marginTop: 8, fontFamily: 'var(--font-sans)', fontSize: 11, lineHeight: 1.5, color: 'var(--color-text-tertiary)' }}>Counts and source results below are refreshed from the backend; this panel does not invent progress or observation totals.</div>
           </div>
+        </div>
+      )}
+
+      {loadError && (
+        <div role="alert" style={{ background: 'var(--color-warning-bg)', border: '1px solid rgba(217,119,6,0.35)', borderRadius: 'var(--radius-xl)', padding: '12px 16px', color: 'var(--color-warning)', fontSize: 12, display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <span>{loadError}</span>
+          <button onClick={() => void loadData()} style={{ border: 0, background: 'transparent', color: 'var(--color-warning)', fontWeight: 800, cursor: 'pointer' }}>Retry</button>
         </div>
       )}
 

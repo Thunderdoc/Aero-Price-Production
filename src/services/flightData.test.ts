@@ -69,3 +69,14 @@ test('a failed schedule lookup still returns an honest empty result', async () =
   expect(result.flights).toEqual([])
   expect(result.error).toBe('No live schedule rows returned by the connected provider.')
 })
+
+test('a provider ERROR is surfaced, not converted to a successful empty feed', async () => {
+  fetchMock.mockResolvedValue(new Response(JSON.stringify({
+    source: 'Aircraft providers', data_origin: 'ERROR', provider_status: 'ERROR',
+    retrieved_at: null, count: 0, aircraft: [], note: 'Live aircraft providers are temporarily unavailable.',
+  })))
+  const [result] = await fetchAllCorridorFlights('test-token')
+  expect(result.flights).toEqual([])
+  expect(result.provider_status).toBe('ERROR')
+  expect(result.error).toContain('temporarily unavailable')
+})

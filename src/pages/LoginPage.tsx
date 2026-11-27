@@ -38,6 +38,11 @@ export default function LoginPage({ onLogin, onGuest }: { onLogin: (page?: Page)
   const { login, loginWithGoogle, createAccount, resetPassword, isBackendAuth } = useAuth()
   const [authMode, setAuthMode] = useState<'login' | 'create'>('login')
   const [fullName, setFullName] = useState('')
+  // Old login tabs (restored 26 Nov 2026 at the owner's request): the tab
+  // picks the workspace for account creation and the sign-in labels. It
+  // never gates sign-in — the role is still resolved server-side after
+  // login, so a valid account is never rejected for the "wrong" tab.
+  const [activeRole, setActiveRole] = useState<'USER' | 'DGCA' | 'ADMIN'>('USER')
   const [signupWorkspace, setSignupWorkspace] = useState<'USER' | 'DGCA'>('USER')
   const [email, setEmail] = useState('')
   const [pass, setPass] = useState('')
@@ -82,7 +87,7 @@ export default function LoginPage({ onLogin, onGuest }: { onLogin: (page?: Page)
 
   const authBusy = loading || googleLoading || resetLoading
 
-  const submitLabel = loading ? 'Signing in...' : 'Sign In'
+  const submitLabel = loading ? 'Signing in...' : activeRole === 'DGCA' ? 'DGCA Sign In' : activeRole === 'ADMIN' ? 'Admin Sign In' : 'Sign In'
 
   function resetFeedback() {
     setError('')
@@ -406,7 +411,11 @@ export default function LoginPage({ onLogin, onGuest }: { onLogin: (page?: Page)
           backdrop-filter: blur(22px);
           padding: clamp(16px, 1.8vw, 22px);
           max-height: calc(100vh - 28px);
-          overflow: hidden;
+          /* Scroll inside the card on shorter laptop screens instead of
+             clipping the evaluator demo box (26 Nov 2026: at 100% zoom on
+             a 768px-tall laptop the card is taller than the viewport). */
+          overflow-y: auto;
+          scrollbar-width: thin;
           position: relative;
         }
         .ap-card::before {
@@ -425,11 +434,11 @@ export default function LoginPage({ onLogin, onGuest }: { onLogin: (page?: Page)
           justify-content: space-between;
           align-items: flex-start;
           gap: 12px;
-          margin-bottom: 10px;
+          margin-bottom: 6px;
         }
         .ap-ministry-logo {
-          width: clamp(96px, 8vw, 122px);
-          height: 98px;
+          width: clamp(84px, 7vw, 104px);
+          height: 72px;
           display: block;
           border-radius: 12px;
           object-fit: cover;
@@ -480,15 +489,15 @@ export default function LoginPage({ onLogin, onGuest }: { onLogin: (page?: Page)
         .ap-card h2 {
           margin: 0;
           color: #050816;
-          font-size: clamp(24px, 3.2vh, 30px);
+          font-size: clamp(22px, 2.8vh, 28px);
           line-height: 1.05;
           letter-spacing: -.045em;
           font-weight: 950;
         }
         .ap-card-sub {
-          margin: 4px 0 10px;
+          margin: 3px 0 8px;
           color: #526079;
-          font-size: 15px;
+          font-size: 14px;
           line-height: 1.42;
         }
         .ap-tabs {
@@ -561,11 +570,11 @@ export default function LoginPage({ onLogin, onGuest }: { onLogin: (page?: Page)
           color: #1d4ed8;
         }
         .ap-field {
-          margin-bottom: 8px;
+          margin-bottom: 6px;
         }
         .ap-field label {
           display: block;
-          margin-bottom: 6px;
+          margin-bottom: 4px;
           color: #0f1b46;
           font-size: 13px;
           font-weight: 850;
@@ -582,7 +591,7 @@ export default function LoginPage({ onLogin, onGuest }: { onLogin: (page?: Page)
         }
         .ap-input {
           width: 100%;
-          height: 43px;
+          height: 40px;
           border-radius: 13px;
           border: 1px solid #cbd5e1;
           background: #fff;
@@ -612,7 +621,7 @@ export default function LoginPage({ onLogin, onGuest }: { onLogin: (page?: Page)
           justify-content: space-between;
           align-items: center;
           gap: 12px;
-          margin: 2px 0 10px;
+          margin: 2px 0 8px;
           color: #526079;
           font-size: 13px;
         }
@@ -633,7 +642,7 @@ export default function LoginPage({ onLogin, onGuest }: { onLogin: (page?: Page)
         }
         .ap-submit, .ap-google {
           width: 100%;
-          min-height: 45px;
+          min-height: 42px;
           border-radius: 13px;
           font-weight: 850;
           font-size: 16px;
@@ -666,7 +675,7 @@ export default function LoginPage({ onLogin, onGuest }: { onLogin: (page?: Page)
           border: 1px solid #b9c5e6;
           background: #fff;
           color: #091052;
-          margin-top: 10px;
+          margin-top: 8px;
           box-shadow: 0 10px 26px rgba(15,23,42,.08);
         }
         .ap-submit:disabled, .ap-google:disabled {
@@ -757,6 +766,19 @@ export default function LoginPage({ onLogin, onGuest }: { onLogin: (page?: Page)
         @keyframes sweep-light {
           0%, 45% { transform: translateX(-100%); }
           70%, 100% { transform: translateX(100%); }
+        }
+        /* Short laptop screens at 100% zoom (e.g. 1366x768): tighten the
+           card so the whole login, evaluator demo included, fits without
+           clipping; overflow-y:auto above remains the safety net. */
+        @media (max-height: 900px) and (min-width: 861px) {
+          .ap-card { padding: 16px 18px; }
+          .ap-ministry-logo { width: 84px; height: 56px; }
+          .ap-card h2 { font-size: 22px; }
+          .ap-tabs, .ap-mode-toggle { margin-bottom: 7px; }
+          .ap-input { height: 38px; }
+          .ap-submit, .ap-google { min-height: 40px; }
+          /* The workspace note repeats in the evaluator demo box below. */
+          .ap-note { display: none; }
         }
         @media (max-height: 760px) and (min-width: 861px) {
           .ap-foot { padding-top: 10px; font-size: 12px; gap: 12px; }
@@ -877,13 +899,36 @@ export default function LoginPage({ onLogin, onGuest }: { onLogin: (page?: Page)
           <h2>Welcome back</h2>
           <p className="ap-card-sub">{authMode === 'login' ? 'Sign in to access AeroPrice.' : 'Create your verified AeroPrice account.'}</p>
 
-          <div className="ap-mode-toggle" aria-label="Choose auth mode">
-            <button type="button" disabled={authBusy} className={authMode === 'login' ? 'active' : ''} onClick={() => { setAuthMode('login'); resetFeedback() }}>Sign in</button>
-            <button type="button" disabled={authBusy} className={authMode === 'create' ? 'active' : ''} onClick={() => { setAuthMode('create'); resetFeedback() }}>Create account</button>
+          <div className="ap-tabs" role="tablist" aria-label="Choose workspace role">
+            {(['USER', 'DGCA', 'ADMIN'] as const).map((role) => (
+              <button
+                key={role}
+                type="button"
+                role="tab"
+                aria-selected={activeRole === role}
+                disabled={authBusy}
+                className={`ap-tab${activeRole === role ? ' active' : ''}`}
+                onClick={() => {
+                  setActiveRole(role)
+                  if (role === 'ADMIN') setAuthMode('login')
+                  else setSignupWorkspace(role)
+                  resetFeedback()
+                }}
+              >
+                {role === 'USER' ? 'User' : role === 'DGCA' ? 'DGCA' : 'Admin'}
+              </button>
+            ))}
           </div>
 
-          <p style={{ margin: '0 0 10px', color: '#526079', fontSize: 12, lineHeight: 1.45 }}>
-            New accounts start as public users, or as DGCA analysts if you pick that workspace below. Admin access is granted by an administrator only.
+          <div className="ap-mode-toggle" aria-label="Choose auth mode">
+            <button type="button" disabled={authBusy} className={authMode === 'login' ? 'active' : ''} onClick={() => { setAuthMode('login'); resetFeedback() }}>Sign in</button>
+            {activeRole !== 'ADMIN' && (
+              <button type="button" disabled={authBusy} className={authMode === 'create' ? 'active' : ''} onClick={() => { setAuthMode('create'); resetFeedback() }}>Create account</button>
+            )}
+          </div>
+
+          <p className="ap-note" style={{ margin: '0 0 8px', color: '#526079', fontSize: 12, lineHeight: 1.45 }}>
+            New accounts start as public users, or as DGCA analysts on the DGCA tab. Admin access is granted by an administrator only.
             SIH prototype — demo analyst role, not a government login.
           </p>
 
@@ -920,7 +965,7 @@ export default function LoginPage({ onLogin, onGuest }: { onLogin: (page?: Page)
               </div>
             )}
             <div className="ap-field">
-              <label htmlFor="ap-email">Email Address</label>
+              <label htmlFor="ap-email">{activeRole === 'DGCA' ? 'DGCA ID / Email' : 'Email Address'}</label>
               <div className="ap-input-wrap">
                 <Mail size={18} aria-hidden="true" />
                 <input
@@ -961,16 +1006,6 @@ export default function LoginPage({ onLogin, onGuest }: { onLogin: (page?: Page)
               </div>
             </div>
 
-            {authMode === 'create' && (
-              <div className="ap-field">
-                <label id="ap-workspace-label">Workspace</label>
-                <div className="ap-mode-toggle" role="radiogroup" aria-labelledby="ap-workspace-label">
-                  <button type="button" disabled={authBusy} className={signupWorkspace === 'USER' ? 'active' : ''} onClick={() => setSignupWorkspace('USER')}>User</button>
-                  <button type="button" disabled={authBusy} className={signupWorkspace === 'DGCA' ? 'active' : ''} onClick={() => setSignupWorkspace('DGCA')}>DGCA Analyst</button>
-                </div>
-              </div>
-            )}
-
             <div className="ap-meta">
               <label>
                 <input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} />
@@ -997,7 +1032,7 @@ export default function LoginPage({ onLogin, onGuest }: { onLogin: (page?: Page)
               {googleLoading ? 'Connecting...' : 'Continue with Google'}
           </button>
 
-          <div style={{ marginTop: 12, padding: '12px 14px', borderRadius: 13, border: '1px solid #bfdbfe', background: '#eff6ff' }}>
+          <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 13, border: '1px solid #bfdbfe', background: '#eff6ff' }}>
             <div style={{ fontSize: 13, fontWeight: 850, color: '#0f1b46' }}>SIH evaluator demo</div>
             <div style={{ marginTop: 3, fontSize: 12, lineHeight: 1.45, color: '#526079' }}>
               Sign in with the seeded demo analyst account ({EVALUATOR_EMAIL}) to review forecasts, exports and government data.

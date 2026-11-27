@@ -504,6 +504,32 @@ def test_avioadsb_url_radius_within_anonymous_cap():
     assert _point_radius_nm(aviation_mod.AVIOADSB_URL) <= 100
 
 
+def test_adsb_coverage_points_span_india_not_one_central_circle():
+    """Regression (26 Nov 2026): one 250 NM circle around central India
+    returned only 7 aircraft clustered near Mumbai/Hyderabad while Delhi,
+    Kolkata and Guwahati stayed empty. The primary feed must query several
+    India coverage points, each still inside the anonymous radius cap."""
+    assert len(aviation_mod.ADSB_LOL_URLS) >= 10
+    assert all(_point_radius_nm(url) <= 250 for url in aviation_mod.ADSB_LOL_URLS)
+    joined = " ".join(aviation_mod.ADSB_LOL_URLS)
+    assert "28.5562/77.1" in joined  # Delhi
+    assert "22.6547/88.4467" in joined  # Kolkata
+    assert "26.1061/91.5859" in joined  # Guwahati
+    assert "13.0609/80.2826" in joined  # Chennai
+
+
+def test_merge_aircraft_dedupes_overlapping_coverage_points():
+    merged = aviation_mod._merge_aircraft([
+        [{"icao24": "abc123", "callsign": "IGO123", "seen_seconds": 20}],
+        [
+            {"icao24": "abc123", "callsign": "IGO123", "seen_seconds": 3},
+            {"icao24": "def456", "callsign": "AIC456", "seen_seconds": 9},
+        ],
+    ], 150)
+    assert [row["icao24"] for row in merged] == ["abc123", "def456"]
+    assert merged[0]["seen_seconds"] == 3
+
+
 async def test_aviation_adsb_lol_real_shape_normalizes():
     """The real ADSB.lol /v2/point payload (captured 22 Nov 2026, radius 250)
     normalizes through _adsb_compatible_aircraft: valid rows keep their

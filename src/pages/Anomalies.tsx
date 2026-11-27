@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Activity, CheckCircle2, Download, RefreshCw, XCircle, Zap } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
-import { apiAnomalies, apiRunAnomalyDetection, type AnomalyResponse } from '../services/api'
+import { apiAnomalies, apiRunAnomalyDetection, isForbiddenError, type AnomalyResponse } from '../services/api'
 import EmptyState from '../components/EmptyState'
 import { formatDateIST, formatDateTimeIST } from '../lib/liveStatus'
 
@@ -21,7 +21,7 @@ export default function Anomalies() {
   const { token } = useAuth()
   const [anomalies, setAnomalies] = useState<EnrichedAnomaly[]>([])
   const [summary, setSummary] = useState<{ total_observations: number; flagged_anomalies: number; flag_rate_pct: number } | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(false)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
   // Failure is a red error state, never a green "success" message, and a
@@ -33,7 +33,14 @@ export default function Anomalies() {
     setLoading(true)
     setLoadError(false)
     try {
-      const resp = await apiAnomalies(token ?? undefined)
+      let resp: AnomalyResponse
+      try {
+        resp = await apiAnomalies(token ?? undefined)
+      } catch (error) {
+        if (isForbiddenError(error)) throw error
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        resp = await apiAnomalies(token ?? undefined)
+      }
       setSummary(resp.summary ?? null)
       if (resp && resp.anomalies && resp.anomalies.length > 0) {
         setAnomalies(
@@ -360,6 +367,9 @@ export default function Anomalies() {
               ))}
             </tbody>
           </table>
+          {loading && anomalies.length === 0 && (
+            <EmptyState title="LOADING ANOMALY DATA" detail="Fetching flagged fare observations from the backend detector…" />
+          )}
           {!loading && anomalies.length === 0 && (
             loadError
               ? <EmptyState tone="error" title="ANOMALY DATA UNAVAILABLE" detail="The anomaly detector did not return a result. Refresh to retry — this is a failed check, not a clean scan." />

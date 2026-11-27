@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Calendar, Database, Download, History, RefreshCw, ShieldCheck } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
-import { apiHistoricalBackfill, apiHistoricalSummary, type HistoricalSummary } from '../services/api'
+import { apiHistoricalBackfill, apiHistoricalSummary, isForbiddenError, type HistoricalSummary } from '../services/api'
 import { formatDateIST } from '../lib/liveStatus'
 
 function formatDate(value?: string) {
@@ -24,7 +24,13 @@ export default function HistoricalFares() {
     setLoading(true)
     setError(null)
     try {
-      setSummary(await apiHistoricalSummary(token ?? undefined))
+      try {
+        setSummary(await apiHistoricalSummary(token ?? undefined))
+      } catch (error) {
+        if (isForbiddenError(error)) throw error
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        setSummary(await apiHistoricalSummary(token ?? undefined))
+      }
     } catch (cause) {
       setSummary(null)
       setError(cause instanceof Error ? cause.message : 'Historical data is unavailable.')
@@ -110,6 +116,31 @@ export default function HistoricalFares() {
               ].map(([label, value]) => <div key={label} style={{ padding: 14, borderRadius: 10, background: 'var(--color-surface-secondary)', border: '1px solid var(--color-border-primary)' }}><div style={{ color: 'var(--color-text-tertiary)', fontSize: 10, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase' }}>{label}</div><div style={{ marginTop: 7, color: 'var(--color-text-primary)', fontSize: 16, fontWeight: 800 }}>{value}</div></div>)}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 16, color: 'var(--color-text-secondary)', fontSize: 11 }}><Calendar size={14} /> Source: {summary.source} · origin: {summary.data_origin} · excluded from live fare/index calculations.</div>
+            {summary.routes && summary.routes.length > 0 && (
+              <div style={{ marginTop: 18, overflowX: 'auto' }}>
+                <div style={{ color: 'var(--color-text-primary)', fontSize: 14, fontWeight: 800, marginBottom: 8 }}>Route breakdown</div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ textAlign: 'left', color: 'var(--color-text-tertiary)' }}>
+                      <th style={{ padding: '8px 10px', borderBottom: '1px solid var(--color-border-primary)' }}>Route</th>
+                      <th style={{ padding: '8px 10px', borderBottom: '1px solid var(--color-border-primary)' }}>Records</th>
+                      <th style={{ padding: '8px 10px', borderBottom: '1px solid var(--color-border-primary)' }}>Average fare</th>
+                      <th style={{ padding: '8px 10px', borderBottom: '1px solid var(--color-border-primary)' }}>Fare range</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {summary.routes.map(route => (
+                      <tr key={route.route} style={{ color: 'var(--color-text-primary)' }}>
+                        <td style={{ padding: '8px 10px', borderBottom: '1px solid var(--color-border-primary)', fontWeight: 700, whiteSpace: 'nowrap' }}>{route.route}</td>
+                        <td style={{ padding: '8px 10px', borderBottom: '1px solid var(--color-border-primary)' }}>{route.records.toLocaleString('en-IN')}</td>
+                        <td style={{ padding: '8px 10px', borderBottom: '1px solid var(--color-border-primary)' }}>{formatMoney(route.average_fare ?? undefined)}</td>
+                        <td style={{ padding: '8px 10px', borderBottom: '1px solid var(--color-border-primary)', whiteSpace: 'nowrap' }}>{formatMoney(route.min_fare ?? undefined)} – {formatMoney(route.max_fare ?? undefined)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </>
         )}
       </section>

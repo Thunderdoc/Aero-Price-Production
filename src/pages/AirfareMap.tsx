@@ -460,9 +460,13 @@ interface FlightsBadgeProps {
   // flight positions" — zero positions have been observed yet, so a
   // measured-looking 0 would be wrong (same rule as the legend dashes).
   loading?: boolean
+  // A guest never gets live positions (the radar poll is token-gated, so no
+  // unauthenticated 401 poll): "0 flight positions" would read as a measured
+  // zero from a feed that was never attempted. Say sign-in is required.
+  signedOut?: boolean
 }
 
-function FlightsBadge({ count, connectionStatus, loading }: FlightsBadgeProps) {
+function FlightsBadge({ count, connectionStatus, loading, signedOut }: FlightsBadgeProps) {
   return (
     <div
       className="airfare-flight-status"
@@ -489,7 +493,7 @@ function FlightsBadge({ count, connectionStatus, loading }: FlightsBadgeProps) {
         }}
       />
       <span style={{ fontSize: 'var(--text-caption-size)', fontWeight: 600 }}>
-        {loading ? 'Connecting to live aircraft feed…' : `${count} flight positions over India`}
+        {signedOut ? 'Sign in for live aircraft positions' : loading ? 'Connecting to live aircraft feed…' : `${count} flight positions over India`}
       </span>
       <span
         style={{
@@ -814,10 +818,40 @@ export default function AirfareMap() {
     // observations." for data that is public.
     setRoutesLoading(true)
     setRouteError(null)
-    Promise.all([apiRouteBasket(token ?? undefined), apiFareMovement(token ?? undefined).catch(() => null), apiRouteSummaries(token ?? undefined), apiIndexBasket(token ?? undefined).catch(() => null)])
+    const withOneRetry = async <T,>(call: () => Promise<T>): Promise<T> => {
+      try {
+        return await call()
+      } catch (error) {
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        if (!active) throw error
+        return call()
+      }
+    }
+    Promise.all([
+      withOneRetry(() => apiRouteBasket(token ?? undefined)).catch(() => null),
+      apiFareMovement(token ?? undefined).catch(() => null),
+      withOneRetry(() => apiRouteSummaries(token ?? undefined)),
+      apiIndexBasket(token ?? undefined).catch(() => null),
+    ])
       .then(([basket, movement, summaryResponse, indexBasket]) => {
         const weightsByRoute = new Map(indexBasket?.routes.map(row => [row.route, row.weight]) ?? [])
-        if (active) setCorridors(buildMapCorridors(basket.routes, movement, summaryResponse.summaries, weightsByRoute))
+        // The summaries endpoint already proves which routes have stored
+        // quotes. If the basket call fails twice, build the route list from
+        // those summary keys instead of zeroing the whole map.
+        const routes: RouteBasketItem[] = basket?.routes ?? Object.keys(summaryResponse.summaries).map(route => {
+          const [origin, destination] = route.split('-')
+          return {
+            route,
+            origin,
+            destination,
+            origin_name: origin,
+            destination_name: destination,
+            observations_7d: summaryResponse.summaries[route]?.count ?? 0,
+            has_data: true,
+            status: 'ACTIVE',
+          }
+        })
+        if (active) setCorridors(buildMapCorridors(routes, movement, summaryResponse.summaries, weightsByRoute))
       })
       .catch(() => { if (active) { setCorridors([]); setRouteError('Verified route summaries are unavailable.') } })
       .finally(() => { if (active) setRoutesLoading(false) })
@@ -900,7 +934,7 @@ export default function AirfareMap() {
             border: `1px solid ${apiStatus === 'REAL' ? 'rgba(22,163,74,0.3)' : 'rgba(217,119,6,0.3)'}`,
             padding: '2px 8px', borderRadius: 4,
           }}>
-            {apiStatus === 'REAL' ? 'AIRSPACE DATA CHECKED' : 'AIRSPACE DATA DEGRADED'}
+            {apiStatus === 'REAL' ? 'AIRSPACE DATA CHECKED' : !token ? 'SIGN IN FOR LIVE AIRSPACE' : 'AIRSPACE DATA DEGRADED'}
           </span>
         </div>
         {/* Right: source status pill + flight count */}
@@ -922,7 +956,9 @@ export default function AirfareMap() {
             </span>
           </div>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'rgba(255,255,255,0.45)', letterSpacing: '0.04em' }}>
-            {apiStatus === 'REAL'
+            {!token
+              ? 'Sign in for live aircraft positions'
+              : apiStatus === 'REAL'
               ? `${realFlightCount} live ADS-B positions`
               : apiStatus === 'loading'
               ? 'Connecting to live ADS-B feed…'
@@ -1022,7 +1058,7 @@ export default function AirfareMap() {
 
         {/* Overlays (rendered outside MapContainer but inside relative wrapper) */}
         <MapControls filter={filter} onChange={setFilter} />
-        <FlightsBadge count={apiStatus === 'REAL' ? realFlightCount : liveFlights.length} connectionStatus={apiStatus === 'REAL' ? 'live' : connectionStatus} loading={apiStatus === 'loading'} />
+        <FlightsBadge count={apiStatus === 'REAL' ? realFlightCount : liveFlights.length} connectionStatus={apiStatus === 'REAL' ? 'live' : connectionStatus} loading={apiStatus === 'loading'} signedOut={!token} />
         <Legend />
       </div>
 

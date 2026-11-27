@@ -15,18 +15,26 @@ function isoTimestamp(iso: string | null | undefined): string {
 
 export default function DataSources() {
   const { token } = useAuth()
-  const { datasets, isLoading, refresh } = useGovData()
+  const { datasets, isLoading, failedSources, refresh } = useGovData()
   const [tab, setTab] = useState<'airfare' | 'government'>('airfare')
   const [displaySources, setDisplaySources] = useState<AirfareSource[]>([])
   const [airfareLoading, setAirfareLoading] = useState(true)
+  const [airfareError, setAirfareError] = useState(false)
   const [hoveredSourceId, setHoveredSourceId] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [refreshMsg, setRefreshMsg] = useState<string | null>(null)
 
   async function loadAirfareSources() {
     setAirfareLoading(true)
+    setAirfareError(false)
     try {
-      const response = await apiSources(token ?? undefined)
+      let response
+      try {
+        response = await apiSources(token ?? undefined)
+      } catch {
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        response = await apiSources(token ?? undefined)
+      }
       const sources = response.airfare_sources ?? response.airfare ?? []
       setDisplaySources(
         sources.map(source => ({
@@ -47,6 +55,7 @@ export default function DataSources() {
       )
     } catch {
       setDisplaySources([])
+      setAirfareError(true)
     } finally {
       setAirfareLoading(false)
     }
@@ -66,8 +75,8 @@ export default function DataSources() {
   const checksDone = !airfareLoading && !isLoading
 
   const summaryItems = [
-    { label: 'AIRFARE FEEDS', value: airfareLoading ? '—' : `${connectedAirfare}/${displaySources.length}`, color: airfareDot, dot: airfareDot },
-    { label: 'GOV REGISTRIES', value: isLoading ? '—' : `${govConnected}/${datasets.length}`, color: govDot, dot: govDot },
+    { label: 'AIRFARE FEEDS', value: airfareLoading || airfareError ? '—' : `${connectedAirfare}/${displaySources.length}`, color: airfareDot, dot: airfareDot },
+    { label: 'GOV REGISTRIES', value: isLoading || failedSources.datasets ? '—' : `${govConnected}/${datasets.length}`, color: govDot, dot: govDot },
     { label: 'SYSTEM LATENCY', value: '—', color: 'var(--color-text-tertiary)', dot: null },
     { label: 'SOURCE-REPORTED RECORDS', value: totalRecords.toLocaleString('en-IN'), color: 'var(--color-text-primary)', dot: null },
     { label: 'PIPELINE UPTIME', value: '—', color: 'var(--color-text-tertiary)', dot: null },
@@ -260,6 +269,27 @@ export default function DataSources() {
         ))}
       </div>
 
+      {/* ── Source reliability panel (SIH extra, 26 Nov 2026): one
+          evaluator-facing summary of feed health from the same backend
+          source-health rows the cards below render. */}
+      <div style={{ background: 'var(--color-surface-bg)', border: '1px solid var(--color-border-primary)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-lg) var(--space-2xl)' }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--color-text-primary)', marginBottom: 8 }}>Source reliability</div>
+        {airfareLoading ? (
+          <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>Loading source health…</div>
+        ) : airfareError ? (
+          <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>Source health could not be loaded. Use Refresh to retry.</div>
+        ) : (
+          <div style={{ display: 'flex', gap: 'var(--space-2xl)', flexWrap: 'wrap', fontSize: 12, color: 'var(--color-text-secondary)' }}>
+            <span>Live now: <strong style={{ color: 'var(--color-text-primary)' }}>{displaySources.filter(s => s.status === 'LIVE').length}</strong></span>
+            <span>Stale / degraded: <strong style={{ color: 'var(--color-text-primary)' }}>{displaySources.filter(s => ['STALE', 'STALE_DATA', 'DEGRADED'].includes(s.status as string)).length}</strong></span>
+            <span>Challenged: <strong style={{ color: 'var(--color-text-primary)' }}>{displaySources.filter(s => s.status === 'CHALLENGE_DETECTED').length}</strong></span>
+            <span>Not configured: <strong style={{ color: 'var(--color-text-primary)' }}>{displaySources.filter(s => s.status === 'NOT_CONFIGURED').length}</strong></span>
+            <span>Records reported: <strong style={{ color: 'var(--color-text-primary)' }}>{totalRecords.toLocaleString('en-IN')}</strong></span>
+            <span>Latest attempt: <strong style={{ color: 'var(--color-text-primary)' }}>{isoTimestamp(displaySources.map(s => s.last_attempt).filter(Boolean).sort().at(-1))}</strong></span>
+          </div>
+        )}
+      </div>
+
       {/* Source policy notice — neutral info styling: this is an explainer,
           not a live status, so it must not render green (audit §7.1). */}
       <div
@@ -347,7 +377,9 @@ export default function DataSources() {
             </div>
           ) : displaySources.length === 0 ? (
             <div className="ap-card" style={{ padding: 8 }}>
-              <EmptyState title="NO AIRFARE SOURCE REGISTRY" detail="The backend returned no airfare source registry records for this session." />
+              {airfareError
+                ? <EmptyState title="AIRFARE SOURCES COULD NOT LOAD" detail="The source registry did not return a result. Refresh to retry." />
+                : <EmptyState title="NO AIRFARE SOURCE REGISTRY" detail="The backend returned no airfare source registry records for this session." />}
             </div>
           ) : displaySources.map(s => {
             const hovered = hoveredSourceId === s.id

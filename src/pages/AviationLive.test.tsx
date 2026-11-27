@@ -125,3 +125,15 @@ test('ITEM 5: the Corridor Analysis dialog shows the real count once the feed co
   const zones = screen.getByText('active airport zones').closest('section')
   expect(zones?.textContent).toBe('1active airport zones')
 })
+
+// ── Corridor fine print (round 3, 24 Nov 2026) ──────────────────────────────
+// The panel counts aircraft within 100 km of major airports; filed flight
+// routes are not a published live feed anywhere, so "flight routes
+// unavailable" read as a broken feature. The fine print now states what the
+// panel shows and what does not exist as a feed.
+
+test('round 3: the corridor fine print states positions only, never "flight routes unavailable"', async () => {
+  render(<AviationLive />)
+  expect(await screen.findByText('Position counts only · filed flight routes are not published live')).toBeTruthy()
+  expect(screen.queryByText(/flight routes unavailable/)).toBeNull()
+})
